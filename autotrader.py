@@ -204,7 +204,7 @@ class SandboxBroker:
 
 class AutoTrader:
     def __init__(self, broker, capital, log=print, on_update=None, clock=None, sleep=None,
-                 stop_event=None, rescan=False, state_path=None, spike=None):
+                 stop_event=None, rescan=False, state_path=None, spike=None, day_on=True):
         self.b = broker
         self.capital = capital
         self.log = log
@@ -213,6 +213,7 @@ class AutoTrader:
         self.stop_event = stop_event or threading.Event()
         self._sleep = sleep or (lambda s: self.stop_event.wait(s))
         self.rescan = rescan
+        self.day_on = day_on
         self.sp = dict(SPIKE_DEFAULTS, **(spike or {}))
         self.hist = {}               # тикер -> свечи 5 мин за несколько дней (из них строятся 15 мин и 1 час)
         self.hist_loaded = {}
@@ -270,7 +271,10 @@ class AutoTrader:
     # ------------------------------------------------------------------ главный цикл
     def run(self):
         self.log(f"Робот запущен. Рабочее время по будням {hm(DAY_START)}–{hm(DAY_END)} МСК.")
-        self.log(f"Стратегия «{hm(sc.ENTRY_MIN)}»: порог {sc.THRESHOLD * 100:g}%, стоп {sc.STOP * 100:g}%, выход {hm(sc.EXIT_MIN)}"
+        if not self.day_on:
+            self.log("Стратегия «движение дня» (вход в заданное время) выключена в настройках.")
+        else:
+            self.log(f"Стратегия «{hm(sc.ENTRY_MIN)}»: порог {sc.THRESHOLD * 100:g}%, стоп {sc.STOP * 100:g}%, выход {hm(sc.EXIT_MIN)}"
                  + (", добор новых сигналов до 16:30" if self.rescan else "") + ".")
         sp = self.sp
         tfs = ", ".join(("1 час" if tf == 60 else f"{tf} мин") for tf in sp["tfs"]) or "нет"
@@ -359,13 +363,16 @@ class AutoTrader:
             self._scan_pullbacks(now)
             return
         # 3) сканирование рынка раз в минуту (в момент входа — обязательно свежее)
+        if not self.day_on and not self.st["entered"]:
+            self.st.update(entered=True, done=True)      # стратегия «движение дня» выключена
+            self._save()
         entry_due = (not self.st["entered"]) and sc.ENTRY_MIN <= t < sc.LATE_CUTOFF_MIN
         if entry_due or self.last_scan is None or (now - self.last_scan).total_seconds() >= SCAN_EVERY - 1:
             self._scan(now)
         # 4) вход
         if entry_due:
             self._enter(now)
-        elif self.rescan and self.st["entered"] and t < sc.LATE_CUTOFF_MIN:
+        elif self.day_on and self.rescan and self.st["entered"] and t < sc.LATE_CUTOFF_MIN:
             self._enter_new(now)
         elif not self.st["entered"] and t >= sc.LATE_CUTOFF_MIN and not self.st["done"]:
             self.log(f"Время входа пропущено (сейчас {hm(t)}, входить позже {hm(sc.LATE_CUTOFF_MIN)} нельзя) — сегодня без сделок по «{hm(sc.ENTRY_MIN)}».")
@@ -377,8 +384,10 @@ class AutoTrader:
         mk = f"рынок {self.market * 100:+.2f}% · " if self.market is not None else ""
         if self.positions:
             self._set_status(f"{mk}в позициях: {len(self.positions)}")
+        elif not self.st["entered"] and not (self.sp["on"] and self.sp["tfs"]):
+            self._set_status(f"{mk}сканирую рынок — вход «движение дня» в {hm(sc.ENTRY_MIN)}")
         elif not self.st["entered"]:
-            self._set_status(f"{mk}сканирую рынок — вход «{hm(sc.ENTRY_MIN)}» в {hm(sc.ENTRY_MIN)}")
+            self._set_status(f"{mk}ищу формации (вход сразу при подтверждении); «движение дня» — в {hm(sc.ENTRY_MIN)}")
         elif self.sp["on"] and t < self.sp["to_min"]:
             self._set_status(f"{mk}ищу всплески объёма и откаты к EMA20 до {hm(self.sp['to_min'])}")
         else:

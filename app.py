@@ -41,7 +41,7 @@ VERSION = app_version()
 SETTINGS = os.path.join(sc.HERE, "settings.json")
 DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_token": True,
             "auto_signals": True, "auto_journal": True, "remember_token": False, "token": "",
-            "rescan": False, "autostart": False,
+            "rescan": False, "autostart": False, "day_on": True,
             "spike_on": True, "spike_tfs": [15, 60], "spike_all": True, "spike_half": 50, "spike_trail": 1.0,
             "spike_max": 5}
 
@@ -237,6 +237,7 @@ class App(tk.Tk):
         self.v_aj = tk.BooleanVar(value=self.s["auto_journal"])
         self.v_rescan = tk.BooleanVar(value=self.s.get("rescan", False))
         self.v_autostart = tk.BooleanVar(value=self.s.get("autostart", False))
+        self.v_day = tk.BooleanVar(value=self.s.get("day_on", True))
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
         self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [15, 60])) for tf in (5, 15, 60)}
         self.v_spk_all = tk.BooleanVar(value=self.s.get("spike_all", True))
@@ -246,19 +247,6 @@ class App(tk.Tk):
         g = ttk.Frame(t4)
         g.pack(anchor="nw", fill="x")
         r = 0
-        ttk.Label(g, text="Порог движения акции, %:").grid(row=r, column=0, sticky="w", pady=4)
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
-        ttk.Combobox(f, textvariable=self.v_thr, width=6, state="readonly",
-                     values=[f"{x:g}" for x in sc.THRESHOLD_CHOICES]).pack(side="left")
-        ttk.Label(f, text="   Время входа:").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_entry, width=7, state="readonly", values=sc.ENTRY_CHOICES).pack(side="left")
-        r += 1
-        self.bt_lbl = tk.Label(g, text="", justify="left", anchor="w", font=("Segoe UI", 9))
-        self.bt_lbl.grid(row=r, column=1, sticky="w")
-        self.v_thr.trace_add("write", lambda *_: self._show_bt())
-        self.v_entry.trace_add("write", lambda *_: self._show_bt())
-        self._show_bt()
-        r += 1
         ttk.Label(g, text="Капитал песочницы, ₽:").grid(row=r, column=0, sticky="w", pady=4)
         ttk.Entry(g, textvariable=self.v_cap, width=14).grid(row=r, column=1, sticky="w")
         r += 1
@@ -269,28 +257,22 @@ class App(tk.Tk):
         ttk.Button(tf, text="Вставить из буфера", command=self.paste_token).pack(side="left", padx=(6, 0))
         ttk.Button(tf, text="Показать", command=self.toggle_token).pack(side="left", padx=(6, 0))
         r += 1
-        ttk.Checkbutton(g, text="Это токен песочницы", variable=self.v_sbtok).grid(row=r, column=1, sticky="w")
-        r += 1
-        ttk.Checkbutton(g, text="Запомнить токен на этом компьютере (хранится открытым текстом в settings.json)",
-                        variable=self.v_rem).grid(row=r, column=1, sticky="w")
-        r += 1
-        ttk.Separator(g).grid(row=r, column=0, columnspan=2, sticky="ew", pady=10)
-        r += 1
-        ttk.Label(g, text="Автоматический режим (по будням, пока приложение открыто):").grid(row=r, column=0, columnspan=2, sticky="w")
-        r += 1
-        ttk.Checkbutton(g, text="Считать сигналы во время входа и подать звуковой сигнал", variable=self.v_as).grid(row=r, column=1, sticky="w")
-        r += 1
-        ttk.Checkbutton(g, text="Записывать день в журнал форвард-теста в 17:20", variable=self.v_aj).grid(row=r, column=1, sticky="w")
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
+        ttk.Checkbutton(f, text="Это токен песочницы", variable=self.v_sbtok).pack(side="left")
+        ttk.Checkbutton(f, text="Запомнить токен (открытым текстом в settings.json)", variable=self.v_rem).pack(side="left", padx=(16, 0))
         r += 1
         ttk.Checkbutton(g, text="Запускать робота автоторговли сразу при открытии программы", variable=self.v_autostart).grid(row=r, column=1, sticky="w")
+        bg = ttk.Style().lookup("TFrame", "background") or None
+        # --- формация
         r += 1
-        ttk.Checkbutton(g, text="«15:00»: добирать новые сигналы до 16:30 (на истории хуже: −8…−20% вместо +23…+35%)",
-                        variable=self.v_rescan).grid(row=r, column=1, sticky="w")
+        ttk.Separator(g).grid(row=r, column=0, columnspan=2, sticky="ew", pady=8)
         r += 1
-        ttk.Separator(g).grid(row=r, column=0, columnspan=2, sticky="ew", pady=10)
+        ttk.Label(g, text="1. Всплеск объёма + откат к EMA20", font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
+        ttk.Checkbutton(g, text="Робот торгует по этой формации", variable=self.v_spk).grid(row=r, column=1, sticky="w")
         r += 1
-        ttk.Label(g, text="Всплеск объёма + откат к EMA20:").grid(row=r, column=0, sticky="w")
-        ttk.Checkbutton(g, text="Робот торгует по этой формации (следит за всплесками всегда)", variable=self.v_spk).grid(row=r, column=1, sticky="w")
+        tk.Label(g, text="Время входа не задаётся: робот входит сразу, как только формация подтверждена "
+                         "(в любой момент с 10:00 до 18:00), и выходит по стопу, тейку, трейлингу или в 18:25.",
+                 justify="left", anchor="w", font=("Segoe UI", 9, "bold"), fg="#0a5a2f", bg=bg, wraplength=740).grid(row=r, column=1, sticky="w")
         r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(f, text="Таймфреймы:").pack(side="left")
@@ -307,8 +289,34 @@ class App(tk.Tk):
         ttk.Combobox(f, textvariable=self.v_spk_max, width=4, state="readonly", values=["1", "2", "3", "5", "8"]).pack(side="left", padx=(4, 0))
         r += 1
         tk.Label(g, text="На истории (44 акции индекса, 10.2025–10.2026):\n" + "\n".join(f"  • {at.SPIKE_PRESETS[tf]['bt']}" for tf in (5, 15, 60))
-                 + "\nСтоп — под самой низкой точкой всего отката (с закруглением) с запасом. На каждую сделку — 10% капитала. Второй эшелон на истории не проверен — смотрите журнал «всплеск».",
-                 justify="left", anchor="w", font=("Segoe UI", 9), fg="#555", bg=ttk.Style().lookup("TFrame", "background") or None).grid(row=r, column=1, sticky="w")
+                 + "\nСтоп — под самой низкой точкой всего отката (с закруглением) с запасом. На сделку — 10% капитала.",
+                 justify="left", anchor="w", font=("Segoe UI", 9), fg="#555", bg=bg).grid(row=r, column=1, sticky="w")
+        # --- движение дня
+        r += 1
+        ttk.Separator(g).grid(row=r, column=0, columnspan=2, sticky="ew", pady=8)
+        r += 1
+        ttk.Label(g, text="2. Движение дня (отдельная стратегия)", font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
+        ttk.Checkbutton(g, text="Робот торгует и по этой стратегии — вход в одно заданное время дня", variable=self.v_day).grid(row=r, column=1, sticky="w")
+        r += 1
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
+        ttk.Label(f, text="Порог движения акции от открытия, %:").pack(side="left")
+        ttk.Combobox(f, textvariable=self.v_thr, width=6, state="readonly",
+                     values=[f"{x:g}" for x in sc.THRESHOLD_CHOICES]).pack(side="left", padx=(4, 0))
+        ttk.Label(f, text="   Время входа этой стратегии:").pack(side="left")
+        ttk.Combobox(f, textvariable=self.v_entry, width=7, state="readonly", values=sc.ENTRY_CHOICES).pack(side="left", padx=(4, 0))
+        r += 1
+        self.bt_lbl = tk.Label(g, text="", justify="left", anchor="w", font=("Segoe UI", 9), bg=bg)
+        self.bt_lbl.grid(row=r, column=1, sticky="w")
+        self.v_thr.trace_add("write", lambda *_: self._show_bt())
+        self.v_entry.trace_add("write", lambda *_: self._show_bt())
+        self._show_bt()
+        r += 1
+        ttk.Checkbutton(g, text="Добирать новые сигналы до 16:30 (на истории хуже: −8…−20% вместо +23…+35%)",
+                        variable=self.v_rescan).grid(row=r, column=1, sticky="w")
+        r += 1
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
+        ttk.Checkbutton(f, text="Показывать её сигналы с сигналом звука", variable=self.v_as).pack(side="left")
+        ttk.Checkbutton(f, text="Журнал форвард-теста в 17:20", variable=self.v_aj).pack(side="left", padx=(16, 0))
         r += 1
         ttk.Button(g, text="Сохранить настройки", command=self.save).grid(row=r, column=1, sticky="w", pady=12)
         ttk.Label(t4, text="Без токена данные берутся с сайта Мосбиржи; бесплатные данные там обычно идут с задержкой около 15 минут.\n"
@@ -412,7 +420,8 @@ class App(tk.Tk):
             auto.append("робот работает")
         if self.s["auto_journal"]:
             auto.append("журнал в 17:20")
-        self.status.configure(text=f"Порог {self.s['threshold']:g}% · вход {self.s['entry']} · {busy}"
+        self.status.configure(text=(f"Движение дня: порог {self.s['threshold']:g}%, вход {self.s['entry']}" if self.s.get("day_on", True)
+                                    else "Движение дня выключено") + f" · формация EMA20: {'вкл' if self.s.get('spike_on', True) else 'выкл'} · {busy}"
                                    + (f" · авто: {', '.join(auto)}" if auto else ""))
         self.after(1000, self._tick)
 
@@ -428,7 +437,7 @@ class App(tk.Tk):
         self.s.update(threshold=float(self.v_thr.get()), entry=self.v_entry.get(), capital=cap,
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
-                      rescan=self.v_rescan.get(), autostart=self.v_autostart.get(),
+                      rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(),
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
                       spike_all=self.v_spk_all.get(), spike_half=int(self.v_spk_half.get()),
                       spike_trail=float(self.v_spk_trail.get()), spike_max=int(self.v_spk_max.get()))
@@ -607,6 +616,7 @@ class App(tk.Tk):
                  "all_market": bool(self.s.get("spike_all", True)), "half": int(self.s.get("spike_half", 50)) / 100,
                  "trail_r": float(self.s.get("spike_trail", 1.0)), "max_pos": int(self.s.get("spike_max", 5))}
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
+                                   day_on=bool(self.s.get("day_on", True)),
                                    on_update=lambda snap: self.q.put(("call", self.show_robot, snap)))
         robot = self.robot
 
@@ -702,7 +712,7 @@ class App(tk.Tk):
                     in_window = start - timedelta(minutes=2) <= n < start + timedelta(minutes=10)
                     if in_window and self.done_today.get(("entry", today)) is None:
                         self.done_today[("entry", today)] = True
-                        if self.s["auto_signals"] and not self.robot_running():
+                        if self.s["auto_signals"] and self.s.get("day_on", True) and not self.robot_running():
                             self.q.put(("call", lambda _: self.submit("Авто: сигналы", self._signals(True),
                                                                       lambda sg: self.show_signals(sg, alert=True)), None))
                     if self.s["auto_journal"] and (n.hour, n.minute) >= (17, 20) and n.hour < 23 and self.done_today.get(("journal", today)) is None:
