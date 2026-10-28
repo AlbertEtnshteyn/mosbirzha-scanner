@@ -47,7 +47,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "leverage": "1", "spike_half": 50, "spike_trail": 1.0,
             "spike_max": 5, "two_takes": True,
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False,
-            "tg_trend": True, "trend_on": True, "trend_trade": False}
+            "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True}
 
 
 def load_settings():
@@ -309,6 +309,7 @@ class App(tk.Tk):
         self.v_sound = tk.BooleanVar(value=self.s.get("sound_on", True))
         self.v_trend_on = tk.BooleanVar(value=self.s.get("trend_on", True))
         self.v_trend_trade = tk.BooleanVar(value=self.s.get("trend_trade", False))
+        self.v_tier = tk.BooleanVar(value=self.s.get("tier_profile", True))
         self.v_takes = tk.StringVar(value="два тейка" if self.s.get("two_takes", True) else "один тейк у хая")
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
         self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [15, 60])) for tf in (5, 15, 60)}
@@ -365,8 +366,11 @@ class App(tk.Tk):
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Checkbutton(f, text="Искать трендовые откаты (импульс на объёме был в последние 3 дня, EMA10 над EMA20, касание EMA20 + подтверждение)",
                         variable=self.v_trend_on).pack(anchor="w")
-        ttk.Checkbutton(f, text="…и торговать их (на истории в минусе: −0,1…−0,25% на сделку; по умолчанию только уведомление)",
+        ttk.Checkbutton(f, text="…и торговать все трендовые откаты (на истории в целом в минусе; по умолчанию только по профилю ниже)",
                         variable=self.v_trend_trade).pack(anchor="w")
+        ttk.Checkbutton(f, text="Профиль по эшелонам (по проверке на 152 акциях): индекс — формация 15 мин и 1 час; "
+                                "2-й эшелон — формация 1 час и трендовый откат 15 мин после роста ≥5% на объёме ×10; "
+                                "3-й эшелон — только уведомления", variable=self.v_tier).pack(anchor="w")
         r += 1
         ttk.Label(g, text="Чем торговать:").grid(row=r, column=0, sticky="e", padx=(0, 6))
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
@@ -577,7 +581,8 @@ class App(tk.Tk):
                       two_takes=self.v_takes.get() == "два тейка",
                       tg_token=self.v_tg_tok.get().strip(), tg_chat=self.v_tg_chat.get().strip(),
                       tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get(),
-                      tg_trend=self.v_tg_trend.get(), trend_on=self.v_trend_on.get(), trend_trade=self.v_trend_trade.get())
+                      tg_trend=self.v_tg_trend.get(), trend_on=self.v_trend_on.get(), trend_trade=self.v_trend_trade.get(),
+                      tier_profile=self.v_tier.get())
         if self.s["token"]:
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         else:
@@ -764,7 +769,8 @@ class App(tk.Tk):
                  "share": float(self.s.get("spike_share", 10)) / 100,
                  "leverage": self.s.get("leverage", "1"),
                  "two_takes": bool(self.s.get("two_takes", True)),
-                 "trend_on": bool(self.s.get("trend_on", True)), "trend_trade": bool(self.s.get("trend_trade", False))}
+                 "trend_on": bool(self.s.get("trend_on", True)), "trend_trade": bool(self.s.get("trend_trade", False)),
+                 "tier_profile": bool(self.s.get("tier_profile", True))}
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
                                    day_on=bool(self.s.get("day_on", True)), direction=self.s.get("direction", "both"), trade=trade,
                                    on_event=lambda kind, info: self.q.put(("call", self.on_trade, (kind, info))),

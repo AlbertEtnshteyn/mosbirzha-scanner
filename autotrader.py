@@ -191,6 +191,31 @@ def find_pullback(bars, sp, em=None, last=None):
 
 TREND_DAYS = 3     # трендовый откат: импульс на объёме был не раньше чем 3 торговых дня назад
 
+# Что торговать по эшелонам — по прогону на 152 акциях за 10.2025–10.2026 (затраты 0,16%):
+#   индекс: формация 15 мин (+0,16% на сделку) и 1 час;
+#   2-й эшелон: формация 1 час с порогом оборота 15 млн (+0,24%, 50 сделок, обе половины года в плюсе)
+#               и трендовый откат 15 мин после сильного роста: объём ×10, рост от 5%, не раньше вчера (+0,21%, 100 сделок);
+#   3-й эшелон и всё остальное — только уведомления (на истории в минусе).
+TIER2_TURNOVER = 30e6       # средний дневной оборот для 2-го эшелона, ₽
+TIER2_TREND = {"mult": 10.0, "body": 0.05, "K": 4, "min_value": 5e6, "trend_days": 1}
+
+
+def tier_rules(tier, tf, kind):
+    """(можно ли торговать, пояснение) для эшелона, таймфрейма и вида сигнала ("form" / "trend")."""
+    if tier == "index":
+        if kind == "form" and tf in (15, 60):
+            return True, ""
+        if kind == "form" and tf == 5:
+            return True, ""                                          # 5 мин — только если включены в настройках
+        return False, "акции индекса: трендовые откаты на истории в минусе — только уведомление"
+    if tier == "2":
+        if kind == "form" and tf == 60:
+            return True, ""
+        if kind == "trend" and tf == 15:
+            return True, ""
+        return False, "2-й эшелон: этот вариант на истории в минусе — только уведомление"
+    return False, "3-й эшелон / прочее: на истории в минусе — только уведомление"
+
 
 def find_trend_pullback(bars, sp, em20):
     """
@@ -213,7 +238,8 @@ def find_trend_pullback(bars, sp, em20):
         if not (touch and conf):
             continue
         days = sorted({b["t"].date() for b in bars})
-        first_day = days[-TREND_DAYS - 1] if len(days) > TREND_DAYS else days[0]
+        nd = sp.get("trend_days", TREND_DAYS)
+        first_day = days[-nd - 1] if len(days) > nd else days[0]
         imp = None
         k = t - 1
         while k > 0 and bars[k]["t"].date() >= first_day:
@@ -419,6 +445,7 @@ class AutoTrader:
         self.hist_loaded = {}
         self.last_bar_check = None
         self.universe = []
+        self.tier = {}
         self.waits = {}
         self.final_scan = None
         self._terms_cache = {}
@@ -726,20 +753,48 @@ class AutoTrader:
                 if len(bars) < 25:
                     continue
                 p = params(sp, tf)
+                tier = self._tier(tk, b5)
+                if tier == "2" and tf == 60:
+                    p["min_value"] = 15e6                                   # 2-й эшелон: порог оборота ниже
                 em = ema([b["c"] for b in bars])
                 self._note_impulse(tk, bars, p, em)
                 self._update_waits(tk, p, bars, em)
                 sig = find_pullback(bars, p, em)
+                kind = "form"
                 if not sig and sp.get("trend_on", True):
-                    sig = find_trend_pullback(bars, p, em)
+                    pt = dict(p, **TIER2_TREND) if (tier == "2" and tf == 15 and sp.get("tier_profile", True)) else p
+                    sig = find_trend_pullback(bars, pt, em)
+                    kind = "trend"
                 if sig:
                     sig["tf"] = tf
+                    sig["tier"] = tier
+                    if sp.get("tier_profile", True) and self._terms(tk)[0] == "share":
+                        ok, why_no = tier_rules(tier, tf, kind)
+                        if kind == "trend" and sp.get("trend_trade", False):
+                            ok = True                                       # «торговать все трендовые откаты» в настройках
+                        sig["tradeable"], sig["why_no"] = ok, why_no
                     self._pullback_signal(tk, sig)
         self._push()
 
     @staticmethod
     def _tf_name(tf):
         return "1ч" if tf == 60 else f"{tf}м"
+
+    def _tier(self, tk, b5):
+        """Эшелон: индекс / 2 (средний дневной оборот ≥ 30 млн ₽) / 3 — по загруженной истории 5 мин."""
+        if tk in self.tier:
+            return self.tier[tk]
+        if tk in self.tickers:
+            self.tier[tk] = "index"
+            return "index"
+        days = {}
+        for b in b5:
+            m = b["t"].hour * 60 + b["t"].minute
+            if 600 <= m < 1120:
+                days[b["t"].date()] = days.get(b["t"].date(), 0) + b["val"]
+        med = _median(list(days.values())) if days else 0
+        self.tier[tk] = "2" if med >= TIER2_TURNOVER else "3"
+        return self.tier[tk]
 
     def _update_waits(self, tk, p, bars, em):
         """Строки «жду отката»: сколько осталось до EMA20, не отменён ли импульс, не вышло ли время."""
@@ -822,8 +877,8 @@ class AutoTrader:
         ti = te.hour * 60 + te.minute                       # время последней свечи импульса (как в проверке на истории)
         if not self.trade:
             why = "наблюдение — торговля выключена (кнопка «Старт»)"
-        elif trend and not sp.get("trend_trade", False):
-            why = "трендовый откат (объём был раньше) — только уведомление, на истории такие входы в минусе"
+        elif not sig.get("tradeable", (not trend) or sp.get("trend_trade", False)):
+            why = sig.get("why_no") or "трендовый откат (объём был раньше) — только уведомление, на истории такие входы в минусе"
         elif sig.get("late"):
             why = (f"поздний откат ({sig['age']} свечей после импульса, на истории в этом случае хуже) — только уведомление")
         elif not (sp["from_min"] <= tc < sp["to_min"]) or ti < sp["from_min"]:
