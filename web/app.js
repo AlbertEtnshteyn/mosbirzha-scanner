@@ -152,12 +152,12 @@ function renderState(st) {
 
   // формации
   const K = st.spikes || [];
-  $("#spikes").innerHTML = K.length ? K.map(([tm, tk, tfn, val, mult, body, why]) => {
+  $("#spikes").innerHTML = K.length ? K.map(([tm, tk, tfn, val, mult, body, why, sigt]) => {
     let w = why || "";
     if (w.startsWith("жду") && st.market != null && st.market !== 0 && (st.market > 0) !== (body > 0)) w += " (индекс против)";
     const tf = { "5м": 5, "15м": 15, "1ч": 60 }[tfn] || 15;
     return `<div class="item tap ${body > 0 ? "l" : "s"}" data-chart="${esc(tk)}" data-tf="${tf}">
-      <div class="hd"><span class="tk">${esc(tk)} <span class="muted small">${esc(tfn)} · ${esc(tm)}</span></span>
+      <div class="hd"><span class="tk">${esc(tk)} <span class="muted small">${esc(tfn)} · импульс ${esc(tm)}${sigt ? " · <b style='color:#e6e9f0'>сигнал " + esc(sigt) + "</b>" : ""}</span></span>
         <span class="${body > 0 ? "up" : "down"}" style="font-weight:700">${body > 0 ? "ЛОНГ ⬆" : "ШОРТ ⬇"}</span></div>
       <div class="meta">оборот ${(val / 1e6).toFixed(0)} млн · ×${(+mult).toFixed(1)} · импульс ${pct(body * 100)}</div>
       <div class="meta" style="color:#c5cad6">${esc(w)}</div></div>`;

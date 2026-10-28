@@ -202,7 +202,7 @@ class App(tk.Tk):
         lnb.add(lf, text="Индекс и акции (от открытия 10:00)")
         sf = ttk.Frame(lnb, padding=4)
         lnb.add(sf, text="Всплески объёма")
-        self.spk_tree = self._tree(sf, [("time", "Время", 50), ("ticker", "Бумага", 60), ("tf", "ТФ", 35), ("val", "Оборот, млн", 75),
+        self.spk_tree = self._tree(sf, [("time", "Импульс", 55), ("sig", "Сигнал", 55), ("ticker", "Бумага", 60), ("tf", "ТФ", 35), ("val", "Оборот, млн", 75),
                                         ("mult", "×", 40), ("move", "Импульс", 65), ("dir", "Ожидание", 75),
                                         ("reason", "Статус", 125)])
         self.scan_lbl = ttk.Label(lf, text="—")
@@ -220,7 +220,7 @@ class App(tk.Tk):
         self.pos_tree = self._tree(rf, [("ticker", "Бумага", 60), ("strat", "Стратегия", 70), ("side", "Сторона", 55), ("lots", "Лотов", 55),
                                         ("entry", "Вход", 65), ("stop", "Стоп", 65), ("take", "Тейк", 75), ("last", "Сейчас", 65),
                                         ("res", "Итог", 60)])
-        for tv, col in ((self.scan_tree, 0), (self.spk_tree, 1), (self.pos_tree, 0)):
+        for tv, col in ((self.scan_tree, 0), (self.spk_tree, 2), (self.pos_tree, 0)):
             tv.bind("<Double-1>", lambda e, tv=tv, col=col: self._chart_from(tv, col))
             tv.bind("<Button-3>", lambda e, tv=tv, col=col: self._row_menu(e, tv, col))
         hf = ttk.LabelFrame(vp, text="Закрытые сделки", padding=4)
@@ -856,12 +856,14 @@ class App(tk.Tk):
             self.scan_tree.insert("", "end", tags=tag, values=(tk, f"{mv * 100:+.2f}%", why))
         self.spk_tree.delete(*self.spk_tree.get_children())
         mk = snap.get("market")
-        for tm, tkr, tfn, val, mult, body, why in reversed(snap.get("spikes", [])):
+        for row in reversed(snap.get("spikes", [])):
+            tm, tkr, tfn, val, mult, body, why = row[:7]
+            sig_t = row[7] if len(row) > 7 and row[7] else "—"
             d = "ЛОНГ ⬆" if body > 0 else "ШОРТ ⬇"
             if why.startswith("жду") and mk is not None and mk != 0 and (mk > 0) != (body > 0):
                 why = why + " (индекс против)"
             self.spk_tree.insert("", "end", tags=(("pos" if body > 0 else "neg"),),
-                                 values=(tm, tkr, tfn, f"{val / 1e6:.0f}", f"{mult:.1f}", f"{body * 100:+.2f}%", d, why))
+                                 values=(tm, sig_t, tkr, tfn, f"{val / 1e6:.0f}", f"{mult:.1f}", f"{body * 100:+.2f}%", d, why))
         self.pos_tree.delete(*self.pos_tree.get_children())
         for p in snap["positions"]:
             last = p.get("last")
@@ -1041,7 +1043,7 @@ class App(tk.Tk):
         if tkr:
             tf = 5
             if tv is self.spk_tree:
-                tfn = tv.item(tv.selection()[0], "values")[2]
+                tfn = tv.item(tv.selection()[0], "values")[3]
                 tf = {"5м": 5, "15м": 15, "1ч": 60}.get(tfn, 5)
             self.open_chart(tkr, tf)
 

@@ -927,7 +927,7 @@ class AutoTrader:
             if k not in self.seen_spikes:
                 self.seen_spikes.add(k)
                 self.spikes.append([b["t"].strftime("%H:%M"), tk, self._tf_name(p["tf"]), b["val"], b["val"] / nb / med, body,
-                                    "жду отката к EMA20"])
+                                    "жду отката к EMA20", ""])
                 self.waits[(tk, self._tf_name(p["tf"]), b["t"].strftime("%H:%M"))] = {
                     "side": 1 if body > 0 else -1, "open": bars[a]["o"], "date": b["t"].date(), "age": 0}
                 self.log(f"Всплеск объёма {tk} ({self._tf_name(p['tf'])}, {b['t']:%H:%M}): оборот {b['val'] / 1e6:.0f} млн ₽ "
@@ -954,20 +954,24 @@ class AutoTrader:
         imp_t = imp["t"].strftime("%d.%m %H:%M" if trend else "%H:%M")
         txt = (f"{'Трендовый откат' if trend else 'Откат'} к EMA20 {tk} ({tfn}): импульс {imp_t} ({sig['body'] * 100:+.2f}%, "
                f"×{sig['mult']:.1f}), касание {sig['touch']['t']:%H:%M}, подтверждение {sig['confirm']['t']:%H:%M}")
+        sig_t = (sig["confirm"]["t"] + timedelta(minutes=sig["tf"])).strftime("%H:%M")   # закрытие свечи-подтверждения = сигнал
         status = "ПОДТВЕРЖДЁН"
         if sp["index"] and self._terms(tk)[0] == "share" and \
                 (self.market is None or self.market == 0 or (self.market > 0) != (s > 0)):
             status = "против индекса"
         if trend:
             self.spikes.append([sig["confirm"]["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"],
-                                "ТРЕНД: " + status + f" (импульс {imp_t})"])
+                                "ТРЕНД: " + status + f" (импульс {imp_t})", sig_t])
         else:
             for row in reversed(self.spikes):
                 if row[1] == tk and row[2] == tfn and row[0] == imp["t"].strftime("%H:%M"):
                     row[6] = status
+                    while len(row) < 8:
+                        row.append("")
+                    row[7] = sig_t
                     break
             else:
-                self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status])
+                self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status, sig_t])
         enter, why = False, ""
         tc = sig["confirm"]["t"].hour * 60 + sig["confirm"]["t"].minute + sig["tf"]      # время закрытия свечи-подтверждения
         prof = trade_profile(sig.get("tier", "index"), sig["tf"], "trend" if trend else "form", sp.get("all_hours", True))
