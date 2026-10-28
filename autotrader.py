@@ -96,7 +96,7 @@ def _median(xs):
     return xs[m] if len(xs) % 2 else (xs[m - 1] + xs[m]) / 2
 
 
-def _impulse(bars, i, sp, minv):
+def _impulse(bars, i, sp, minv, em=None):
     """
     Импульс — серия из 1..K свечей подряд, заканчивающаяся свечой i (свеча i — по направлению импульса):
     движение от открытия первой свечи ≥ порога, средний оборот серии ≥ mult × медиана оборота 20 свечей до неё.
@@ -119,7 +119,9 @@ def _impulse(bars, i, sp, minv):
         mv = bi["c"] / bars[a]["o"] - 1
         if med > 0 and abs(mv) >= sp["body"] and total / k >= sp["mult"] * med and total >= minv:
             s = 1 if mv > 0 else -1
-            if (bi["c"] - bi["o"]) * s > 0:
+            # свеча i — по направлению импульса и закрылась по свою сторону EMA20 (рост — над EMA20, падение — под ней).
+            # Красная свеча над EMA20 после роста — это начало отката, а не шорт-импульс.
+            if (bi["c"] - bi["o"]) * s > 0 and (em is None or (bi["c"] - em[i]) * s > 0):
                 return a, s, med, mv, total
     return None
 
@@ -136,7 +138,7 @@ def find_pullback(bars, sp, em=None, last=None):
     em = em or ema([b["c"] for b in bars])
     minv = sp["min_value"]
     for i in range(max(1, last - sp["win"]), last - 1):
-        imp = _impulse(bars, i, sp, minv)
+        imp = _impulse(bars, i, sp, minv, em)
         if not imp:
             continue
         a, s, med, body, total = imp
@@ -347,6 +349,7 @@ class AutoTrader:
         self.hist_loaded = {}
         self.last_bar_check = None
         self.universe = []
+        self.waits = {}
         self._terms_cache = {}
         self.state_path = state_path or STATE_FILE
         self.status = "остановлен"
@@ -469,7 +472,7 @@ class AutoTrader:
                 return        # не удалось закрыть — попробуем снова на следующем шаге
         self.st = self._fresh(now.date().isoformat())
         self.opens, self.open_tries, self.scan_rows, self.market, self.prices = {}, {}, [], None, {}
-        self.spikes, self.seen_spikes, self.hist, self.hist_loaded = [], set(), {}, {}
+        self.spikes, self.seen_spikes, self.hist, self.hist_loaded, self.waits = [], set(), {}, {}, {}
         self._save()
 
     def _step(self, now):
@@ -641,8 +644,10 @@ class AutoTrader:
                 if len(bars) < 25:
                     continue
                 p = params(sp, tf)
-                self._note_impulse(tk, bars, p)
-                sig = find_pullback(bars, p)
+                em = ema([b["c"] for b in bars])
+                self._note_impulse(tk, bars, p, em)
+                self._update_waits(tk, p, bars, em)
+                sig = find_pullback(bars, p, em)
                 if sig:
                     sig["tf"] = tf
                     self._pullback_signal(tk, sig)
@@ -652,9 +657,32 @@ class AutoTrader:
     def _tf_name(tf):
         return "1ч" if tf == 60 else f"{tf}м"
 
-    def _note_impulse(self, tk, bars, p):
+    def _update_waits(self, tk, p, bars, em):
+        """Строки «жду отката»: сколько осталось до EMA20, не отменён ли импульс, не вышло ли время."""
+        tfn = self._tf_name(p["tf"])
+        last = bars[-1]
+        for row in self.spikes:
+            if row[1] != tk or row[2] != tfn or not row[6].startswith("жду"):
+                continue
+            w = self.waits.get((tk, tfn, row[0]))
+            if not w:
+                continue
+            s = w["side"]
+            if last["t"].date() != w["date"] or (last["c"] - w["open"]) * s < 0:
+                row[6] = "отменён (ушло за начало импульса)" if last["t"].date() == w["date"] else "время вышло"
+                continue
+            w["age"] += 1
+            if w["age"] > p["win"]:
+                row[6] = "время вышло"
+                continue
+            dist = (em[-1] / last["c"] - 1) * 100
+            touched = (last["l"] <= em[-1]) if s > 0 else (last["h"] >= em[-1])
+            row[6] = ("коснулся EMA20 — жду подтверждения" if touched or (last["c"] - em[-1]) * s <= 0
+                      else f"жду отката к EMA20 ({dist:+.1f}%)")
+
+    def _note_impulse(self, tk, bars, p, em=None):
         """Таблица «всплески объёма»: импульсная свеча, только что закрытая."""
-        imp = _impulse(bars, len(bars) - 1, p, p["min_value"])
+        imp = _impulse(bars, len(bars) - 1, p, p["min_value"], em)
         if imp:
             a, s_, med, body, total = imp
             nb = len(bars) - a
@@ -664,6 +692,8 @@ class AutoTrader:
                 self.seen_spikes.add(k)
                 self.spikes.append([b["t"].strftime("%H:%M"), tk, self._tf_name(p["tf"]), b["val"], b["val"] / nb / med, body,
                                     "жду отката к EMA20"])
+                self.waits[(tk, self._tf_name(p["tf"]), b["t"].strftime("%H:%M"))] = {
+                    "side": 1 if body > 0 else -1, "open": bars[a]["o"], "date": b["t"].date(), "age": 0}
                 self.log(f"Всплеск объёма {tk} ({self._tf_name(p['tf'])}, {b['t']:%H:%M}): оборот {b['val'] / 1e6:.0f} млн ₽ "
                          f"(×{b['val'] / nb / med:.1f}, свечей: {nb}), {'рост' if body > 0 else 'падение'} {abs(body) * 100:.2f}% — жду отката к EMA20.")
                 self.on_event("impulse", {"ticker": tk, "tf": self._tf_name(p["tf"]), "t": b["t"].strftime("%H:%M"),
