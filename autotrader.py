@@ -42,8 +42,18 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "all_market": True, "max_pos": 5, "share": 0.10,
+                  "markets": ["all_shares"], "max_pos": 5, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25}
+# Какими инструментами торгует формация (выбор в настройках)
+MARKETS = [
+    ("all_shares", "Все российские акции"),
+    ("blue", "Голубые фишки Мосбиржи"),
+    ("imoex", "Акции индекса Мосбиржи"),
+    ("third", "Третий эшелон"),
+    ("fx_metals", "Валюты и металлы"),
+    ("idx_comm", "Индексы и товары (фьючерсы)"),
+    ("futures", "Фьючерсы (все, ближайшие контракты)"),
+]
 HIST_DAYS = 5                 # сколько календарных дней истории грузить для EMA20 и медианы объёма
 
 
@@ -195,6 +205,46 @@ class SandboxBroker:
     def all_shares(self):
         return self.ti.all_shares()
 
+    def universe(self, markets, index_list, log=print):
+        """Список инструментов по выбранным в настройках группам."""
+        out, shares = set(), None
+
+        def get_shares():
+            nonlocal shares
+            if shares is None:
+                shares = self.ti.all_shares()
+            return shares
+        for m in markets:
+            try:
+                if m == "all_shares":
+                    out |= set(get_shares())
+                elif m == "imoex":
+                    out |= set(index_list)
+                elif m == "blue":
+                    out |= set(sc.index_members("MOEXBC", sc.BLUE_CHIPS, 10))
+                elif m == "third":
+                    bmi = sc.index_members("MOEXBMI", None, 50)
+                    out |= set(get_shares()) - set(bmi or index_list)
+                elif m == "fx_metals":
+                    out |= set(self.ti.all_currencies())
+                elif m == "idx_comm":
+                    out |= set(self.ti.nearest_futures({"TYPE_INDEX", "TYPE_COMMODITY"}))
+                elif m == "futures":
+                    out |= set(self.ti.nearest_futures())
+            except sc.CertError:
+                raise
+            except Exception as e:
+                log(f"Группа «{dict(MARKETS).get(m, m)}» не загружена: {e}")
+        return sorted(out)
+
+    def terms(self, tk):
+        """(вид инструмента, ₽ за 1 единицу цены на 1 лот, обеспечение на 1 лот или None)."""
+        sh = self.ti.share(tk)
+        if sh.get("kind") == "future":
+            pv, margin = self.ti.future_terms(tk)
+            return "future", pv * sh["lot"], margin
+        return sh.get("kind", "share"), float(sh["lot"]), None
+
     def order(self, tk, lots, side):
         """Рыночная заявка. Возвращает цену исполнения (или None, если брокер её не сообщил)."""
         js = self.ti.sandbox_order(self.acc, tk, lots, side)
@@ -223,6 +273,7 @@ class AutoTrader:
         self.hist_loaded = {}
         self.last_bar_check = None
         self.universe = []
+        self._terms_cache = {}
         self.state_path = state_path or STATE_FILE
         self.status = "остановлен"
         self.scan_rows = []          # [(тикер, движение, статус)]
@@ -312,17 +363,14 @@ class AutoTrader:
                     self.b.prepare()
                     self.tickers = self.b.tickers()
                     self.universe = list(self.tickers)
-                    if self.sp["all_market"]:
-                        try:
-                            allsh = self.b.all_shares()
-                            self.universe = sorted(set(allsh) | set(self.tickers))
-                        except sc.CertError:
-                            raise
-                        except Exception as e:
-                            self.log(f"Список всех акций не получен ({e}) — всплески ищу по акциям индекса.")
+                    if hasattr(self.b, "universe"):
+                        u = self.b.universe(self.sp["markets"], self.tickers, self.log)
+                        if u:
+                            self.universe = u
                     prepared_for = now.date()
-                    self.log(f"{now:%d.%m} рабочий день начат: индекс — {len(self.tickers)} акций, "
-                             f"поиск всплесков — {len(self.universe)} акций.")
+                    names = ", ".join(dict(MARKETS).get(m, m) for m in self.sp["markets"])
+                    self.log(f"{now:%d.%m} рабочий день начат: индекс — {len(self.tickers)} акций; формацию ищу в группах: "
+                             f"{names} — всего {len(self.universe)} инструментов.")
                 self._step(now)
             except sc.CertError:
                 raise
@@ -474,9 +522,17 @@ class AutoTrader:
                 else:
                     self.hist[tk].append(r)
             self.hist[tk] = self.hist[tk][-1500:]
-        lot = self.b.share(tk)["lot"]
-        return [dict(r, val=r["v"] * lot * (r["h"] + r["l"] + r["c"]) / 3)
+        kind, per_lot, _ = self._terms(tk)
+        return [dict(r, val=r["v"] * per_lot * (r["h"] + r["l"] + r["c"]) / 3)
                 for r in self.hist[tk] if r["t"] + timedelta(minutes=5) <= naive]      # только закрытые свечи
+
+    def _terms(self, tk):
+        if tk not in self._terms_cache:
+            if hasattr(self.b, "terms"):
+                self._terms_cache[tk] = self.b.terms(tk)
+            else:
+                self._terms_cache[tk] = ("share", float(self.b.share(tk)["lot"]), None)
+        return self._terms_cache[tk]
 
     def _scan_pullbacks(self, now):
         """После закрытия каждой 5-минутки: всплески объёма и формация «откат к EMA20 + подтверждение» на 5м/15м/1ч."""
@@ -549,7 +605,8 @@ class AutoTrader:
         txt = (f"Откат к EMA20 {tk} ({tfn}): импульс {imp['t']:%H:%M} ({sig['body'] * 100:+.2f}%, ×{sig['mult']:.1f}), касание "
                f"{sig['touch']['t']:%H:%M}, подтверждение {sig['confirm']['t']:%H:%M}")
         status = "ПОДТВЕРЖДЁН"
-        if sp["index"] and (self.market is None or self.market == 0 or (self.market > 0) != (s > 0)):
+        if sp["index"] and self._terms(tk)[0] == "share" and \
+                (self.market is None or self.market == 0 or (self.market > 0) != (s > 0)):
             status = "против индекса"
         for row in reversed(self.spikes):
             if row[1] == tk and row[2] == tfn and row[0] == imp["t"].strftime("%H:%M"):
@@ -664,7 +721,8 @@ class AutoTrader:
         if strat == "spike" and ((stop_level - px) * side >= 0 or (t1 - px) * side < 0.5 * abs(px - stop_level)):
             self.log(f"  {tk}: цена {px:.4g} уже слишком близко к стопу или тейку — вход невыгоден, пропуск")
             return
-        lots = int(alloc // (px * sh["lot"]))
+        kind, per_lot, margin = self._terms(tk)
+        lots = int(alloc // (margin if margin else px * per_lot))
         if lots < 1:
             self.log(f"  {tk}: на долю капитала не хватает даже на один лот, пропуск")
             return

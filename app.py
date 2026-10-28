@@ -44,7 +44,7 @@ SETTINGS = os.path.join(sc.HERE, "settings.json")
 DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_token": True,
             "auto_signals": True, "auto_journal": True, "remember_token": False, "token": "",
             "rescan": False, "autostart": False, "day_on": True, "sound_on": True,
-            "spike_on": True, "spike_tfs": [15, 60], "spike_all": True, "spike_half": 50, "spike_trail": 1.0,
+            "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "spike_half": 50, "spike_trail": 1.0,
             "spike_max": 5, "two_takes": True,
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True}
 
@@ -264,8 +264,18 @@ class App(tk.Tk):
         ttk.Button(g5, text="Сохранить настройки", command=self.save).grid(row=5, column=1, sticky="w", pady=12)
 
         # --- Настройки
-        t4 = ttk.Frame(nb, padding=14)
-        nb.add(t4, text="Настройки")
+        t4o = ttk.Frame(nb)
+        nb.add(t4o, text="Настройки")
+        cv4 = tk.Canvas(t4o, highlightthickness=0, bg=ttk.Style().lookup("TFrame", "background") or None)
+        sb4 = ttk.Scrollbar(t4o, orient="vertical", command=cv4.yview)
+        cv4.configure(yscrollcommand=sb4.set)
+        sb4.pack(side="right", fill="y")
+        cv4.pack(side="left", fill="both", expand=True)
+        t4 = ttk.Frame(cv4, padding=14)
+        cv4.create_window(0, 0, window=t4, anchor="nw")
+        t4.bind("<Configure>", lambda e: cv4.configure(scrollregion=cv4.bbox("all")))
+        cv4.bind("<Enter>", lambda e: cv4.bind_all("<MouseWheel>", lambda ev: cv4.yview_scroll(int(-ev.delta / 120), "units")))
+        cv4.bind("<Leave>", lambda e: cv4.unbind_all("<MouseWheel>"))
         self.v_thr = tk.StringVar(value=f"{self.s['threshold']:g}")
         self.v_entry = tk.StringVar(value=self.s["entry"])
         self.v_cap = tk.StringVar(value=str(int(self.s["capital"])))
@@ -281,7 +291,7 @@ class App(tk.Tk):
         self.v_takes = tk.StringVar(value="два тейка" if self.s.get("two_takes", True) else "один тейк у хая")
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
         self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [15, 60])) for tf in (5, 15, 60)}
-        self.v_spk_all = tk.BooleanVar(value=self.s.get("spike_all", True))
+        self.v_mk = {k: tk.BooleanVar(value=k in self.s.get("spike_markets", ["all_shares"])) for k, _ in at.MARKETS}
         self.v_spk_half = tk.StringVar(value=str(self.s.get("spike_half", 50)))
         self.v_spk_trail = tk.StringVar(value=f"{self.s.get('spike_trail', 1.0):g}")
         self.v_spk_max = tk.StringVar(value=str(self.s.get("spike_max", 5)))
@@ -321,13 +331,19 @@ class App(tk.Tk):
         ttk.Label(f, text="Таймфреймы:").pack(side="left")
         for tf in (5, 15, 60):
             ttk.Checkbutton(f, text="1 час" if tf == 60 else f"{tf} мин", variable=self.v_spk_tf[tf]).pack(side="left", padx=(6, 0))
-        ttk.Checkbutton(f, text="искать по всем акциям биржи (иначе только индекс)", variable=self.v_spk_all).pack(side="left", padx=(16, 0))
+        r += 1
+        ttk.Label(g, text="Чем торговать:").grid(row=r, column=0, sticky="e", padx=(0, 6))
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
+        for i, (k, name) in enumerate(at.MARKETS):
+            ttk.Checkbutton(f, text=name, variable=self.v_mk[k]).grid(row=i // 3, column=i % 3, sticky="w", padx=(0, 14))
         r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(f, text="Тейки:").pack(side="left")
         ttk.Combobox(f, textvariable=self.v_takes, width=15, state="readonly", values=["два тейка", "один тейк у хая"]).pack(side="left", padx=(4, 12))
         ttk.Label(f, text="Закрыть на тейке1, %:").pack(side="left")
         ttk.Combobox(f, textvariable=self.v_spk_half, width=5, state="readonly", values=["30", "50", "70", "100"]).pack(side="left", padx=(4, 12))
+        r += 1
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(f, text="Трейлинг, R (расстояние до стопа):").pack(side="left")
         ttk.Combobox(f, textvariable=self.v_spk_trail, width=5, state="readonly", values=["0.5", "1", "1.5", "2"]).pack(side="left", padx=(4, 12))
         ttk.Label(f, text="Макс. позиций:").pack(side="left")
@@ -337,7 +353,7 @@ class App(tk.Tk):
                  + "\nСтоп — под самой низкой точкой всего отката (с закруглением) с запасом. На сделку — 10% капитала."
                  + "\nДва тейка (полпути до хая 50% → б/у и трейлинг, хай — 50% остатка): на 15 мин в плюсе 64% сделок, в среднем +0,08% (трейлинг 1R)"
                  + " или +0,12% (1,5R); один тейк у хая: в плюсе 53%, в среднем +0,24%.",
-                 justify="left", anchor="w", font=("Segoe UI", 9), fg="#555", bg=bg).grid(row=r, column=1, sticky="w")
+                 justify="left", anchor="w", font=("Segoe UI", 9), fg="#555", bg=bg, wraplength=760).grid(row=r, column=1, sticky="w")
         # --- движение дня
         r += 1
         ttk.Separator(g).grid(row=r, column=0, columnspan=2, sticky="ew", pady=8)
@@ -486,7 +502,7 @@ class App(tk.Tk):
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
                       rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(), sound_on=self.v_sound.get(),
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
-                      spike_all=self.v_spk_all.get(), spike_half=int(self.v_spk_half.get()),
+                      spike_markets=[k for k, _ in at.MARKETS if self.v_mk[k].get()] or ["imoex"], spike_half=int(self.v_spk_half.get()),
                       spike_trail=float(self.v_spk_trail.get()), spike_max=int(self.v_spk_max.get()),
                       two_takes=self.v_takes.get() == "два тейка",
                       tg_token=self.v_tg_tok.get().strip(), tg_chat=self.v_tg_chat.get().strip(),
@@ -663,7 +679,7 @@ class App(tk.Tk):
         log = lambda m: self.q.put(("log", f"[робот {now_msk():%H:%M:%S}] {m}\n"))
         broker = at.SandboxBroker(tok, float(self.s["capital"]), log=log)
         spike = {"on": bool(self.s.get("spike_on")), "tfs": list(self.s.get("spike_tfs", [15, 60])),
-                 "all_market": bool(self.s.get("spike_all", True)), "half": int(self.s.get("spike_half", 50)) / 100,
+                 "markets": list(self.s.get("spike_markets", ["all_shares"])), "half": int(self.s.get("spike_half", 50)) / 100,
                  "trail_r": float(self.s.get("spike_trail", 1.0)), "max_pos": int(self.s.get("spike_max", 5)),
                  "two_takes": bool(self.s.get("two_takes", True))}
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,

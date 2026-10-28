@@ -431,6 +431,33 @@ def iss_get(path, params, retries=4):
             time.sleep(2 * (i + 1))
 
 
+BLUE_CHIPS = ["SBER", "GAZP", "LKOH", "GMKN", "NVTK", "ROSN", "TATN", "YDEX", "PLZL", "SNGSP", "MTSS", "CHMF",
+              "NLMK", "T", "PHOR"]
+
+
+def index_members(code, fallback=None, min_n=10):
+    """Состав индекса Мосбиржи (IMOEX, MOEXBC — голубые фишки, MOEXBMI — широкий рынок)."""
+    try:
+        out, start = set(), 0
+        while True:
+            js = iss_get(f"/statistics/engines/stock/markets/index/analytics/{code}.json", {"limit": 100, "start": start})
+            b = js["analytics"]
+            key = "secids" if "secids" in b["columns"] else "ticker"
+            k = b["columns"].index(key)
+            rows = [row[k] for row in b["data"] if row[k]]
+            out.update(rows)
+            if len(b["data"]) < 100:
+                break
+            start += 100
+        if len(out) >= min_n:
+            return sorted(out)
+    except CertError:
+        raise
+    except Exception as e:
+        print(f"Состав индекса {code} не получен ({e}), беру запасной список.")
+    return fallback
+
+
 def imoex_tickers():
     try:
         js = iss_get("/statistics/engines/stock/markets/index/analytics/IMOEX.json", {"limit": 100})
@@ -528,9 +555,64 @@ class TInvest:
             if ins.get("forQualInvestorFlag"):
                 continue
             tk = ins["ticker"]
-            self._shares[tk] = {"uid": ins["uid"], "lot": int(ins.get("lot", 1)), "short": bool(ins.get("shortEnabledFlag", False))}
+            self._shares[tk] = {"uid": ins["uid"], "lot": int(ins.get("lot", 1)), "short": bool(ins.get("shortEnabledFlag", False)),
+                                "kind": "share", "pv": 1.0}
             out.append(tk)
         return sorted(out)
+
+    def all_currencies(self):
+        """Валюты и драгметаллы валютного рынка Мосбиржи (CETS): доллар, юань, золото, серебро и др."""
+        js = self.call("InstrumentsService", "Currencies", {"instrumentStatus": "INSTRUMENT_STATUS_BASE"})
+        out = []
+        for ins in js.get("instruments", []):
+            if ins.get("classCode") != "CETS" or ins.get("apiTradeAvailableFlag") is False:
+                continue
+            tk = ins["ticker"]
+            if not tk.endswith("TOM"):          # только расчёты «завтра» — основной ликвидный инструмент
+                continue
+            self._shares[tk] = {"uid": ins["uid"], "lot": int(ins.get("lot", 1)), "short": bool(ins.get("shortEnabledFlag", False)),
+                                "kind": "currency", "pv": 1.0, "name": ins.get("name", tk)}
+            out.append(tk)
+        return sorted(out)
+
+    def nearest_futures(self, asset_types=None):
+        """Ближайшие фьючерсы по каждому базовому активу (не истекающие в ближайшие 3 дня)."""
+        js = self.call("InstrumentsService", "Futures", {"instrumentStatus": "INSTRUMENT_STATUS_BASE"})
+        soon = datetime.now(timezone.utc) + timedelta(days=3)
+        best = {}
+        for ins in js.get("instruments", []):
+            if ins.get("classCode") != "SPBFUT" or ins.get("apiTradeAvailableFlag") is False:
+                continue
+            if asset_types and ins.get("assetType") not in asset_types:
+                continue
+            try:
+                exp = datetime.fromisoformat(ins["expirationDate"].replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if exp < soon:
+                continue
+            key = ins.get("basicAsset") or ins["ticker"][:2]
+            if key not in best or exp < best[key][0]:
+                best[key] = (exp, ins)
+        out = []
+        for exp, ins in best.values():
+            tk = ins["ticker"]
+            self._shares[tk] = {"uid": ins["uid"], "lot": int(ins.get("lot", 1)), "short": True, "kind": "future",
+                                "pv": None, "name": ins.get("name", tk), "asset": ins.get("assetType", "")}
+            out.append(tk)
+        return sorted(out)
+
+    def future_terms(self, ticker):
+        """Стоимость пункта цены (₽ за 1 единицу цены) и гарантийное обеспечение на 1 контракт."""
+        sh = self.share(ticker)
+        if sh.get("pv") and sh.get("margin"):
+            return sh["pv"], sh["margin"]
+        js = self.call("InstrumentsService", "GetFuturesMargin", {"instrumentId": sh["uid"]})
+        step = self.q(js.get("minPriceIncrement"))
+        step_rub = self.q(js.get("minPriceIncrementAmount"))
+        sh["pv"] = step_rub / step if step else 1.0
+        sh["margin"] = max(self.q(js.get("initialMarginOnBuy")), self.q(js.get("initialMarginOnSell")))
+        return sh["pv"], sh["margin"]
 
     @staticmethod
     def q(x):
@@ -545,7 +627,7 @@ class TInvest:
                            {"idType": "INSTRUMENT_ID_TYPE_TICKER", "classCode": "TQBR", "id": ticker})
             ins = js["instrument"]
             self._shares[ticker] = {"uid": ins["uid"], "lot": int(ins.get("lot", 1)),
-                                    "short": bool(ins.get("shortEnabledFlag", False))}
+                                    "short": bool(ins.get("shortEnabledFlag", False)), "kind": "share", "pv": 1.0}
         return self._shares[ticker]
 
     INTERVALS = {1: "CANDLE_INTERVAL_1_MIN", 5: "CANDLE_INTERVAL_5_MIN", 15: "CANDLE_INTERVAL_15_MIN", 60: "CANDLE_INTERVAL_HOUR",
