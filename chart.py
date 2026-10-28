@@ -74,6 +74,9 @@ class ChartWindow(tk.Toplevel):
                        bg=BG, fg=TXT, selectcolor=GRID, activebackground=BG, activeforeground=TXT).pack(side="left", padx=10)
         self.sum_lbl = tk.Label(legend, text="", fg=TXT, bg=BG)
         self.sum_lbl.pack(side="left", padx=6)
+        self.go_btn = tk.Button(legend, text="◀ к формации", relief="flat", bg=GRID, fg=TXT, command=self.goto_trade)
+        self.go_btn.pack(side="left", padx=4)
+        self._go_i = 0
         tk.Label(legend, text="колесо мыши — масштаб, перетаскивание — прокрутка", fg="#6b7080", bg=BG).pack(side="right")
         self.cv = tk.Canvas(self, bg=BG, highlightthickness=0)
         self.cv.pack(fill="both", expand=True)
@@ -179,8 +182,20 @@ class ChartWindow(tk.Toplevel):
             return
         wins = sum(1 for t in done if t["result"] > 0)
         tot = sum(t["result"] for t in done) * 100
-        self.sum_lbl.configure(text=f"формаций: {len(self.trades)}, закрыто {len(done)}, в плюсе {wins}, "
-                                    f"сумма {tot:+.2f}% (без комиссий и без фильтра индекса)")
+        dates = ", ".join(f"{self.bars[t['entry_i']]['t']:%d.%m %H:%M}" for t in self.trades[-4:])
+        self.sum_lbl.configure(text=f"формаций за {DEPTH[self.tf]} дн.: {len(self.trades)} ({dates}), в плюсе {wins}, "
+                                    f"сумма {tot:+.2f}% (без комиссий)")
+        self._go_i = 0
+
+    def goto_trade(self):
+        """Прокрутить график к формации (по очереди, от последней к первой)."""
+        if not self.trades:
+            return
+        tr = self.trades[-1 - (self._go_i % len(self.trades))]
+        self._go_i += 1
+        center = tr["entry_i"] + self.n_vis // 3
+        self.offset = max(0, len(self.bars) - 1 - center)
+        self.draw()
 
     def _auto(self):
         if not self.winfo_exists():
