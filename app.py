@@ -327,7 +327,7 @@ class App(tk.Tk):
         self.v_trend_on = tk.BooleanVar(value=self.s.get("trend_on", True))
         self.v_trend_trade = tk.BooleanVar(value=self.s.get("trend_trade", False))
         self.v_tier = tk.BooleanVar(value=self.s.get("tier_profile", True))
-        self.WIN = {"9-19": "09:00–19:00, выход 19:25", "10-18": "10:00–18:00, выход 18:25"}
+        self.WIN = {"9-19": "09:00–19:00, выход 23:45", "10-18": "10:00–18:00, выход 23:45"}
         self.v_win = tk.StringVar(value=self.WIN.get(self.s.get("entry_window", "9-19"), self.WIN["9-19"]))
         self.v_takes = tk.StringVar(value="два тейка" if self.s.get("two_takes", True) else "один тейк у хая")
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
