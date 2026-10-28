@@ -99,6 +99,7 @@ class App(tk.Tk):
             pass
         style.configure("Treeview", rowheight=24)
         style.configure("Big.TLabel", font=("Segoe UI", 11, "bold"))
+        self._clipboard_bindings()
 
         top = ttk.Frame(self, padding=(10, 8))
         top.pack(fill="x")
@@ -192,7 +193,11 @@ class App(tk.Tk):
         ttk.Entry(g, textvariable=self.v_cap, width=14).grid(row=r, column=1, sticky="w")
         r += 1
         ttk.Label(g, text="Токен Т-Инвестиций:").grid(row=r, column=0, sticky="w", pady=4)
-        ttk.Entry(g, textvariable=self.v_tok, width=60, show="•").grid(row=r, column=1, sticky="w")
+        tf = ttk.Frame(g); tf.grid(row=r, column=1, sticky="w")
+        self.tok_entry = ttk.Entry(tf, textvariable=self.v_tok, width=52, show="•")
+        self.tok_entry.pack(side="left")
+        ttk.Button(tf, text="Вставить из буфера", command=self.paste_token).pack(side="left", padx=(6, 0))
+        ttk.Button(tf, text="Показать", command=self.toggle_token).pack(side="left", padx=(6, 0))
         r += 1
         ttk.Checkbutton(g, text="Это токен песочницы", variable=self.v_sbtok).grid(row=r, column=1, sticky="w")
         r += 1
@@ -214,6 +219,51 @@ class App(tk.Tk):
                            "Для журнала форвард-теста это не важно, для сигналов в реальном времени лучше задать токен.",
                   foreground="#555", justify="left").pack(anchor="w", pady=(10, 0))
         self._tick()
+
+    # ------------------------------------------------------------------ буфер обмена
+    def _clipboard_bindings(self):
+        """Ctrl+V/C/X/A при любой раскладке (по коду клавиши) и меню по правой кнопке мыши."""
+        codes = {86: "<<Paste>>", 67: "<<Copy>>", 88: "<<Cut>>"}   # коды клавиш V, C, X в Windows
+
+        def on_ctrl(e):
+            return self._on_ctrl(e, codes)
+        def menu(e):
+            w = e.widget
+            m = tk.Menu(self, tearoff=0)
+            m.add_command(label="Вставить", command=lambda: w.event_generate("<<Paste>>"))
+            m.add_command(label="Копировать", command=lambda: w.event_generate("<<Copy>>"))
+            m.add_command(label="Вырезать", command=lambda: w.event_generate("<<Cut>>"))
+            m.tk_popup(e.x_root, e.y_root)
+
+        for cls in ("TEntry", "Entry", "Text"):
+            self.bind_class(cls, "<Control-KeyPress>", on_ctrl, add="+")
+            self.bind_class(cls, "<Button-3>", menu, add="+")
+            self.bind_class(cls, "<Shift-Insert>", lambda e: e.widget.event_generate("<<Paste>>"), add="+")
+
+    def _on_ctrl(self, e, codes):
+        ev = codes.get(e.keycode)
+        if ev and e.keysym.lower() not in ("v", "c", "x"):    # латиница уже обработана самим Tk
+            e.widget.event_generate(ev)
+            return "break"
+        if e.keycode == 65 and e.keysym.lower() != "a":         # Ctrl+A при русской раскладке
+            try:
+                e.widget.select_range(0, "end")
+                e.widget.icursor("end")
+            except Exception:
+                e.widget.tag_add("sel", "1.0", "end")
+            return "break"
+
+    def paste_token(self):
+        try:
+            txt = self.clipboard_get().strip()
+        except tk.TclError:
+            messagebox.showinfo(APP_TITLE, "Буфер обмена пуст. Скопируйте токен ещё раз.")
+            return
+        self.v_tok.set(txt)
+        self.log(f"Токен вставлен из буфера ({len(txt)} символов). Не забудьте нажать «Сохранить настройки».\n")
+
+    def toggle_token(self):
+        self.tok_entry.configure(show="" if self.tok_entry.cget("show") else "•")
 
     def _tree(self, parent, cols):
         fr = ttk.Frame(parent)
