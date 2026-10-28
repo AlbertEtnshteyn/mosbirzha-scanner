@@ -61,6 +61,7 @@ HERE = os.path.dirname(os.path.abspath(sys.argv[0] if getattr(sys, "frozen", Fal
 JOURNAL = os.path.join(HERE, "forward_journal.csv")
 DAYS_LOG = os.path.join(HERE, "forward_days.csv")
 SANDBOX_LOG = os.path.join(HERE, "sandbox_trades.csv")
+SPIKE_LOG = os.path.join(HERE, "sandbox_spikes.csv")      # сделки стратегии «всплеск объёма»
 STOP_EVENT = threading.Event()   # кнопка «Стоп» в приложении
 
 # ============================================================================ защищённые соединения
@@ -291,6 +292,8 @@ def configure(threshold_pct=2.0, entry="15:00"):
     JOURNAL = os.path.join(HERE, f"forward_journal{sfx}.csv")
     DAYS_LOG = os.path.join(HERE, f"forward_days{sfx}.csv")
     SANDBOX_LOG = os.path.join(HERE, f"sandbox_trades{sfx}.csv")
+    global SPIKE_LOG
+    SPIKE_LOG = os.path.join(HERE, "sandbox_spikes.csv")
 
 
 # ============================================================================ ядро
@@ -499,10 +502,35 @@ class TInvest:
                 raise RuntimeError(f"Ошибка защищённого соединения с {self.base}: {e}") from None
             except requests.exceptions.ConnectionError as e:
                 raise RuntimeError(f"Нет соединения с сервером Т-Инвестиций ({self.base}). Проверьте интернет. Детали: {e}") from None
-        r = with_ru_certs(_post)
+        for attempt in range(4):
+            r = with_ru_certs(_post)
+            if r.status_code == 429:          # превышен лимит запросов — ждём сброса
+                try:
+                    wait = float(r.headers.get("x-ratelimit-reset", 5))
+                except ValueError:
+                    wait = 5
+                time.sleep(min(max(wait, 1), 60))
+                continue
+            break
         if r.status_code != 200:
             raise RuntimeError(f"{service}/{method}: HTTP {r.status_code} {r.text[:300]}")
         return r.json()
+
+    def all_shares(self):
+        """Все акции Мосбиржи (режим TQBR), доступные для торговли через API. Заодно кэширует лоты и шорт."""
+        js = self.call("InstrumentsService", "Shares", {"instrumentStatus": "INSTRUMENT_STATUS_BASE"})
+        out = []
+        for ins in js.get("instruments", []):
+            if ins.get("classCode") != "TQBR" or str(ins.get("currency", "")).lower() != "rub":
+                continue
+            if ins.get("apiTradeAvailableFlag") is False or ins.get("buyAvailableFlag") is False:
+                continue
+            if ins.get("forQualInvestorFlag"):
+                continue
+            tk = ins["ticker"]
+            self._shares[tk] = {"uid": ins["uid"], "lot": int(ins.get("lot", 1)), "short": bool(ins.get("shortEnabledFlag", False))}
+            out.append(tk)
+        return sorted(out)
 
     @staticmethod
     def q(x):
@@ -520,17 +548,21 @@ class TInvest:
                                     "short": bool(ins.get("shortEnabledFlag", False))}
         return self._shares[ticker]
 
-    def candles(self, ticker, day):
+    INTERVALS = {1: "CANDLE_INTERVAL_1_MIN", 5: "CANDLE_INTERVAL_5_MIN", 15: "CANDLE_INTERVAL_15_MIN", 60: "CANDLE_INTERVAL_HOUR"}
+
+    def candles(self, ticker, day, frm=None, to=None, tf=1):
+        """Свечи tf минут (время МСК без пояса). v — объём в лотах. frm/to — время с поясом (по умолчанию весь день)."""
         uid = self.share(ticker)["uid"]
-        frm = datetime(day.year, day.month, day.day, 9, 55, tzinfo=MSK).astimezone(timezone.utc)
-        to = datetime(day.year, day.month, day.day, 18, 45, tzinfo=MSK).astimezone(timezone.utc)
+        frm = (frm or datetime(day.year, day.month, day.day, 9, 55, tzinfo=MSK)).astimezone(timezone.utc)
+        to = (to or datetime(day.year, day.month, day.day, 18, 45, tzinfo=MSK)).astimezone(timezone.utc)
         js = self.call("MarketDataService", "GetCandles",
                        {"instrumentId": uid, "from": frm.isoformat().replace("+00:00", "Z"),
-                        "to": to.isoformat().replace("+00:00", "Z"), "interval": "CANDLE_INTERVAL_1_MIN"})
+                        "to": to.isoformat().replace("+00:00", "Z"), "interval": self.INTERVALS[tf]})
         out = []
         for c in js.get("candles", []):
             t = datetime.fromisoformat(c["time"].replace("Z", "+00:00")).astimezone(MSK).replace(tzinfo=None)
-            out.append({"t": t, "o": self.q(c["open"]), "h": self.q(c["high"]), "l": self.q(c["low"]), "c": self.q(c["close"])})
+            out.append({"t": t, "o": self.q(c["open"]), "h": self.q(c["high"]), "l": self.q(c["low"]), "c": self.q(c["close"]),
+                        "v": int(c.get("volume", 0) or 0)})
         return out
 
     def last_prices(self, tickers):

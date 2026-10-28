@@ -2,6 +2,7 @@
 """
 Сканер Мосбиржи — настольное приложение.
 Стратегия: сильное движение дня по рынку, вход в 15:00, стоп 3%, выход в 17:00.
+Кнопка «Старт» на вкладке «Автоторговля» запускает робота: он сам работает по будням 07:00–18:30.
 """
 import contextlib
 import csv
@@ -18,6 +19,7 @@ from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 
 import scanner as sc
+import autotrader as at
 
 APP_TITLE = "Сканер Мосбиржи"
 
@@ -38,7 +40,10 @@ def app_version():
 VERSION = app_version()
 SETTINGS = os.path.join(sc.HERE, "settings.json")
 DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_token": True,
-            "auto_signals": True, "auto_journal": True, "auto_sandbox": False, "remember_token": False, "token": ""}
+            "auto_signals": True, "auto_journal": True, "remember_token": False, "token": "",
+            "rescan": False, "autostart": False,
+            "spike_on": True, "spike_tfs": [5, 15, 60], "spike_all": True, "spike_half": 50, "spike_trail": 1.0,
+            "spike_max": 5}
 
 
 def load_settings():
@@ -87,7 +92,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"{APP_TITLE} · версия {VERSION}")
-        self.geometry("1000x700")
+        self.geometry("1100x760")
         self.minsize(820, 560)
         self.s = load_settings()
         if self.s.get("token"):
@@ -96,6 +101,10 @@ class App(tk.Tk):
         self.tasks = queue.Queue()
         self.busy = threading.Event()
         self.done_today = {}
+        self.robot = None
+        self.robot_thread = None
+        import sys as _s
+        _s.stdout = QueueWriter(self.q)      # print() из любых потоков — в журнал действий
         self._apply_settings()
         self._build()
         threading.Thread(target=self._worker, daemon=True).start()
@@ -103,6 +112,9 @@ class App(tk.Tk):
         self.after(200, self._poll)
         self.after(500, self.refresh_journal)
         self.after(600, self.refresh_sandbox)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        if self.s.get("autostart"):
+            self.after(1500, self.robot_start)
         self.log(f"Версия {VERSION}. Готово. Порог {self.s['threshold']:g}%, вход в {self.s['entry']}. "
                  f"Журналы сохраняются в папке: {sc.HERE}\n")
 
@@ -115,6 +127,7 @@ class App(tk.Tk):
             pass
         style.configure("Treeview", rowheight=24)
         style.configure("Big.TLabel", font=("Segoe UI", 11, "bold"))
+        style.configure("Start.TButton", font=("Segoe UI", 11, "bold"), padding=(14, 6))
         self._clipboard_bindings()
 
         top = ttk.Frame(self, padding=(10, 8))
@@ -128,7 +141,7 @@ class App(tk.Tk):
         pw.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         nb = ttk.Notebook(pw)
         self.nb = nb
-        pw.add(nb, weight=3)
+        pw.add(nb, weight=5)
         logf = ttk.LabelFrame(pw, text="Журнал действий", padding=4)
         pw.add(logf, weight=1)
         self.logbox = ScrolledText(logf, height=8, font=("Consolas", 9), state="disabled")
@@ -166,19 +179,50 @@ class App(tk.Tk):
                                       ("move", "Движение", 80), ("entry", "Вход", 80), ("exit", "Выход", 80),
                                       ("reason", "Причина", 70), ("net", "Итог после затрат", 120)])
 
-        # --- Песочница
+        # --- Автоторговля
         t3 = ttk.Frame(nb, padding=10)
-        nb.add(t3, text="Песочница Т-Инвестиций")
+        nb.insert(0, t3, text="Автоторговля")
         bar = ttk.Frame(t3)
         bar.pack(fill="x")
-        ttk.Button(bar, text="Проверить доступ", command=self.check_access).pack(side="left")
-        ttk.Button(bar, text="Торговать сегодня", command=self.sandbox_today).pack(side="left", padx=6)
-        ttk.Button(bar, text="Стоп (закрыть позиции)", command=self.stop).pack(side="left")
-        ttk.Button(bar, text="Обновить", command=self.refresh_sandbox).pack(side="left", padx=6)
-        ttk.Label(t3, text="Торговля идёт только на демо-счёте песочницы. Компьютер и приложение должны работать до 17:00.",
-                  foreground="#555").pack(anchor="w", pady=(8, 4))
-        self.sb_tree = self._tree(t3, [("date", "Дата", 90), ("ticker", "Бумага", 70), ("side", "Сторона", 70), ("lots", "Лотов", 60),
+        self.btn_start = ttk.Button(bar, text="▶  Старт", command=self.robot_start, style="Start.TButton")
+        self.btn_start.pack(side="left")
+        self.btn_stop = ttk.Button(bar, text="■  Стоп", command=self.robot_stop, style="Start.TButton", state="disabled")
+        self.btn_stop.pack(side="left", padx=6)
+        ttk.Button(bar, text="Проверить доступ", command=self.check_access).pack(side="left", padx=(18, 0))
+        self.robot_lbl = ttk.Label(t3, text="Робот остановлен. Нажмите «Старт» — дальше он всё делает сам.", style="Big.TLabel")
+        self.robot_lbl.pack(anchor="w", pady=(10, 2))
+        ttk.Label(t3, text="По будням 07:00–18:30 МСК, сделки на демо-счёте песочницы. Стратегия «15:00»: каждую минуту "
+                           "пересчитывает движение акций индекса, во время входа сам открывает сделки, стоп 3%, выход 16:59:50. "
+                           "Всплески объёма: после каждой 5-минутки ищет импульс на объёме → касание EMA20 → свечу-подтверждение "
+                           "(5м/15м/1ч), входит сам, тейк1 50% у хая импульса, стоп в б/у и трейлинг. "
+                           "Компьютер не должен засыпать, приложение должно быть открыто.",
+                  foreground="#555", justify="left", wraplength=1040).pack(anchor="w", pady=(0, 6))
+        vp = ttk.PanedWindow(t3, orient="vertical")
+        vp.pack(fill="both", expand=True)
+        mid = ttk.PanedWindow(vp, orient="horizontal")
+        vp.add(mid, weight=3)
+        lnb = ttk.Notebook(mid)
+        self.lnb = lnb
+        mid.add(lnb, weight=1)
+        lf = ttk.Frame(lnb, padding=4)
+        lnb.add(lf, text="Индекс и акции (от открытия 10:00)")
+        sf = ttk.Frame(lnb, padding=4)
+        lnb.add(sf, text="Всплески объёма")
+        self.spk_tree = self._tree(sf, [("time", "Время", 50), ("ticker", "Бумага", 60), ("tf", "ТФ", 35), ("val", "Оборот, млн", 75),
+                                        ("mult", "×", 40), ("move", "Импульс", 65), ("reason", "Статус", 125)])
+        self.scan_lbl = ttk.Label(lf, text="—")
+        self.scan_lbl.pack(anchor="w")
+        self.scan_tree = self._tree(lf, [("ticker", "Бумага", 70), ("move", "Движение", 80), ("reason", "Статус", 110)])
+        rf = ttk.LabelFrame(mid, text="Открытые позиции", padding=4)
+        mid.add(rf, weight=1)
+        self.pos_tree = self._tree(rf, [("ticker", "Бумага", 60), ("strat", "Стратегия", 70), ("side", "Сторона", 55), ("lots", "Лотов", 55),
+                                        ("entry", "Вход", 65), ("stop", "Стоп", 65), ("take", "Тейк1", 65), ("last", "Сейчас", 65),
+                                        ("res", "Итог", 60)])
+        hf = ttk.LabelFrame(vp, text="Закрытые сделки", padding=4)
+        vp.add(hf, weight=2)
+        self.sb_tree = self._tree(hf, [("date", "Дата", 90), ("strat", "Стратегия", 90), ("ticker", "Бумага", 70), ("side", "Сторона", 70), ("lots", "Лотов", 60),
                                        ("entry", "Вход", 80), ("exit", "Выход", 80), ("reason", "Причина", 120), ("res", "Результат", 90)])
+        nb.select(t3)
 
         # --- Настройки
         t4 = ttk.Frame(nb, padding=14)
@@ -191,7 +235,14 @@ class App(tk.Tk):
         self.v_rem = tk.BooleanVar(value=self.s["remember_token"])
         self.v_as = tk.BooleanVar(value=self.s["auto_signals"])
         self.v_aj = tk.BooleanVar(value=self.s["auto_journal"])
-        self.v_asb = tk.BooleanVar(value=self.s["auto_sandbox"])
+        self.v_rescan = tk.BooleanVar(value=self.s.get("rescan", False))
+        self.v_autostart = tk.BooleanVar(value=self.s.get("autostart", False))
+        self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
+        self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [5, 15, 60])) for tf in (5, 15, 60)}
+        self.v_spk_all = tk.BooleanVar(value=self.s.get("spike_all", True))
+        self.v_spk_half = tk.StringVar(value=str(self.s.get("spike_half", 50)))
+        self.v_spk_trail = tk.StringVar(value=f"{self.s.get('spike_trail', 1.0):g}")
+        self.v_spk_max = tk.StringVar(value=str(self.s.get("spike_max", 5)))
         g = ttk.Frame(t4)
         g.pack(anchor="nw", fill="x")
         r = 0
@@ -231,7 +282,33 @@ class App(tk.Tk):
         r += 1
         ttk.Checkbutton(g, text="Записывать день в журнал форвард-теста в 17:20", variable=self.v_aj).grid(row=r, column=1, sticky="w")
         r += 1
-        ttk.Checkbutton(g, text="Торговать в песочнице во время входа (нужен токен песочницы)", variable=self.v_asb).grid(row=r, column=1, sticky="w")
+        ttk.Checkbutton(g, text="Запускать робота автоторговли сразу при открытии программы", variable=self.v_autostart).grid(row=r, column=1, sticky="w")
+        r += 1
+        ttk.Checkbutton(g, text="«15:00»: добирать новые сигналы до 16:30 (на истории хуже: −8…−20% вместо +23…+35%)",
+                        variable=self.v_rescan).grid(row=r, column=1, sticky="w")
+        r += 1
+        ttk.Separator(g).grid(row=r, column=0, columnspan=2, sticky="ew", pady=10)
+        r += 1
+        ttk.Label(g, text="Всплеск объёма + откат к EMA20:").grid(row=r, column=0, sticky="w")
+        ttk.Checkbutton(g, text="Робот торгует по этой формации (следит за всплесками всегда)", variable=self.v_spk).grid(row=r, column=1, sticky="w")
+        r += 1
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
+        ttk.Label(f, text="Таймфреймы:").pack(side="left")
+        for tf in (5, 15, 60):
+            ttk.Checkbutton(f, text="1 час" if tf == 60 else f"{tf} мин", variable=self.v_spk_tf[tf]).pack(side="left", padx=(6, 0))
+        ttk.Checkbutton(f, text="искать по всем акциям биржи (иначе только индекс)", variable=self.v_spk_all).pack(side="left", padx=(16, 0))
+        r += 1
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
+        ttk.Label(f, text="Закрыть на тейке1, %:").pack(side="left")
+        ttk.Combobox(f, textvariable=self.v_spk_half, width=5, state="readonly", values=["30", "50", "70", "100"]).pack(side="left", padx=(4, 12))
+        ttk.Label(f, text="Трейлинг, R (расстояние до стопа):").pack(side="left")
+        ttk.Combobox(f, textvariable=self.v_spk_trail, width=5, state="readonly", values=["0.5", "1", "1.5", "2"]).pack(side="left", padx=(4, 12))
+        ttk.Label(f, text="Макс. позиций:").pack(side="left")
+        ttk.Combobox(f, textvariable=self.v_spk_max, width=4, state="readonly", values=["1", "2", "3", "5", "8"]).pack(side="left", padx=(4, 0))
+        r += 1
+        tk.Label(g, text="На истории (44 акции индекса, 10.2025–10.2026):\n" + "\n".join(f"  • {at.SPIKE_PRESETS[tf]['bt']}" for tf in (5, 15, 60))
+                 + "\nНа каждую сделку — 10% капитала. Второй эшелон на истории не проверен — смотрите журнал «всплеск».",
+                 justify="left", anchor="w", font=("Segoe UI", 9), fg="#555", bg=ttk.Style().lookup("TFrame", "background") or None).grid(row=r, column=1, sticky="w")
         r += 1
         ttk.Button(g, text="Сохранить настройки", command=self.save).grid(row=r, column=1, sticky="w", pady=12)
         ttk.Label(t4, text="Без токена данные берутся с сайта Мосбиржи; бесплатные данные там обычно идут с задержкой около 15 минут.\n"
@@ -331,8 +408,8 @@ class App(tk.Tk):
         auto = []
         if self.s["auto_signals"]:
             auto.append(f"сигналы в {self.s['entry']}")
-        if self.s["auto_sandbox"]:
-            auto.append(f"песочница в {self.s['entry']}")
+        if self.robot_running():
+            auto.append("робот работает")
         if self.s["auto_journal"]:
             auto.append("журнал в 17:20")
         self.status.configure(text=f"Порог {self.s['threshold']:g}% · вход {self.s['entry']} · {busy}"
@@ -350,7 +427,11 @@ class App(tk.Tk):
             return
         self.s.update(threshold=float(self.v_thr.get()), entry=self.v_entry.get(), capital=cap,
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
-                      auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(), auto_sandbox=self.v_asb.get())
+                      auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
+                      rescan=self.v_rescan.get(), autostart=self.v_autostart.get(),
+                      spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
+                      spike_all=self.v_spk_all.get(), spike_half=int(self.v_spk_half.get()),
+                      spike_trail=float(self.v_spk_trail.get()), spike_max=int(self.v_spk_max.get()))
         if self.s["token"]:
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         else:
@@ -360,6 +441,8 @@ class App(tk.Tk):
         self.refresh_journal()
         self.refresh_sandbox()
         self.log(f"Настройки сохранены: порог {self.s['threshold']:g}%, вход {self.s['entry']}.\n")
+        if self.robot_running():
+            self.log("Робот уже работает со старыми настройками. Чтобы применить новые, нажмите «Стоп» и снова «Старт».\n")
 
     # ------------------------------------------------------------------ задачи
     def submit(self, name, fn, on_done=None):
@@ -505,19 +588,107 @@ class App(tk.Tk):
             return
         self.submit("Проверка доступа", lambda: sc.check_mode(types.SimpleNamespace(sandbox_token=self.s["sandbox_token"])))
 
-    def sandbox_today(self, now=False):
-        if not os.environ.get("TINVEST_TOKEN") or not self.s["sandbox_token"]:
-            messagebox.showinfo(APP_TITLE, "Для песочницы нужен токен песочницы: введите его в «Настройках» и отметьте «Это токен песочницы».")
+    # --- робот
+    def robot_running(self):
+        return bool(self.robot_thread and self.robot_thread.is_alive())
+
+    def robot_start(self):
+        if self.robot_running():
             return
-        args = types.SimpleNamespace(capital=float(self.s["capital"]), now=now)
-        self.submit("Песочница: торговля на сегодня", lambda: sc.sandbox_mode(args), lambda _: self.refresh_sandbox())
+        tok = os.environ.get("TINVEST_TOKEN")
+        if not tok or not self.s["sandbox_token"]:
+            messagebox.showinfo(APP_TITLE, "Для автоторговли нужен токен песочницы: введите его во вкладке «Настройки», "
+                                           "отметьте «Это токен песочницы» и нажмите «Сохранить настройки».")
+            return
+        self._apply_settings()
+        log = lambda m: self.q.put(("log", f"[робот {now_msk():%H:%M:%S}] {m}\n"))
+        broker = at.SandboxBroker(tok, float(self.s["capital"]), log=log)
+        spike = {"on": bool(self.s.get("spike_on")), "tfs": list(self.s.get("spike_tfs", [5, 15, 60])),
+                 "all_market": bool(self.s.get("spike_all", True)), "half": int(self.s.get("spike_half", 50)) / 100,
+                 "trail_r": float(self.s.get("spike_trail", 1.0)), "max_pos": int(self.s.get("spike_max", 5))}
+        self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
+                                   on_update=lambda snap: self.q.put(("call", self.show_robot, snap)))
+        robot = self.robot
+
+        def run():
+            try:
+                robot.run()
+            except sc.CertError as e:
+                log(f"Ошибка защищённого соединения: {e}. Робот остановлен.")
+            except BaseException:
+                log("Сбой робота:\n" + traceback.format_exc())
+            finally:
+                self.q.put(("call", lambda _: self._robot_buttons(), None))
+        self.robot_thread = threading.Thread(target=run, daemon=True)
+        self.robot_thread.start()
+        self._robot_buttons()
+
+    def robot_stop(self):
+        if not self.robot_running():
+            return
+        close = False
+        if self.robot.positions:
+            ans = messagebox.askyesnocancel(APP_TITLE, "Есть открытые позиции. Закрыть их по рынку?\n\n"
+                                                       "«Да» — закрыть и остановить робота.\n"
+                                                       "«Нет» — остановить, позиции оставить (после «Старт» робот продолжит их вести).")
+            if ans is None:
+                return
+            close = ans
+        self.robot.request_stop(close)
+        self.robot_lbl.configure(text="Останавливаю робота…")
+
+    def _robot_buttons(self):
+        run = self.robot_running()
+        self.btn_start.configure(state="disabled" if run else "normal")
+        self.btn_stop.configure(state="normal" if run else "disabled")
+        if not run:
+            self.robot_lbl.configure(text="Робот остановлен. Нажмите «Старт» — дальше он всё делает сам.")
+            self.refresh_sandbox()
+
+    def show_robot(self, snap):
+        if self.robot_running():
+            self.robot_lbl.configure(text=f"Робот работает: {snap['status']}")
+        mk = snap.get("market")
+        ls = snap.get("last_scan")
+        self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: рынок {mk * 100:+.2f}%, порог {sc.THRESHOLD * 100:g}%"
+                                      if ls and mk is not None else "Данные появятся после 10:01."))
+        self.scan_tree.delete(*self.scan_tree.get_children())
+        for tk, mv, why in snap["scan"][:60]:
+            tag = ("pos" if mv > 0 else "neg") if why == "СИГНАЛ" else ()
+            self.scan_tree.insert("", "end", tags=tag, values=(tk, f"{mv * 100:+.2f}%", why))
+        self.spk_tree.delete(*self.spk_tree.get_children())
+        for tm, tkr, tfn, val, mult, body, why in reversed(snap.get("spikes", [])):
+            tag = (("pos" if body > 0 else "neg"),) if why == "ПОДТВЕРЖДЁН" else ()
+            self.spk_tree.insert("", "end", tags=tag, values=(tm, tkr, tfn, f"{val / 1e6:.0f}", f"{mult:.1f}", f"{body * 100:+.2f}%", why))
+        self.pos_tree.delete(*self.pos_tree.get_children())
+        for p in snap["positions"]:
+            last = p.get("last")
+            res = p["side"] * (last / p["entry"] - 1) if last else None
+            strat = "всплеск" + (" (б/у)" if p.get("took") else "") if p.get("strat") == "spike" else "15:00"
+            self.pos_tree.insert("", "end", tags=(("pos" if res > 0 else "neg"),) if res is not None else (), values=(
+                p["ticker"], strat, "лонг" if p["side"] > 0 else "шорт", p["lots"], f"{p['entry']:.4g}", f"{p['stop']:.4g}",
+                f"{p['take']:.4g}" if p.get("take") and not p.get("took") else "—",
+                f"{last:.4g}" if last else "—", f"{res * 100:+.2f}%" if res is not None else "—"))
+        if len(snap["positions"]) != getattr(self, "_npos", None):
+            self._npos = len(snap["positions"])
+            self.refresh_sandbox()
+
+    def on_close(self):
+        if self.robot_running():
+            if not messagebox.askyesno(APP_TITLE, "Робот работает. Если закрыть программу, он перестанет торговать "
+                                                  "(открытые позиции останутся и будут подхвачены при следующем «Старт»).\n\nЗакрыть?"):
+                return
+        self.destroy()
 
     def refresh_sandbox(self):
         self.sb_tree.delete(*self.sb_tree.get_children())
-        for r in reversed(read_csv(sc.SANDBOX_LOG)[-500:]):
+        rows = [dict(r, strat="15:00") for r in read_csv(sc.SANDBOX_LOG)[-500:]] + \
+               [dict(r, strat="всплеск") for r in read_csv(sc.SPIKE_LOG)[-500:]]
+        rows.sort(key=lambda r: r["date"])
+        for r in reversed(rows):
             res = float(r["result_pct"])
             self.sb_tree.insert("", "end", tags=("pos" if res > 0 else "neg",), values=(
-                r["date"], r["ticker"], r["side"], r["lots"], r["entry"], r["exit"], r["reason"], f"{res:+.2f}%"))
+                r["date"], r["strat"], r["ticker"], r["side"], r["lots"], r["entry"], r["exit"], r["reason"], f"{res:+.2f}%"))
 
     # ------------------------------------------------------------------ расписание
     def _scheduler(self):
@@ -531,9 +702,7 @@ class App(tk.Tk):
                     in_window = start - timedelta(minutes=2) <= n < start + timedelta(minutes=10)
                     if in_window and self.done_today.get(("entry", today)) is None:
                         self.done_today[("entry", today)] = True
-                        if self.s["auto_sandbox"] and os.environ.get("TINVEST_TOKEN") and self.s["sandbox_token"]:
-                            self.q.put(("call", lambda _: self.sandbox_today(), None))
-                        elif self.s["auto_signals"]:
+                        if self.s["auto_signals"] and not self.robot_running():
                             self.q.put(("call", lambda _: self.submit("Авто: сигналы", self._signals(True),
                                                                       lambda sg: self.show_signals(sg, alert=True)), None))
                     if self.s["auto_journal"] and (n.hour, n.minute) >= (17, 20) and n.hour < 23 and self.done_today.get(("journal", today)) is None:

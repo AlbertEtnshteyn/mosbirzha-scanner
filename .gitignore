@@ -9,3 +9,6 @@ trusted_certs.pem
 certs/
 trusted_certs.pem
 version.txt
+auto_state.json
+auto_state.json.tmp
+sandbox_spikes.csv
