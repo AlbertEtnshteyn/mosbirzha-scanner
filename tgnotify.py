@@ -57,7 +57,8 @@ def formation_text(i):
              f"Цена {fmt(i['price'])} · стоп {fmt(i['stop'])} · тейк1 {fmt(i['take1'])}"
              + (f" · тейк2 {fmt(i['take2'])}" if i.get("take2") else ""),
              f"Индекс с открытия: {mk}",
-             f"Робот: {i['decision']}"]
+             f"Робот: {i['decision']}",
+             sc.tbank_url(i["ticker"], i.get("kind", "share"))]
     return "\n".join(lines)
 
 

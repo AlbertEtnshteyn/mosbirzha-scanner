@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import scanner as sc
+import autotrader as at
 
 BG, GRID, TXT = "#131722", "#1f2433", "#b2b5be"
 UP, DOWN = "#26a69a", "#ef5350"
@@ -32,6 +33,7 @@ class ChartWindow(tk.Toplevel):
         self.ticker = ticker.upper()
         self.tf = tf
         self.bars = []
+        self.trades = []
         self.n_vis = 120
         self.offset = 0               # сколько последних свечей сдвинуто вправо за край (прокрутка в прошлое)
         self.res = queue.Queue()
@@ -59,12 +61,19 @@ class ChartWindow(tk.Toplevel):
             b.pack(side="left", padx=1)
             self.tf_btns[tf] = b
         ttk.Button(bar, text="Обновить", command=self.load).pack(side="left", padx=12)
+        ttk.Button(bar, text="Т-Инвестиции", command=lambda: self.app.open_tbank(self.ticker)).pack(side="left")
+        ttk.Button(bar, text="Терминал", command=lambda: self.app.open_tbank(None)).pack(side="left", padx=(4, 0))
         legend = tk.Frame(self, bg=BG)
         legend.pack(fill="x", padx=8)
         self.info = tk.Label(self, text="", bg=BG, fg=TXT, font=("Consolas", 10), anchor="w")
         self.info.pack(fill="x", padx=8)
         tk.Label(legend, text="━ EMA 10", fg=EMA10_C, bg=BG).pack(side="left")
         tk.Label(legend, text="━ EMA 20", fg=EMA20_C, bg=BG).pack(side="left", padx=10)
+        self.v_hist = tk.BooleanVar(value=True)
+        tk.Checkbutton(legend, text="формации из истории", variable=self.v_hist, command=self.draw,
+                       bg=BG, fg=TXT, selectcolor=GRID, activebackground=BG, activeforeground=TXT).pack(side="left", padx=10)
+        self.sum_lbl = tk.Label(legend, text="", fg=TXT, bg=BG)
+        self.sum_lbl.pack(side="left", padx=6)
         tk.Label(legend, text="колесо мыши — масштаб, перетаскивание — прокрутка", fg="#6b7080", bg=BG).pack(side="right")
         self.cv = tk.Canvas(self, bg=BG, highlightthickness=0)
         self.cv.pack(fill="both", expand=True)
@@ -115,7 +124,19 @@ class ChartWindow(tk.Toplevel):
                 now = datetime.now(sc.MSK)
                 frm = (now - timedelta(days=DEPTH[tf])).replace(hour=0, minute=0, second=0, microsecond=0)
                 rows = ti.candles_range(tk_, frm, now + timedelta(minutes=1), tf)
-                self.res.put((tk_, tf, rows, None))
+                trades = []
+                if tf in (5, 15, 60) and rows:
+                    per_lot = 1.0
+                    try:
+                        sh = ti.share(tk_)
+                        per_lot = float(sh["lot"])
+                        if sh.get("kind") == "future":
+                            per_lot *= ti.future_terms(tk_)[0]
+                    except Exception:
+                        pass
+                    bars = [dict(r, val=r.get("v", 0) * per_lot * (r["h"] + r["l"] + r["c"]) / 3) for r in rows]
+                    trades = at.history_trades(bars, at.params(self._sp(), tf))
+                self.res.put((tk_, tf, (rows, trades), None))
             except Exception as e:
                 self.res.put((tk_, tf, None, e))
         threading.Thread(target=job, daemon=True).start()
@@ -134,10 +155,32 @@ class ChartWindow(tk.Toplevel):
         if err:
             self.info.configure(text=f"Ошибка загрузки: {err}")
             return
+        rows, self.trades = rows if rows else ([], [])
         self.bars = rows or []
+        self._summary()
         if not self.bars:
             self.info.configure(text=f"{self.ticker}: свечей нет")
         self.draw()
+
+    def _sp(self):
+        s = self.app.s
+        sp = dict(at.SPIKE_DEFAULTS)
+        sp.update(two_takes=bool(s.get("two_takes", True)), half=int(s.get("spike_half", 50)) / 100,
+                  trail_r=float(s.get("spike_trail", 1.0)))
+        return sp
+
+    def _summary(self):
+        if self.tf not in (5, 15, 60):
+            self.sum_lbl.configure(text="формации ищутся на 5м, 15м и 1ч")
+            return
+        done = [t for t in self.trades if not t["open"]]
+        if not self.trades:
+            self.sum_lbl.configure(text="формаций за загруженный период нет")
+            return
+        wins = sum(1 for t in done if t["result"] > 0)
+        tot = sum(t["result"] for t in done) * 100
+        self.sum_lbl.configure(text=f"формаций: {len(self.trades)}, закрыто {len(done)}, в плюсе {wins}, "
+                                    f"сумма {tot:+.2f}% (без комиссий и без фильтра индекса)")
 
     def _auto(self):
         if not self.winfo_exists():
@@ -236,6 +279,41 @@ class ChartWindow(tk.Toplevel):
                 pts += [x0 + (i + 0.5) * bw, y(series[start + i])]
             if len(pts) >= 4:
                 cv.create_line(*pts, fill=col, width=1.6)
+        # формации из истории: вход и выходы
+        hover_trade = None
+        if self.v_hist.get():
+            for tr in self.trades:
+                ie = tr["entry_i"] - start
+                ix = tr["exits"][-1][0] - start
+                if ix < 0 or ie >= len(vis):
+                    continue
+                s_ = tr["side"]
+                good = tr["result"] > 0
+                lc_ = UP if good else DOWN
+                xe = x0 + (ie + 0.5) * bw
+                xl = x0 + (ix + 0.5) * bw
+                cv.create_line(xe, y(tr["entry"]), xl, y(tr["exits"][-1][1]), fill=lc_, dash=(4, 3))
+                if 0 <= ie < len(vis):
+                    ye = y(tr["entry"])
+                    if s_ > 0:
+                        cv.create_polygon(xe, ye + 2, xe - 7, ye + 14, xe + 7, ye + 14, fill="#00e676", outline="black")
+                    else:
+                        cv.create_polygon(xe, ye - 2, xe - 7, ye - 14, xe + 7, ye - 14, fill="#ff5252", outline="black")
+                    cv.create_line(xe - 9, ye, xe + 9, ye, fill="white", width=2)
+                    cv.create_line(xe, y(tr["stop"]) , xe + 30, y(tr["stop"]), fill=DOWN, width=2)
+                    if self.hover and abs(self.hover[0] - xe) < max(6, bw):
+                        hover_trade = tr
+                for qi, px_, frac, why in tr["exits"]:
+                    i_ = qi - start
+                    if 0 <= i_ < len(vis):
+                        xx, yy = x0 + (i_ + 0.5) * bw, y(px_)
+                        col_ = "#ffd54f" if why.startswith("тейк") else ("#9e9e9e" if why in ("б/у", "открыта", "конец дня", "18:25")
+                                                                         else ("#4fc3f7" if why == "трейлинг" else "#ff5252"))
+                        cv.create_oval(xx - 5, yy - 5, xx + 5, yy + 5, fill=col_, outline="black")
+                        cv.create_text(xx + 7, yy - 9, text=why, fill=col_, anchor="w", font=("Segoe UI", 8))
+                if 0 <= ix < len(vis):
+                    cv.create_text(xl + 7, y(tr["exits"][-1][1]) + 10, text=f"{tr['result'] * 100:+.2f}%", fill=lc_,
+                                   anchor="w", font=("Consolas", 9, "bold"))
         # уровни позиции
         for p in poss:
             for lv, col, name in ((p.get("entry"), "#9598a1", "вход"), (p.get("stop"), DOWN, "стоп"),
@@ -269,7 +347,15 @@ class ChartWindow(tk.Toplevel):
         chg = (b["c"] / b["o"] - 1) * 100 if b["o"] else 0
         self.info.configure(text=f"{self.ticker} {dict(TFS)[self.tf]}  {b['t']:%d.%m %H:%M}  О {_fmt(b['o'])}  М {_fmt(b['h'])}  "
                                  f"Н {_fmt(b['l'])}  З {_fmt(b['c'])} ({chg:+.2f}%)  "
-                                 f"EMA10 {_fmt(e10[start + k])}  EMA20 {_fmt(e20[start + k])}")
+                                 f"EMA10 {_fmt(e10[start + k])}  EMA20 {_fmt(e20[start + k])}"
+                                 + (self._trade_txt(hover_trade) if hover_trade else ""))
+
+    def _trade_txt(self, tr):
+        b = self.bars
+        ex = ", ".join(f"{w} {b[i]['t']:%H:%M} {_fmt(p)} ({f * 100:.0f}%)" for i, p, f, w in tr["exits"])
+        return (f"\n{'ЛОНГ' if tr['side'] > 0 else 'ШОРТ'}: импульс {tr['impulse_t']:%d.%m %H:%M}, касание {tr['touch_t']:%H:%M}, "
+                f"вход {b[tr['entry_i']]['t']:%H:%M} по {_fmt(tr['entry'])}, стоп {_fmt(tr['stop'])}, тейк1 {_fmt(tr['t1'])}"
+                + (f", тейк2 {_fmt(tr['t2'])}" if tr.get("t2") else "") + f" → {ex}; итог {tr['result'] * 100:+.2f}%")
 
 
 def _nice(x):

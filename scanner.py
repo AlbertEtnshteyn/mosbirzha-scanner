@@ -431,6 +431,15 @@ def iss_get(path, params, retries=4):
             time.sleep(2 * (i + 1))
 
 
+TBANK_TERMINAL = "https://www.tbank.ru/invest/terminal/"
+
+
+def tbank_url(ticker, kind="share"):
+    """Страница инструмента в Т-Инвестициях (оттуда — кнопка «Купить/Продать» и переход в терминал)."""
+    sect = {"future": "futures", "currency": "currencies"}.get(kind, "stocks")
+    return f"https://www.tbank.ru/invest/{sect}/{ticker}/"
+
+
 BLUE_CHIPS = ["SBER", "GAZP", "LKOH", "GMKN", "NVTK", "ROSN", "TATN", "YDEX", "PLZL", "SNGSP", "MTSS", "CHMF",
               "NLMK", "T", "PHOR"]
 

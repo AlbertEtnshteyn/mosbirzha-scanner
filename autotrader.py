@@ -124,17 +124,17 @@ def _impulse(bars, i, sp, minv):
     return None
 
 
-def find_pullback(bars, sp):
+def find_pullback(bars, sp, em=None, last=None):
     """
     bars: закрытые свечи ТФ подряд (t, o, h, l, c, val — оборот ₽). Ищет формацию, у которой свеча-подтверждение —
     последняя свеча: импульс на объёме → касание EMA20 → отскок. Возвращает dict или None.
     """
-    n = len(bars)
+    last = len(bars) - 1 if last is None else last
+    n = last + 1                      # свечи после last не видны (для поиска по истории)
     if n < 25:
         return None
-    em = ema([b["c"] for b in bars])
+    em = em or ema([b["c"] for b in bars])
     minv = sp["min_value"]
-    last = n - 1
     for i in range(max(1, last - sp["win"]), last - 1):
         imp = _impulse(bars, i, sp, minv)
         if not imp:
@@ -166,6 +166,74 @@ def find_pullback(bars, sp):
             pl = (bj["l"] if pl is None else min(pl, bj["l"])) if s > 0 else (bj["h"] if pl is None else max(pl, bj["h"]))
             ext = max(ext, bj["h"]) if s > 0 else min(ext, bj["l"])
     return None
+
+
+def history_trades(bars, sp):
+    """
+    Формации на истории графика и как бы их отработал робот (без фильтра индекса): вход по открытию свечи
+    после подтверждения, стоп под откатом, тейк1/тейк2/б/у/трейлинг как в настройках, выход не позже 18:25.
+    Проверка внутри свечи — худший случай (сначала стоп). Возвращает список сделок.
+    """
+    em = ema([b["c"] for b in bars])
+    out, used_days, busy_until = [], set(), -1
+    for k in range(25, len(bars) - 1):
+        if k <= busy_until:
+            continue
+        sig = find_pullback(bars, sp, em, k)
+        if not sig:
+            continue
+        e = k + 1
+        if bars[e]["t"].date() != bars[k]["t"].date() or bars[k]["t"].date() in used_days:
+            continue
+        s = sig["side"]
+        px = bars[e]["o"]
+        st = sig["level"] * (1 - s * sig["buf"])
+        R = abs(px - st)
+        if (st - px) * s >= 0 or (sig["t1"] - px) * s < 0.5 * R:
+            continue
+        used_days.add(bars[k]["t"].date())
+        two = sp.get("two_takes", True)
+        lv1 = px + 0.5 * (sig["t1"] - px) if two else sig["t1"]
+        lv2 = sig["t1"] if two else None
+        w1 = sp.get("half", 0.5)
+        stage, left, peak, exits, q = 0, 1.0, px, [], e
+        trail = sp.get("trail_r", 1.0) * R
+        while q < len(bars) and bars[q]["t"].date() == bars[e]["t"].date():
+            b = bars[q]
+            if (b["t"].hour * 60 + b["t"].minute) >= sp.get("exit_min", 18 * 60 + 25):
+                exits.append((q, b["o"], left, "18:25")); left = 0
+                break
+            if stage >= 1:
+                cand = peak - s * trail
+                if (cand - st) * s > 0:
+                    st = cand
+            adv = b["l"] if s > 0 else b["h"]
+            if (adv - st) * s <= 0:
+                fill = st if (b["o"] - st) * s > 0 else b["o"]
+                why = "стоп" if stage == 0 else ("б/у" if abs(st - px) < 1e-12 else "трейлинг")
+                exits.append((q, fill, left, why)); left = 0
+                break
+            fav = b["h"] if s > 0 else b["l"]
+            if stage == 0 and (fav - lv1) * s >= 0:
+                part = w1 if w1 < 1 else 1.0
+                exits.append((q, lv1, part, "тейк1")); left -= part; stage = 1; st = px; peak = lv1
+                if left <= 1e-9:
+                    break
+            if stage == 1 and lv2 and (fav - lv2) * s >= 0:
+                part = left / 2
+                exits.append((q, lv2, part, "тейк2")); left -= part; stage = 2
+            if stage >= 1 and (fav - peak) * s > 0:
+                peak = fav
+            q += 1
+        if left > 1e-9:
+            last = min(q, len(bars) - 1)
+            exits.append((last, bars[last]["c"], left, "открыта" if last == len(bars) - 1 else "конец дня"))
+        res = sum(f * s * (p / px - 1) for _, p, f, _ in exits)
+        out.append({"side": s, "confirm": k, "entry_i": e, "entry": px, "stop": sig["level"] * (1 - s * sig["buf"]),
+                    "t1": lv1, "t2": lv2, "impulse_t": sig["impulse"]["t"], "touch_t": sig["touch"]["t"],
+                    "exits": exits, "result": res, "open": exits[-1][3] == "открыта"})
+        busy_until = exits[-1][0]
+    return out
 
 
 LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct"]
@@ -637,7 +705,7 @@ class AutoTrader:
             "mult": sig["mult"], "touch_t": sig["touch"]["t"].strftime("%H:%M"),
             "confirm_t": sig["confirm"]["t"].strftime("%H:%M"), "price": price, "stop": level,
             "take1": price + 0.5 * (sig["t1"] - price) if two else sig["t1"], "take2": sig["t1"] if two else None,
-            "ema20": sig["ema"], "market": self.market, "decision": why, "enter": enter})
+            "ema20": sig["ema"], "market": self.market, "decision": why, "enter": enter, "kind": self._terms(tk)[0]})
         if not enter:
             return
         self.st["spike_traded"].append(tk)

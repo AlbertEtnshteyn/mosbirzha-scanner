@@ -193,6 +193,7 @@ class App(tk.Tk):
         self.btn_stop.pack(side="left", padx=6)
         ttk.Button(bar, text="Проверить доступ", command=self.check_access).pack(side="left", padx=(18, 0))
         ttk.Button(bar, text="Открыть график…", command=lambda: self.open_chart("SBER")).pack(side="left", padx=(6, 0))
+        ttk.Button(bar, text="Терминал Т-Инвестиций", command=lambda: self.open_tbank(None)).pack(side="left", padx=(6, 0))
         self.robot_lbl = ttk.Label(t3, text="Робот остановлен. Нажмите «Старт» — дальше он всё делает сам.", style="Big.TLabel")
         self.robot_lbl.pack(anchor="w", pady=(10, 2))
         ttk.Label(t3, text="По будням 07:00–18:30 МСК, сделки на демо-счёте песочницы. Стратегия «15:00»: каждую минуту "
@@ -213,7 +214,8 @@ class App(tk.Tk):
         sf = ttk.Frame(lnb, padding=4)
         lnb.add(sf, text="Всплески объёма")
         self.spk_tree = self._tree(sf, [("time", "Время", 50), ("ticker", "Бумага", 60), ("tf", "ТФ", 35), ("val", "Оборот, млн", 75),
-                                        ("mult", "×", 40), ("move", "Импульс", 65), ("reason", "Статус", 125)])
+                                        ("mult", "×", 40), ("move", "Импульс", 65), ("dir", "Ожидание", 75),
+                                        ("reason", "Статус", 125)])
         self.scan_lbl = ttk.Label(lf, text="—")
         self.scan_lbl.pack(anchor="w")
         self.scan_tree = self._tree(lf, [("ticker", "Бумага", 70), ("move", "Движение", 80), ("reason", "Статус", 110)])
@@ -224,12 +226,14 @@ class App(tk.Tk):
         ttk.Button(pb, text="Закрыть выбранную", command=self.close_selected).pack(side="left")
         ttk.Button(pb, text="Закрыть все", command=self.close_all).pack(side="left", padx=6)
         ttk.Button(pb, text="График", command=self.chart_selected).pack(side="left", padx=(12, 0))
+        ttk.Button(pb, text="В Т-Инвестиции", command=lambda: self.open_tbank(self._sel_ticker(self.pos_tree))).pack(side="left", padx=(6, 0))
         ttk.Label(pb, text="двойной щелчок по бумаге — график", foreground="#777").pack(side="left", padx=8)
         self.pos_tree = self._tree(rf, [("ticker", "Бумага", 60), ("strat", "Стратегия", 70), ("side", "Сторона", 55), ("lots", "Лотов", 55),
                                         ("entry", "Вход", 65), ("stop", "Стоп", 65), ("take", "Тейк", 75), ("last", "Сейчас", 65),
                                         ("res", "Итог", 60)])
         for tv, col in ((self.scan_tree, 0), (self.spk_tree, 1), (self.pos_tree, 0)):
             tv.bind("<Double-1>", lambda e, tv=tv, col=col: self._chart_from(tv, col))
+            tv.bind("<Button-3>", lambda e, tv=tv, col=col: self._row_menu(e, tv, col))
         hf = ttk.LabelFrame(vp, text="Закрытые сделки", padding=4)
         vp.add(hf, weight=2)
         self.sb_tree = self._tree(hf, [("date", "Дата", 90), ("strat", "Стратегия", 90), ("ticker", "Бумага", 70), ("side", "Сторона", 70), ("lots", "Лотов", 60),
@@ -738,9 +742,13 @@ class App(tk.Tk):
             tag = ("pos" if mv > 0 else "neg") if why == "СИГНАЛ" else ()
             self.scan_tree.insert("", "end", tags=tag, values=(tk, f"{mv * 100:+.2f}%", why))
         self.spk_tree.delete(*self.spk_tree.get_children())
+        mk = snap.get("market")
         for tm, tkr, tfn, val, mult, body, why in reversed(snap.get("spikes", [])):
-            tag = (("pos" if body > 0 else "neg"),) if why == "ПОДТВЕРЖДЁН" else ()
-            self.spk_tree.insert("", "end", tags=tag, values=(tm, tkr, tfn, f"{val / 1e6:.0f}", f"{mult:.1f}", f"{body * 100:+.2f}%", why))
+            d = "ЛОНГ ⬆" if body > 0 else "ШОРТ ⬇"
+            if why.startswith("жду") and mk is not None and mk != 0 and (mk > 0) != (body > 0):
+                why = why + " (индекс против)"
+            self.spk_tree.insert("", "end", tags=(("pos" if body > 0 else "neg"),),
+                                 values=(tm, tkr, tfn, f"{val / 1e6:.0f}", f"{mult:.1f}", f"{body * 100:+.2f}%", d, why))
         self.pos_tree.delete(*self.pos_tree.get_children())
         for p in snap["positions"]:
             last = p.get("last")
@@ -844,6 +852,32 @@ class App(tk.Tk):
                 tfn = tv.item(tv.selection()[0], "values")[2]
                 tf = {"5м": 5, "15м": 15, "1ч": 60}.get(tfn, 5)
             self.open_chart(tkr, tf)
+
+    def _row_menu(self, e, tv, col):
+        row = tv.identify_row(e.y)
+        if not row:
+            return
+        tv.selection_set(row)
+        tkr = tv.item(row, "values")[col]
+        m = tk.Menu(self, tearoff=0)
+        m.add_command(label=f"График {tkr}", command=lambda: self._chart_from(tv, col))
+        m.add_command(label=f"Открыть {tkr} в Т-Инвестициях", command=lambda: self.open_tbank(tkr))
+        m.add_command(label="Терминал Т-Инвестиций", command=lambda: self.open_tbank(None))
+        m.tk_popup(e.x_root, e.y_root)
+
+    def open_tbank(self, ticker):
+        """Страница бумаги в Т-Инвестициях или веб-терминал — в браузере по умолчанию."""
+        import webbrowser
+        if not ticker:
+            webbrowser.open(sc.TBANK_TERMINAL)
+            return
+        kind = "share"
+        try:
+            if self.robot:
+                kind = self.robot._terms_cache.get(ticker, ("share",))[0]
+        except Exception:
+            pass
+        webbrowser.open(sc.tbank_url(ticker, kind))
 
     def open_chart(self, ticker, tf=5):
         if not os.environ.get("TINVEST_TOKEN"):
