@@ -297,6 +297,36 @@ def minute_of(ts):
     return ts.hour * 60 + ts.minute
 
 
+LAST_MOVES = {}
+LATE_LIMIT_MIN = 10          # позже этого опоздания (мин) песочница не открывает сделки
+
+
+def report_movers(market, top=5):
+    """Пять бумаг с наибольшим движением и почему каждая стала или не стала сигналом."""
+    if not LAST_MOVES:
+        return
+    print(f"Самые сильные движения к {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d} (порог {THRESHOLD * 100:g}%, рынок {market * 100:+.2f}%):")
+    for tk, mv in sorted(LAST_MOVES.items(), key=lambda x: -abs(x[1]))[:top]:
+        if abs(mv) < THRESHOLD:
+            why = f"меньше порога {THRESHOLD * 100:g}%"
+        elif (mv > 0) != (market > 0):
+            why = "против направления рынка — фильтр"
+        else:
+            why = "сигнал"
+        print(f"  {tk:6s} {mv * 100:+.2f}%  — {why}")
+
+
+def entry_wait():
+    """Ждёт времени входа, если оно ещё не наступило. False — нажали «Стоп»."""
+    now = datetime.now(MSK)
+    if (now.hour * 60 + now.minute) < ENTRY_MIN:
+        print(f"Жду {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}:05 МСК…", flush=True)
+        if not wait_until(ENTRY_MIN // 60, ENTRY_MIN % 60, 5):
+            print("Остановлено.")
+            return False
+    return True
+
+
 def compute_day(candles, threshold=None, stop=STOP, cost=COST, with_result=True, entry_min=None):
     """
     candles: {ticker: [ {t: datetime(МСК), o, h, l, c}, ... ]} — минутки одного дня.
@@ -315,6 +345,8 @@ def compute_day(candles, threshold=None, stop=STOP, cost=COST, with_result=True,
         if minute_of(main[-1]["t"]) < ENTRY - 10:
             continue
         moves[tk] = main[-1]["c"] / main[0]["o"] - 1
+    global LAST_MOVES
+    LAST_MOVES = dict(moves)
     if not moves:
         return None, []
     market = sum(moves.values()) / len(moves)
@@ -628,17 +660,15 @@ def signals_mode(args):
               "обычно приходят с задержкой около 15 минут. Сигналы будут рассчитаны по неполным данным.")
     tickers = imoex_tickers()
     day = datetime.now(MSK).date()
-    if not args.now:
-        print(f"Жду {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}:05 МСК…", flush=True)
-        if not wait_until(ENTRY_MIN // 60, ENTRY_MIN % 60, 5):
-            print("Остановлено.")
-            return []
+    if not args.now and not entry_wait():
+        return []
     data = live_candles(tickers, day, ti)
     market, sigs = compute_day(data, with_result=False)
     if market is None:
         print("Нет данных за сегодня до 15:00.")
         return []
-    print(f"\nРынок к {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}: {market * 100:+.2f}% (по {len(data)} бумагам). Сигналов: {len(sigs)}")
+    print(f"\nРынок к {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}: {market * 100:+.2f}% (по {len(LAST_MOVES)} бумагам). Сигналов: {len(sigs)}")
+    report_movers(market)
     prices = ti.last_prices([s["ticker"] for s in sigs]) if (ti and sigs) else {}
     for s in sigs:
         px = prices.get(s["ticker"])
@@ -687,15 +717,24 @@ def sandbox_mode(args):
     day = datetime.now(MSK).date()
     if day.weekday() >= 5:
         sys.exit("Сегодня выходной: стратегия торгует только по будням.")
-    if not args.now:
-        print(f"Жду {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}:05 МСК…", flush=True)
-        wait_until(ENTRY_MIN // 60, ENTRY_MIN % 60, 5)
+    if not args.now and not entry_wait():
+        return
+    late = (datetime.now(MSK).hour * 60 + datetime.now(MSK).minute) - ENTRY_MIN
     data = live_candles(tickers, day, ti)
     market, sigs = compute_day(data, with_result=False)
-    if not sigs:
-        print("Сегодня сигналов нет." if market is not None else "Нет данных к 15:00.")
+    if market is None:
+        print(f"Нет данных к {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}.")
         return
-    print(f"Рынок к {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}: {market * 100:+.2f}%. Сигналов: {len(sigs)}")
+    print(f"Рынок к {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}: {market * 100:+.2f}% (по {len(LAST_MOVES)} бумагам). Сигналов: {len(sigs)}")
+    report_movers(market)
+    if not sigs:
+        print("Сегодня сигналов нет — сделок не будет.")
+        return
+    if not args.now and late > LATE_LIMIT_MIN:
+        print(f"Время входа прошло {late} мин назад. Сделки не открываются: вход с опозданием — это уже не та стратегия, "
+              f"что в бэктесте. Сигналы выше показаны для сведения. Запустите песочницу до "
+              f"{(ENTRY_MIN + LATE_LIMIT_MIN) // 60}:{(ENTRY_MIN + LATE_LIMIT_MIN) % 60:02d} или включите автоматический режим.")
+        return
     alloc = args.capital / len(sigs)
     prices = ti.last_prices([s["ticker"] for s in sigs])
     pos = []
