@@ -302,6 +302,7 @@ class App(tk.Tk):
         self.v_spk_half = tk.StringVar(value=str(self.s.get("spike_half", 50)))
         self.v_spk_trail = tk.StringVar(value=f"{self.s.get('spike_trail', 1.0):g}")
         self.v_spk_max = tk.StringVar(value=str(self.s.get("spike_max", 5)))
+        self.v_spk_share = tk.StringVar(value=f"{self.s.get('spike_share', 10):g}")
         g = ttk.Frame(t4)
         g.pack(anchor="nw", fill="x")
         r = 0
@@ -354,10 +355,29 @@ class App(tk.Tk):
         ttk.Label(f, text="Трейлинг, R (расстояние до стопа):").pack(side="left")
         ttk.Combobox(f, textvariable=self.v_spk_trail, width=5, state="readonly", values=["0.5", "1", "1.5", "2"]).pack(side="left", padx=(4, 12))
         ttk.Label(f, text="Макс. позиций:").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_spk_max, width=4, state="readonly", values=["1", "2", "3", "5", "8"]).pack(side="left", padx=(4, 0))
+        ttk.Combobox(f, textvariable=self.v_spk_max, width=4, state="readonly", values=["1", "2", "3", "5", "8", "10"]).pack(side="left", padx=(4, 0))
+        r += 1
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
+        ttk.Label(f, text="Вход в позицию, % от портфеля:").pack(side="left")
+        ttk.Combobox(f, textvariable=self.v_spk_share, width=5,
+                     values=["1", "2", "3", "5", "10", "15", "20", "25", "33", "50", "100"]).pack(side="left", padx=(4, 8))
+        self.share_lbl = ttk.Label(f, text="", foreground="#555")
+        self.share_lbl.pack(side="left")
+        def _upd_share(*_):
+            try:
+                pct, mx = float(self.v_spk_share.get().replace(",", ".")), int(self.v_spk_max.get())
+                txt = f"при {mx} позициях занято до {pct * mx:g}% портфеля"
+                if pct * mx > 100:
+                    txt += " — больше 100%, нужна маржа (плечо)"
+                self.share_lbl.configure(text=txt, foreground="#b3261e" if pct * mx > 100 else "#555")
+            except ValueError:
+                self.share_lbl.configure(text="введите число")
+        self.v_spk_share.trace_add("write", _upd_share)
+        self.v_spk_max.trace_add("write", _upd_share)
+        _upd_share()
         r += 1
         tk.Label(g, text="На истории (44 акции индекса, 10.2025–10.2026):\n" + "\n".join(f"  • {at.SPIKE_PRESETS[tf]['bt']}" for tf in (5, 15, 60))
-                 + "\nСтоп — под самой низкой точкой всего отката (с закруглением) с запасом. На сделку — 10% капитала."
+                 + "\nСтоп — под самой низкой точкой всего отката (с закруглением) с запасом. Размер позиции — % от текущей стоимости портфеля песочницы."
                  + "\nДва тейка (полпути до хая 50% → б/у и трейлинг, хай — 50% остатка): на 15 мин в плюсе 64% сделок, в среднем +0,08% (трейлинг 1R)"
                  + " или +0,12% (1,5R); один тейк у хая: в плюсе 53%, в среднем +0,24%.",
                  justify="left", anchor="w", font=("Segoe UI", 9), fg="#555", bg=bg, wraplength=760).grid(row=r, column=1, sticky="w")
@@ -511,6 +531,7 @@ class App(tk.Tk):
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
                       spike_markets=[k for k, _ in at.MARKETS if self.v_mk[k].get()] or ["imoex"], spike_half=int(self.v_spk_half.get()),
                       spike_trail=float(self.v_spk_trail.get()), spike_max=int(self.v_spk_max.get()),
+                      spike_share=self._pct(self.v_spk_share.get()),
                       two_takes=self.v_takes.get() == "два тейка",
                       tg_token=self.v_tg_tok.get().strip(), tg_chat=self.v_tg_chat.get().strip(),
                       tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get())
@@ -688,6 +709,7 @@ class App(tk.Tk):
         spike = {"on": bool(self.s.get("spike_on")), "tfs": list(self.s.get("spike_tfs", [15, 60])),
                  "markets": list(self.s.get("spike_markets", ["all_shares"])), "half": int(self.s.get("spike_half", 50)) / 100,
                  "trail_r": float(self.s.get("spike_trail", 1.0)), "max_pos": int(self.s.get("spike_max", 5)),
+                 "share": float(self.s.get("spike_share", 10)) / 100,
                  "two_takes": bool(self.s.get("two_takes", True))}
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
                                    day_on=bool(self.s.get("day_on", True)),
@@ -786,6 +808,14 @@ class App(tk.Tk):
                                winsound.SND_ALIAS | winsound.SND_ASYNC)
         except Exception:
             self.bell()
+
+    @staticmethod
+    def _pct(v):
+        try:
+            x = float(str(v).replace(",", ".").replace("%", ""))
+        except ValueError:
+            return 10.0
+        return min(max(x, 0.5), 100.0)
 
     def _paste_to(self, var):
         try:

@@ -273,6 +273,10 @@ class SandboxBroker:
     def all_shares(self):
         return self.ti.all_shares()
 
+    def portfolio_value(self):
+        """Текущая стоимость портфеля песочницы, ₽."""
+        return self.ti.sandbox_portfolio_value(self.acc)
+
     def universe(self, markets, index_list, log=print):
         """Список инструментов по выбранным в настройках группам."""
         out, shares = set(), None
@@ -709,7 +713,15 @@ class AutoTrader:
         if not enter:
             return
         self.st["spike_traded"].append(tk)
-        self._open(tk, side=s, alloc=self.capital * sp["share"], strat="spike", stop_level=level, t1=sig["t1"],
+        base = self.capital
+        if sp.get("from_portfolio", True) and hasattr(self.b, "portfolio_value"):
+            try:
+                base = self.b.portfolio_value() or self.capital
+            except Exception:
+                pass
+        self.log(f"  размер позиции: {sp['share'] * 100:g}% от {'портфеля' if base != self.capital else 'капитала'} "
+                 f"{base:,.0f} ₽ = {base * sp['share']:,.0f} ₽".replace(",", " "))
+        self._open(tk, side=s, alloc=base * sp["share"], strat="spike", stop_level=level, t1=sig["t1"],
                    exit_min=sp["exit_min"])
 
     # ------------------------------------------------------------------ вход по «15:00»
