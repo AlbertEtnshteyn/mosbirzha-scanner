@@ -208,7 +208,7 @@ function ensureChart() {
     layout: { background: { color: "#131722" }, textColor: "#b2b5be", fontSize: 11 },
     grid: { vertLines: { color: "#1f2433" }, horzLines: { color: "#1f2433" } },
     rightPriceScale: { borderColor: "#283048" },
-    timeScale: { borderColor: "#283048", timeVisible: true, secondsVisible: false, rightOffset: 4 },
+    timeScale: { borderColor: "#283048", timeVisible: true, secondsVisible: false, rightOffset: 12 },
     crosshair: { mode: 0 },
   });
   CH.chart = c;
@@ -253,7 +253,7 @@ async function loadChart(quiet) {
     $("#chTbank").href = d.tbank;
     drawTrades();
     if (keepRange) CH.chart.timeScale().setVisibleLogicalRange(keepRange);
-    else CH.chart.timeScale().setVisibleLogicalRange({ from: B.length - 120, to: B.length + 3 });
+    else CH.chart.timeScale().setVisibleLogicalRange({ from: B.length - 120, to: B.length + 12 });
     summary(d);
     if (!quiet) CH.go = 0;
   } catch (e) { if (e.message !== "401") $("#chartInfo").textContent = "Ошибка: " + e.message; }

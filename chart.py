@@ -240,7 +240,8 @@ class ChartWindow(tk.Toplevel):
         pw, ph = W - right, H - bottom
         vol_h = ph * 0.18
         price_h = ph - vol_h - 6
-        bw = pw / self.n_vis
+        pad_r = max(8, self.n_vis // 8)               # пустое место справа от последней свечи
+        bw = pw / (self.n_vis + pad_r)
         lo = min(min(b["l"] for b in vis), min(e20[start:end]), min(e10[start:end]))
         hi = max(max(b["h"] for b in vis), max(e20[start:end]), max(e10[start:end]))
         poss = self._positions()
@@ -251,7 +252,7 @@ class ChartWindow(tk.Toplevel):
         pad = (hi - lo) * 0.06 or hi * 0.01
         lo, hi = lo - pad, hi + pad
         y = lambda v: 4 + (hi - v) / (hi - lo) * (price_h - 8)
-        x0 = pw - len(vis) * bw                       # вправо прижато
+        x0 = pw - (len(vis) + pad_r) * bw              # отступ справа
         # сетка и шкала цен
         step = _nice((hi - lo) / 6)
         v = (lo // step + 1) * step
