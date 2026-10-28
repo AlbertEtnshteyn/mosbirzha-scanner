@@ -294,45 +294,76 @@ def find_trend_pullback(bars, sp, em20):
     return None
 
 
-def history_trades(bars, sp):
+def history_trades(bars, sp, tf=None, tier="index", all_hours=True):
     """
-    Формации на истории графика и как бы их отработал робот (без фильтра индекса): вход по открытию свечи
-    после подтверждения, стоп под откатом, тейк1/тейк2/б/у/трейлинг как в настройках, выход не позже 18:25.
-    Проверка внутри свечи — худший случай (сначала стоп). Возвращает список сделок.
+    Сделки на истории графика по правилам робота: формация (и трендовый откат для 2-го эшелона на 15 мин),
+    правила эшелонов (5 мин и 3-й эшелон не торгуются), окно входов, выход в конце дня, перенос позиции в плюсе
+    или с взятым тейком1 на следующий день (до 2 дней). Фильтр индекса здесь не применяется (нет данных индекса).
+    Внутри свечи — худший случай (сначала стоп). Возвращает список сделок.
     """
+    tf = tf or sp.get("tf", 15)
+    if tf == 5 or tier == "3":
+        return []
+    p = dict(sp)
+    if tier == "2" and tf == 60:
+        p["min_value"] = 15e6
+    if tf == 60:
+        p["slot_mult"] = 2.0
+    add_slot(bars)
+    pt = dict(p, **TIER2_TREND) if (tier == "2" and tf == 15) else None
     em = ema([b["c"] for b in bars])
     out, used_days, busy_until = [], set(), -1
+    two = sp.get("two_takes", True)
+    w1 = sp.get("half", 0.5)
     for k in range(25, len(bars) - 1):
         if k <= busy_until:
             continue
-        sig = find_pullback(bars, sp, em, k)
+        sig, kind = find_pullback(bars, p, em, k), "form"
+        if pt and not sig:
+            sig, kind = find_trend_pullback(bars[:k + 1], pt, em[:k + 1]), "trend"
         if not sig or sig.get("late"):
             continue
+        ok, _ = tier_rules(tier, tf, kind)
+        if not ok:
+            continue
+        prof = trade_profile(tier, tf, kind, all_hours)
         e = k + 1
         if bars[e]["t"].date() != bars[k]["t"].date() or bars[k]["t"].date() in used_days:
             continue
         te = bars[e]["t"].hour * 60 + bars[e]["t"].minute
         _te = sig["impulse"].get("t_end", sig["impulse"]["t"])
         ti = _te.hour * 60 + _te.minute
-        if not (sp["from_min"] <= te < sp["to_min"]) or ti < sp["from_min"]:
+        if not (prof["from"] <= te < prof["to"]) or ti < prof["from"]:
             continue
         s = sig["side"]
         px = bars[e]["o"]
         st = sig["level"] * (1 - s * sig["buf"])
         R = abs(px - st)
-        if (st - px) * s >= 0 or (sig["t1"] - px) * s < 0.5 * R:
+        if R <= 0 or (st - px) * s >= 0 or (sig["t1"] - px) * s < 0.5 * R:
             continue
         used_days.add(bars[k]["t"].date())
-        two = sp.get("two_takes", True)
+        st0 = st
         lv1 = px + 0.5 * (sig["t1"] - px) if two else sig["t1"]
         lv2 = sig["t1"] if two else None
-        w1 = sp.get("half", 0.5)
-        stage, left, peak, exits, q = 0, 1.0, px, [], e
+        stage, left, peak, exits, q, last, carried = 0, 1.0, px, [], e, e, 0
+        dcur = bars[e]["t"].date()
         trail = sp.get("trail_r", 1.0) * R
-        while q < len(bars) and bars[q]["t"].date() == bars[e]["t"].date():
+        while q < len(bars):
             b = bars[q]
-            if (b["t"].hour * 60 + b["t"].minute) >= sp.get("exit_min", 18 * 60 + 25):
-                exits.append((q, b["o"], left, "18:25")); left = 0
+            m = b["t"].hour * 60 + b["t"].minute
+            if b["t"].date() != dcur or m >= prof["exit"]:
+                pnl = s * (bars[last]["c"] / px - 1)
+                if prof["carry"] and carried < MAX_CARRY_DAYS and (stage >= 1 or pnl > 0):
+                    carried += 1
+                    exits.append((last, bars[last]["c"], 0, "перенос"))
+                    nd = dcur
+                    while q < len(bars) and (bars[q]["t"].date() <= nd or bars[q]["t"].hour * 60 + bars[q]["t"].minute < DAY_START):
+                        q += 1
+                    if q >= len(bars):
+                        break
+                    dcur = bars[q]["t"].date()
+                    continue
+                exits.append((last, bars[last]["c"], left, "конец дня")); left = 0
                 break
             if stage >= 1:
                 cand = peak - s * trail
@@ -355,14 +386,15 @@ def history_trades(bars, sp):
                 exits.append((q, lv2, part, "тейк2")); left -= part; stage = 2
             if stage >= 1 and (fav - peak) * s > 0:
                 peak = fav
+            last = q
             q += 1
         if left > 1e-9:
-            last = min(q, len(bars) - 1)
-            exits.append((last, bars[last]["c"], left, "открыта" if last == len(bars) - 1 else "конец дня"))
-        res = sum(f * s * (p / px - 1) for _, p, f, _ in exits)
-        out.append({"side": s, "confirm": k, "entry_i": e, "entry": px, "stop": sig["level"] * (1 - s * sig["buf"]),
+            last = min(last, len(bars) - 1)
+            exits.append((last, bars[last]["c"], left, "открыта"))
+        res = sum(f * s * (pp / px - 1) for _, pp, f, _ in exits)
+        out.append({"side": s, "confirm": k, "entry_i": e, "entry": px, "stop": st0,
                     "t1": lv1, "t2": lv2, "impulse_t": sig["impulse"]["t"], "touch_t": sig["touch"]["t"],
-                    "exits": exits, "result": res, "open": exits[-1][3] == "открыта"})
+                    "exits": exits, "result": res, "open": exits[-1][3] == "открыта", "kind": kind, "carried": carried})
         busy_until = exits[-1][0]
     return out
 

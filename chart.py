@@ -15,7 +15,7 @@ BG, GRID, TXT = "#131722", "#1f2433", "#b2b5be"
 UP, DOWN = "#26a69a", "#ef5350"
 EMA10_C, EMA20_C = "#e8e8e8", "#2962ff"
 TFS = [(1, "1м"), (5, "5м"), (15, "15м"), (60, "1ч"), (1440, "Д")]
-DEPTH = {1: 2, 5: 4, 15: 8, 60: 45, 1440: 400}           # сколько дней истории грузить
+DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}           # сколько дней истории грузить
 
 
 def ema(vals, span):
@@ -70,7 +70,7 @@ class ChartWindow(tk.Toplevel):
         tk.Label(legend, text="━ EMA 10", fg=EMA10_C, bg=BG).pack(side="left")
         tk.Label(legend, text="━ EMA 20", fg=EMA20_C, bg=BG).pack(side="left", padx=10)
         self.v_hist = tk.BooleanVar(value=True)
-        tk.Checkbutton(legend, text="формации из истории", variable=self.v_hist, command=self.draw,
+        tk.Checkbutton(legend, text="сделки робота на истории", variable=self.v_hist, command=self.draw,
                        bg=BG, fg=TXT, selectcolor=GRID, activebackground=BG, activeforeground=TXT).pack(side="left", padx=10)
         self.sum_lbl = tk.Label(legend, text="", fg=TXT, bg=BG)
         self.sum_lbl.pack(side="left", padx=6)
@@ -138,7 +138,19 @@ class ChartWindow(tk.Toplevel):
                     except Exception:
                         pass
                     bars = [dict(r, val=r.get("v", 0) * per_lot * (r["h"] + r["l"] + r["c"]) / 3) for r in rows]
-                    trades = at.history_trades(bars, at.params(self._sp(), tf))
+                    if tk_ in sc.FALLBACK_TICKERS:
+                        tier = "index"
+                    else:
+                        days = {}
+                        for r in bars:
+                            m = r["t"].hour * 60 + r["t"].minute
+                            if 600 <= m < 1120:
+                                days[r["t"].date()] = days.get(r["t"].date(), 0) + r["val"]
+                        med = at._median(list(days.values())) if days else 0
+                        tier = "2" if med >= at.TIER2_TURNOVER * (1 if tf >= 5 else 1) else "3"
+                    self.tier = tier
+                    trades = at.history_trades(bars, at.params(self._sp(), tf), tf, tier,
+                                               bool(self.app.s.get("all_hours", True)))
                 self.res.put((tk_, tf, (rows, trades), None))
             except Exception as e:
                 self.res.put((tk_, tf, None, e))
@@ -174,17 +186,23 @@ class ChartWindow(tk.Toplevel):
 
     def _summary(self):
         if self.tf not in (5, 15, 60):
-            self.sum_lbl.configure(text="формации ищутся на 5м, 15м и 1ч")
+            self.sum_lbl.configure(text="сделки робота показываются на 15м и 1ч")
+            return
+        if self.tf == 5:
+            self.sum_lbl.configure(text="на 5 мин робот не торгует — сделок нет (переключите на 15м или 1ч)")
+            return
+        if getattr(self, "tier", "") == "3":
+            self.sum_lbl.configure(text="3-й эшелон — робот не торгует, сделок нет")
             return
         done = [t for t in self.trades if not t["open"]]
         if not self.trades:
-            self.sum_lbl.configure(text="формаций за загруженный период нет")
+            self.sum_lbl.configure(text=f"сделок робота за {DEPTH[self.tf]} дн. нет")
             return
         wins = sum(1 for t in done if t["result"] > 0)
         tot = sum(t["result"] for t in done) * 100
-        dates = ", ".join(f"{self.bars[t['entry_i']]['t']:%d.%m %H:%M}" for t in self.trades[-4:])
-        self.sum_lbl.configure(text=f"формаций за {DEPTH[self.tf]} дн.: {len(self.trades)} ({dates}), в плюсе {wins}, "
-                                    f"сумма {tot:+.2f}% (без комиссий)")
+        dates = ""
+        tier = {"index": "индекс", "2": "2-й эшелон"}.get(getattr(self, "tier", ""), "")
+        self.sum_lbl.configure(text=f"{tier}: сделок за {DEPTH[self.tf]} дн. {len(self.trades)}, в плюсе {wins}, сумма {tot:+.2f}%")
         self._go_i = 0
 
     def goto_trade(self):
@@ -322,7 +340,7 @@ class ChartWindow(tk.Toplevel):
                     i_ = qi - start
                     if 0 <= i_ < len(vis):
                         xx, yy = x0 + (i_ + 0.5) * bw, y(px_)
-                        col_ = "#ffd54f" if why.startswith("тейк") else ("#9e9e9e" if why in ("б/у", "открыта", "конец дня", "18:25")
+                        col_ = "#ffd54f" if why.startswith("тейк") else "#b388ff" if why == "перенос" else ("#9e9e9e" if why in ("б/у", "открыта", "конец дня", "18:25")
                                                                          else ("#4fc3f7" if why == "трейлинг" else "#ff5252"))
                         cv.create_oval(xx - 5, yy - 5, xx + 5, yy + 5, fill=col_, outline="black")
                         cv.create_text(xx + 7, yy - 9, text=why, fill=col_, anchor="w", font=("Segoe UI", 8))
