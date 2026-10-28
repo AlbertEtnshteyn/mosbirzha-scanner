@@ -1,0 +1,586 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Сканер стратегии «продолжение сильного движения дня по рынку» для акций индекса Мосбиржи.
+
+Правила (как в бэктесте):
+  • будни, основная сессия; цена открытия дня — открытие минутной свечи 10:00;
+  • в 15:00 изменение акции от открытия = закрытие свечи 14:59 / открытие 10:00 − 1;
+  • сигнал, если |изменение| ≥ 2%;
+  • фильтр рынка: среднее изменение всех акций индекса к 15:00 в ту же сторону;
+  • вход в 15:00 по направлению движения, стоп 3% от цены входа, выход в 17:00
+    (закрытие свечи 16:59); капитал дня делится поровну между сигналами.
+
+Режимы:
+  python scanner.py journal                 # после 17:15: сигналы и итог дня в журнал (без токена)
+  python scanner.py journal --date 2026-10-27
+  python scanner.py journal --from 2026-10-01 --to 2026-10-27   # дозаполнить пропущенные дни
+  python scanner.py stats                   # статистика по журналу
+  python scanner.py signals                 # в 15:00: список сигналов для ручной торговли
+  python scanner.py check                   # проверка доступа к API Т-Инвестиций (нужен токен)
+  python scanner.py sandbox --capital 1000000   # торговля на демо-счёте песочницы
+  Ключ --entry 14:30 у journal, stats, signals и sandbox — вариант со входом в 14:30 (свой журнал).
+  Ключ --threshold 2.5 — порог движения 2,5% вместо 2% (меньше сделок, выше средняя сделка; свой журнал).
+
+Токен Т-Инвестиций берётся только из переменной окружения TINVEST_TOKEN (никуда его не пересылайте).
+Для песочницы нужен токен песочницы.
+"""
+import argparse
+import csv
+import json
+import os
+import sys
+import threading
+import time
+import uuid
+from datetime import date, datetime, timedelta, timezone
+
+try:
+    import requests
+except ImportError:
+    sys.exit("Установите библиотеку: pip install requests")
+
+MSK = timezone(timedelta(hours=3))
+
+# ---- параметры стратегии (из бэктеста) -------------------------------------
+ENTRY_MIN = 15 * 60          # 15:00
+EXIT_MIN = 17 * 60           # 17:00 — выход по закрытию свечи 16:59
+OPEN_MIN = 10 * 60           # 10:00 — открытие основной сессии
+THRESHOLD = 0.02             # 2%
+STOP = 0.03                  # 3%
+COST = 0.0016                # 0.16% на сделку туда-обратно (для журнала)
+
+FALLBACK_TICKERS = [
+    "AFKS", "AFLT", "ALRS", "BSPB", "CBOM", "CHMF", "CNRU", "DOMRF", "ENPG", "FLOT", "GAZP", "GMKN",
+    "HEAD", "IRAO", "LKOH", "MAGN", "MDMG", "MOEX", "MTSS", "NLMK", "NVTK", "OZON", "PHOR", "PLZL",
+    "POSI", "RAGR", "RENI", "ROSN", "RTKM", "RUAL", "SBER", "SBERP", "SNGS", "SNGSP", "SVCB", "T",
+    "TATN", "TATNP", "TRNFP", "UGLD", "VKCO", "VTBR", "X5", "YDEX",
+]
+
+HERE = os.path.dirname(os.path.abspath(sys.argv[0] if getattr(sys, "frozen", False) else __file__))
+JOURNAL = os.path.join(HERE, "forward_journal.csv")
+DAYS_LOG = os.path.join(HERE, "forward_days.csv")
+SANDBOX_LOG = os.path.join(HERE, "sandbox_trades.csv")
+STOP_EVENT = threading.Event()   # кнопка «Стоп» в приложении
+
+
+def configure(threshold_pct=2.0, entry="15:00"):
+    """Задаёт порог и время входа; у каждой комбинации свой журнал."""
+    global THRESHOLD, ENTRY_MIN, JOURNAL, DAYS_LOG, SANDBOX_LOG
+    THRESHOLD = threshold_pct / 100
+    ENTRY_MIN = 14 * 60 + 30 if entry == "14:30" else 15 * 60
+    sfx = ("_1430" if entry == "14:30" else "") + (f"_t{threshold_pct:g}".replace(".", "_") if threshold_pct != 2.0 else "")
+    JOURNAL = os.path.join(HERE, f"forward_journal{sfx}.csv")
+    DAYS_LOG = os.path.join(HERE, f"forward_days{sfx}.csv")
+    SANDBOX_LOG = os.path.join(HERE, f"sandbox_trades{sfx}.csv")
+
+
+# ============================================================================ ядро
+def minute_of(ts):
+    return ts.hour * 60 + ts.minute
+
+
+def compute_day(candles, threshold=None, stop=STOP, cost=COST, with_result=True, entry_min=None):
+    """
+    candles: {ticker: [ {t: datetime(МСК), o, h, l, c}, ... ]} — минутки одного дня.
+    Возвращает (market_move, signals). Сигнал: ticker, side (+1/-1), move, entry, stop_price,
+    и при with_result — exit, reason, gross, net.
+    Если в какую-то минуту сделок не было, берётся ближайшая свеча: открытие — первая свеча
+    с 10:00 до 10:05, цена к моменту входа — последняя свеча за 10 минут до входа.
+    """
+    ENTRY = entry_min or ENTRY_MIN
+    threshold = threshold or THRESHOLD
+    moves = {}
+    for tk, rows in candles.items():
+        main = [r for r in rows if OPEN_MIN <= minute_of(r["t"]) < ENTRY]
+        if not main or minute_of(main[0]["t"]) > OPEN_MIN + 5:
+            continue
+        if minute_of(main[-1]["t"]) < ENTRY - 10:
+            continue
+        moves[tk] = main[-1]["c"] / main[0]["o"] - 1
+    if not moves:
+        return None, []
+    market = sum(moves.values()) / len(moves)
+    signals = []
+    for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1])):
+        if abs(mv) < threshold:
+            continue
+        side = 1 if mv > 0 else -1
+        if (market > 0) != (side > 0) or market == 0:
+            continue
+        sig = {"ticker": tk, "side": side, "move": mv}
+        if with_result:
+            rows = [r for r in candles[tk] if ENTRY <= minute_of(r["t"]) < EXIT_MIN]
+            if not rows or minute_of(rows[0]["t"]) > ENTRY + 2:
+                continue
+            entry = rows[0]["o"]
+            sp = entry * (1 - side * stop)
+            res, reason, exit_px = None, "time", rows[-1]["c"]
+            for r in rows:
+                adverse = r["l"] <= sp if side > 0 else r["h"] >= sp
+                if adverse:
+                    res, reason, exit_px = -stop, "stop", sp
+                    break
+            if res is None:
+                res = side * (exit_px / entry - 1)
+            sig.update(entry=entry, stop_price=sp, exit=exit_px, reason=reason, gross=res, net=res - cost)
+        signals.append(sig)
+    return market, signals
+
+
+# ============================================================================ данные Мосбиржи
+ISS = "https://iss.moex.com/iss"
+
+
+def iss_get(path, params, retries=4):
+    for i in range(retries):
+        try:
+            r = requests.get(ISS + path, params={**params, "iss.meta": "off"}, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            if i == retries - 1:
+                raise
+            time.sleep(2 * (i + 1))
+
+
+def imoex_tickers():
+    try:
+        js = iss_get("/statistics/engines/stock/markets/index/analytics/IMOEX.json", {"limit": 100})
+        b = js["analytics"]
+        key = "secids" if "secids" in b["columns"] else "ticker"
+        k = b["columns"].index(key)
+        t = sorted({row[k] for row in b["data"] if row[k]})
+        if len(t) >= 20:
+            return t
+    except Exception as e:
+        print("Состав индекса не получен, беру список из бэктеста:", e)
+    return FALLBACK_TICKERS
+
+
+def iss_candles(ticker, day):
+    url = f"/engines/stock/markets/shares/boards/TQBR/securities/{ticker}/candles.json"
+    out, start = [], 0
+    while True:
+        js = iss_get(url, {"interval": 1, "from": day.isoformat(), "till": day.isoformat(), "start": start})
+        c = js["candles"]
+        if not c["data"]:
+            break
+        cols = c["columns"]
+        for row in c["data"]:
+            d = dict(zip(cols, row))
+            t = datetime.strptime(d["begin"], "%Y-%m-%d %H:%M:%S")
+            out.append({"t": t, "o": float(d["open"]), "h": float(d["high"]), "l": float(d["low"]), "c": float(d["close"])})
+        start += len(c["data"])
+        if len(c["data"]) < 500:
+            break
+    return out
+
+
+def iss_day(day, tickers):
+    data = {}
+    for tk in tickers:
+        try:
+            rows = iss_candles(tk, day)
+            if rows:
+                data[tk] = rows
+        except Exception as e:
+            print(f"  {tk}: не загрузилось ({e})")
+    return data
+
+
+# ============================================================================ API Т-Инвестиций (REST)
+TINV_HOSTS = {"prod": "https://invest-public-api.tinkoff.ru/rest/",
+              "sandbox": "https://sandbox-invest-public-api.tinkoff.ru/rest/"}
+SVC = "tinkoff.public.invest.api.contract.v1."
+
+
+class TInvest:
+    def __init__(self, token, env="sandbox"):
+        self.base = TINV_HOSTS[env]
+        self.h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
+        self._shares = {}
+
+    def call(self, service, method, body):
+        r = requests.post(f"{self.base}{SVC}{service}/{method}", headers=self.h, data=json.dumps(body), timeout=30)
+        if r.status_code != 200:
+            raise RuntimeError(f"{service}/{method}: HTTP {r.status_code} {r.text[:300]}")
+        return r.json()
+
+    @staticmethod
+    def q(x):
+        """Quotation/MoneyValue {units, nano} -> float."""
+        if not x:
+            return 0.0
+        return int(x.get("units", 0)) + int(x.get("nano", 0)) / 1e9
+
+    def share(self, ticker):
+        if ticker not in self._shares:
+            js = self.call("InstrumentsService", "ShareBy",
+                           {"idType": "INSTRUMENT_ID_TYPE_TICKER", "classCode": "TQBR", "id": ticker})
+            ins = js["instrument"]
+            self._shares[ticker] = {"uid": ins["uid"], "lot": int(ins.get("lot", 1)),
+                                    "short": bool(ins.get("shortEnabledFlag", False))}
+        return self._shares[ticker]
+
+    def candles(self, ticker, day):
+        uid = self.share(ticker)["uid"]
+        frm = datetime(day.year, day.month, day.day, 9, 55, tzinfo=MSK).astimezone(timezone.utc)
+        to = datetime(day.year, day.month, day.day, 18, 45, tzinfo=MSK).astimezone(timezone.utc)
+        js = self.call("MarketDataService", "GetCandles",
+                       {"instrumentId": uid, "from": frm.isoformat().replace("+00:00", "Z"),
+                        "to": to.isoformat().replace("+00:00", "Z"), "interval": "CANDLE_INTERVAL_1_MIN"})
+        out = []
+        for c in js.get("candles", []):
+            t = datetime.fromisoformat(c["time"].replace("Z", "+00:00")).astimezone(MSK).replace(tzinfo=None)
+            out.append({"t": t, "o": self.q(c["open"]), "h": self.q(c["high"]), "l": self.q(c["low"]), "c": self.q(c["close"])})
+        return out
+
+    def last_prices(self, tickers):
+        uids = {self.share(t)["uid"]: t for t in tickers}
+        js = self.call("MarketDataService", "GetLastPrices", {"instrumentId": list(uids)})
+        out = {}
+        for p in js.get("lastPrices", []):
+            t = uids.get(p.get("instrumentUid"))
+            if t:
+                out[t] = self.q(p.get("price"))
+        return out
+
+    # --- песочница
+    def sandbox_account(self):
+        js = self.call("SandboxService", "GetSandboxAccounts", {})
+        accs = js.get("accounts", [])
+        if accs:
+            return accs[0]["id"]
+        return self.call("SandboxService", "OpenSandboxAccount", {})["accountId"]
+
+    def sandbox_pay_in(self, acc, rub):
+        self.call("SandboxService", "SandboxPayIn",
+                  {"accountId": acc, "amount": {"currency": "rub", "units": str(int(rub)), "nano": 0}})
+
+    def sandbox_portfolio_value(self, acc):
+        js = self.call("SandboxService", "GetSandboxPortfolio", {"accountId": acc, "currency": "RUB"})
+        return self.q(js.get("totalAmountPortfolio"))
+
+    def sandbox_order(self, acc, ticker, lots, side):
+        js = self.call("SandboxService", "PostSandboxOrder",
+                       {"accountId": acc, "instrumentId": self.share(ticker)["uid"], "quantity": str(lots),
+                        "direction": "ORDER_DIRECTION_BUY" if side > 0 else "ORDER_DIRECTION_SELL",
+                        "orderType": "ORDER_TYPE_MARKET", "orderId": str(uuid.uuid4())})
+        return js
+
+
+# ============================================================================ журнал
+JOURNAL_COLS = ["date", "ticker", "side", "move_pct", "market_pct", "entry", "stop_price", "exit", "reason",
+                "gross_pct", "net_pct"]
+
+
+def read_journal_dates():
+    done = set()
+    if os.path.exists(DAYS_LOG):
+        with open(DAYS_LOG, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                done.add(r["date"])
+    return done
+
+
+def append_rows(path, cols, rows):
+    new = not os.path.exists(path)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        if new:
+            w.writeheader()
+        for r in rows:
+            w.writerow(r)
+
+
+def journal_day(day, tickers, force=False):
+    if day.weekday() >= 5:
+        return
+    if day.isoformat() in read_journal_dates() and not force:
+        print(f"{day}: уже в журнале")
+        return
+    print(f"{day}: загружаю минутки {len(tickers)} бумаг…", flush=True)
+    data = iss_day(day, tickers)
+    if not data:
+        print(f"{day}: данных нет (выходной или праздник)")
+        return
+    market, sigs = compute_day(data)
+    if market is None:
+        print(f"{day}: нет данных к 15:00")
+        return
+    rows = [{"date": day.isoformat(), "ticker": s["ticker"], "side": "лонг" if s["side"] > 0 else "шорт",
+             "move_pct": round(s["move"] * 100, 3), "market_pct": round(market * 100, 3),
+             "entry": s["entry"], "stop_price": round(s["stop_price"], 6), "exit": s["exit"], "reason": s["reason"],
+             "gross_pct": round(s["gross"] * 100, 4), "net_pct": round(s["net"] * 100, 4)} for s in sigs]
+    if rows:
+        append_rows(JOURNAL, JOURNAL_COLS, rows)
+    day_ret = sum(s["net"] for s in sigs) / len(sigs) if sigs else 0.0
+    append_rows(DAYS_LOG, ["date", "market_pct", "signals", "day_net_pct"],
+                [{"date": day.isoformat(), "market_pct": round(market * 100, 3), "signals": len(sigs),
+                  "day_net_pct": round(day_ret * 100, 4)}])
+    print(f"{day}: рынок к моменту входа {market * 100:+.2f}%, сигналов {len(sigs)}, итог дня {day_ret * 100:+.3f}%")
+    for s in sigs:
+        print(f"   {s['ticker']:6s} {'лонг' if s['side'] > 0 else 'шорт'}  движение {s['move'] * 100:+.2f}%  "
+              f"вход {s['entry']}  выход {s['exit']:.4g} ({'стоп' if s['reason'] == 'stop' else '17:00'})  "
+              f"после затрат {s['net'] * 100:+.2f}%")
+
+
+def stats():
+    if not os.path.exists(DAYS_LOG):
+        print("Журнал пуст. Запустите: python scanner.py journal")
+        return
+    with open(DAYS_LOG, encoding="utf-8") as f:
+        days = sorted(csv.DictReader(f), key=lambda r: r["date"])
+    eq, peak, dd, n_tr, active = 1.0, 1.0, 0.0, 0, 0
+    for d in days:
+        r = float(d["day_net_pct"]) / 100
+        n = int(d["signals"])
+        if n:
+            active += 1
+            n_tr += n
+        eq *= 1 + r
+        peak = max(peak, eq)
+        dd = min(dd, eq / peak - 1)
+    wins = 0
+    if os.path.exists(JOURNAL):
+        with open(JOURNAL, encoding="utf-8") as f:
+            nets = [float(r["net_pct"]) for r in csv.DictReader(f)]
+        wins = sum(1 for x in nets if x > 0)
+    print(f"Дней в журнале: {len(days)} ({days[0]['date']} — {days[-1]['date']}), дней с сигналами: {active}")
+    print(f"Сделок: {n_tr}, в плюсе: {wins} ({(wins / n_tr * 100) if n_tr else 0:.0f}%)")
+    print(f"Итог (капитал дня делится поровну между сигналами, затраты {COST * 100:.2f}%): {(eq - 1) * 100:+.2f}%")
+    print(f"Макс. просадка: {dd * 100:.2f}%")
+    print("Для сравнения, бэктест: в среднем +0,16% на сделку после затрат, около 5 сделок в день с сигналами.")
+
+
+# ============================================================================ сигналы в 15:00
+def wait_until(hh, mm, ss=0):
+    """Ждёт времени МСК. Возвращает False, если нажали «Стоп»."""
+    while True:
+        if STOP_EVENT.is_set():
+            return False
+        now = datetime.now(MSK)
+        target = now.replace(hour=hh, minute=mm, second=ss, microsecond=0)
+        if now >= target:
+            return True
+        time.sleep(min(2, (target - now).total_seconds()))
+
+
+def live_candles(tickers, day, ti=None):
+    if ti:
+        data = {}
+        for tk in tickers:
+            try:
+                data[tk] = ti.candles(tk, day)
+            except Exception as e:
+                print(f"  {tk}: {e}")
+        return data
+    return iss_day(day, tickers)
+
+
+def signals_mode(args):
+    token = os.environ.get("TINVEST_TOKEN")
+    ti = TInvest(token, "sandbox" if args.sandbox_token else "prod") if token else None
+    if not ti:
+        print("Внимание: без токена Т-Инвестиций данные берутся с сайта Мосбиржи, а бесплатные данные там "
+              "обычно приходят с задержкой около 15 минут. Сигналы будут рассчитаны по неполным данным.")
+    tickers = imoex_tickers()
+    day = datetime.now(MSK).date()
+    if not args.now:
+        print(f"Жду {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}:05 МСК…", flush=True)
+        if not wait_until(ENTRY_MIN // 60, ENTRY_MIN % 60, 5):
+            print("Остановлено.")
+            return []
+    data = live_candles(tickers, day, ti)
+    market, sigs = compute_day(data, with_result=False)
+    if market is None:
+        print("Нет данных за сегодня до 15:00.")
+        return []
+    print(f"\nРынок к {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}: {market * 100:+.2f}% (по {len(data)} бумагам). Сигналов: {len(sigs)}")
+    prices = ti.last_prices([s["ticker"] for s in sigs]) if (ti and sigs) else {}
+    for s in sigs:
+        px = prices.get(s["ticker"])
+        s["market"] = market
+        s["price"] = px
+        s["stop_px"] = px * (1 - s["side"] * STOP) if px else None
+        stop_txt = f"стоп {px * (1 - s['side'] * STOP):.4g}" if px else f"стоп {STOP * 100:.0f}% от цены входа"
+        print(f"  {s['ticker']:6s} {'КУПИТЬ (лонг)' if s['side'] > 0 else 'ПРОДАТЬ (шорт)'}  "
+              f"движение дня {s['move'] * 100:+.2f}%  {('цена ' + format(px, '.4g')) if px else ''}  {stop_txt}")
+    if sigs:
+        print(f"\nКапитал делится поровну между {len(sigs)} сигналами. Закрыть все позиции в 17:00, "
+              f"раньше — только по стопу.")
+    return sigs
+
+
+# ============================================================================ песочница
+def check_mode(args):
+    token = os.environ.get("TINVEST_TOKEN")
+    if not token:
+        sys.exit("Задайте токен в переменной окружения TINVEST_TOKEN (см. инструкцию).")
+    env = "sandbox" if args.sandbox_token else "prod"
+    ti = TInvest(token, env)
+    print("Сервер:", ti.base)
+    sh = ti.share("SBER")
+    print("Инструмент SBER найден, лот:", sh["lot"], "шорт разрешён:", sh["short"])
+    c = ti.candles("SBER", datetime.now(MSK).date())
+    print("Минутных свечей SBER за сегодня:", len(c), ("последняя " + c[-1]["t"].strftime("%H:%M")) if c else "")
+    print("Последняя цена SBER:", ti.last_prices(["SBER"]).get("SBER"))
+    if env == "sandbox":
+        acc = ti.sandbox_account()
+        print("Счёт песочницы:", acc, "стоимость портфеля:", ti.sandbox_portfolio_value(acc))
+    print("Доступ работает.")
+
+
+def sandbox_mode(args):
+    token = os.environ.get("TINVEST_TOKEN")
+    if not token:
+        sys.exit("Задайте токен песочницы в переменной окружения TINVEST_TOKEN.")
+    ti = TInvest(token, "sandbox")
+    acc = ti.sandbox_account()
+    value = ti.sandbox_portfolio_value(acc)
+    if value < args.capital * 0.5:
+        print(f"На счёте песочницы {value:.0f} ₽, пополняю на {args.capital:.0f} ₽")
+        ti.sandbox_pay_in(acc, args.capital)
+    tickers = imoex_tickers()
+    day = datetime.now(MSK).date()
+    if day.weekday() >= 5:
+        sys.exit("Сегодня выходной: стратегия торгует только по будням.")
+    if not args.now:
+        print(f"Жду {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}:05 МСК…", flush=True)
+        wait_until(ENTRY_MIN // 60, ENTRY_MIN % 60, 5)
+    data = live_candles(tickers, day, ti)
+    market, sigs = compute_day(data, with_result=False)
+    if not sigs:
+        print("Сегодня сигналов нет." if market is not None else "Нет данных к 15:00.")
+        return
+    print(f"Рынок к {ENTRY_MIN // 60}:{ENTRY_MIN % 60:02d}: {market * 100:+.2f}%. Сигналов: {len(sigs)}")
+    alloc = args.capital / len(sigs)
+    prices = ti.last_prices([s["ticker"] for s in sigs])
+    pos = []
+    for s in sigs:
+        tk, side = s["ticker"], s["side"]
+        sh, px = ti.share(tk), prices.get(tk)
+        if not px:
+            print(f"  {tk}: нет цены, пропуск")
+            continue
+        if side < 0 and not sh["short"]:
+            print(f"  {tk}: шорт по бумаге недоступен, пропуск")
+            continue
+        lots = int(alloc // (px * sh["lot"]))
+        if lots < 1:
+            print(f"  {tk}: на долю капитала не хватает даже на один лот, пропуск")
+            continue
+        try:
+            ti.sandbox_order(acc, tk, lots, side)
+        except Exception as e:
+            print(f"  {tk}: заявка отклонена: {e}")
+            continue
+        entry = prices[tk]
+        pos.append({"ticker": tk, "side": side, "lots": lots, "entry": entry, "stop": entry * (1 - side * STOP), "open": True})
+        print(f"  {tk}: {'куплено' if side > 0 else 'продано'} {lots} лот., цена ~{entry:.4g}, стоп {entry * (1 - side * STOP):.4g}")
+    if not pos:
+        return
+    # сопровождение: стоп и выход в 17:00
+    while True:
+        now = datetime.now(MSK)
+        mins = now.hour * 60 + now.minute
+        if mins >= EXIT_MIN or (mins == EXIT_MIN - 1 and now.second >= 50):
+            break
+        try:
+            lp = ti.last_prices([p["ticker"] for p in pos if p["open"]])
+        except Exception as e:
+            print("  цены не получены:", e)
+            lp = {}
+        for p in pos:
+            if not p["open"] or p["ticker"] not in lp:
+                continue
+            px = lp[p["ticker"]]
+            if (p["side"] > 0 and px <= p["stop"]) or (p["side"] < 0 and px >= p["stop"]):
+                close_pos(ti, acc, p, px, "стоп")
+        if not any(p["open"] for p in pos):
+            break
+        if STOP_EVENT.is_set():
+            print("Нажат «Стоп»: закрываю открытые позиции.")
+            break
+        for _ in range(15):
+            if STOP_EVENT.is_set():
+                break
+            time.sleep(1)
+    lp = ti.last_prices([p["ticker"] for p in pos if p["open"]]) if any(p["open"] for p in pos) else {}
+    for p in pos:
+        if p["open"]:
+            close_pos(ti, acc, p, lp.get(p["ticker"], p["entry"]), "кнопка «Стоп»" if STOP_EVENT.is_set() else "17:00")
+    res = [p["result"] for p in pos]
+    print(f"Итог дня (до комиссий песочницы): {sum(res) / len(res) * 100:+.2f}% в среднем на сделку")
+
+
+def close_pos(ti, acc, p, px, why):
+    try:
+        ti.sandbox_order(acc, p["ticker"], p["lots"], -p["side"])
+    except Exception as e:
+        print(f"  {p['ticker']}: не удалось закрыть ({e}); закройте вручную в приложении!")
+        return
+    p["open"] = False
+    p["result"] = p["side"] * (px / p["entry"] - 1)
+    print(f"  {p['ticker']}: закрыто ({why}) по ~{px:.4g}, результат {p['result'] * 100:+.2f}%")
+    append_rows(SANDBOX_LOG, ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct"],
+                [{"date": datetime.now(MSK).date().isoformat(), "ticker": p["ticker"],
+                  "side": "лонг" if p["side"] > 0 else "шорт", "lots": p["lots"], "entry": p["entry"], "exit": px,
+                  "reason": why, "result_pct": round(p["result"] * 100, 4)}])
+
+
+# ============================================================================ main
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="mode", required=True)
+    j = sub.add_parser("journal", help="сигналы и итог дня в журнал (после 17:15)")
+    j.add_argument("--date")
+    j.add_argument("--from", dest="dfrom")
+    j.add_argument("--to", dest="dto")
+    j.add_argument("--force", action="store_true", help="пересчитать день, даже если он уже в журнале")
+    sub.add_parser("stats", help="статистика журнала")
+    s = sub.add_parser("signals", help="сигналы в 15:00 для ручной торговли")
+    s.add_argument("--now", action="store_true", help="не ждать 15:00, посчитать сразу")
+    s.add_argument("--sandbox-token", action="store_true", help="токен от песочницы")
+    c = sub.add_parser("check", help="проверить доступ к API Т-Инвестиций")
+    c.add_argument("--sandbox-token", action="store_true", help="токен от песочницы")
+    b = sub.add_parser("sandbox", help="торговля на демо-счёте песочницы")
+    b.add_argument("--capital", type=float, default=1_000_000)
+    b.add_argument("--now", action="store_true", help="не ждать 15:00 (для проверки)")
+    for p_ in (j, sub.choices["stats"], s, b):
+        p_.add_argument("--entry", choices=["15:00", "14:30"], default="15:00",
+                        help="время входа: 15:00 (основной вариант) или 14:30")
+        p_.add_argument("--threshold", type=float, default=2.0,
+                        help="порог движения акции от открытия, %% (2 — основной, 2.5 — меньше сделок, выше средняя)")
+    args = ap.parse_args()
+    configure(getattr(args, "threshold", 2.0), getattr(args, "entry", "15:00"))
+
+    if args.mode == "journal":
+        tickers = imoex_tickers()
+        if args.dfrom:
+            d0, d1 = date.fromisoformat(args.dfrom), date.fromisoformat(args.dto or datetime.now(MSK).date().isoformat())
+            d = d0
+            while d <= d1:
+                journal_day(d, tickers, args.force)
+                d += timedelta(days=1)
+        else:
+            d = date.fromisoformat(args.date) if args.date else datetime.now(MSK).date()
+            now = datetime.now(MSK)
+            if d == now.date() and (now.hour, now.minute) < (17, 15):
+                sys.exit("Итог дня считается после 17:15 (данные Мосбиржи идут с задержкой). Запустите позже "
+                         "или укажите прошедший день: --date ГГГГ-ММ-ДД")
+            journal_day(d, tickers, args.force)
+        stats()
+    elif args.mode == "stats":
+        stats()
+    elif args.mode == "signals":
+        signals_mode(args)
+    elif args.mode == "check":
+        check_mode(args)
+    elif args.mode == "sandbox":
+        sandbox_mode(args)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,7 @@
+__pycache__/
+build/
+dist/
+*.spec
+settings.json
+forward_*.csv
+sandbox_trades*.csv
