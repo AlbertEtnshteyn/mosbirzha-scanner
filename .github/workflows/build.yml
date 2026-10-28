@@ -27,8 +27,16 @@ jobs:
       - name: Проверка кода
         run: python -c "import scanner, app; print('ok')"
 
-      - name: Сертификаты НУЦ Минцифры (официальный сервер госуслуг)
+      # Сервер госуслуг может не отвечать зарубежным адресам — тогда программа скачает сертификаты сама
+      - name: Сертификаты НУЦ Минцифры (попытка, не обязательно)
+        continue-on-error: true
         run: python tools/get_ru_certs.py certs
+
+      - name: Папка certs для сборки
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path certs | Out-Null
+          Set-Content -Path certs/README.txt -Value "Сертификаты НУЦ Минцифры для проверки соединений. В Windows не устанавливаются."
 
       - name: Сборка .exe
         run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "certs;certs" app.py

@@ -85,7 +85,7 @@ class CertError(RuntimeError):
         self.host = host
         self.port = port or 443
         super().__init__(
-            f"Сертификат сервера {host} не прошёл проверку, хотя в программу встроены сертификаты Минцифры. "
+            f"Сертификат сервера {host} не прошёл проверку даже с сертификатами Минцифры. "
             "Скорее всего, защищённое соединение подменяет антивирус или программа фильтрации трафика. "
             "Добавьте MoexScanner.exe в исключения проверки защищённых соединений антивируса "
             "(в Kaspersky: Настройки → Сетевые параметры → Исключения; в ESET: Фильтрация SSL/TLS → Исключения) "
@@ -210,6 +210,68 @@ def add_trusted(cert):
     reset_http()
 
 
+RU_CERTS = {
+    "russian_trusted_root_ca.pem": ("Russian Trusted Root CA",
+                                    ["https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt",
+                                     "https://gu-st.ru/content/Other/doc/russian_trusted_root_ca.cer"]),
+    "russian_trusted_sub_ca.pem": ("Russian Trusted Sub CA",
+                                   ["https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt",
+                                    "https://gu-st.ru/content/Other/doc/russian_trusted_sub_ca.cer"]),
+}
+_RU_TRIED = False
+
+
+def fetch_ru_certs(dest=None, verbose=True):
+    """Скачивает сертификаты НУЦ Минцифры с сервера госуслуг в папку программы (не в Windows).
+    Только по проверенному HTTPS; сохраняет, только если это действительно нужные сертификаты."""
+    import urllib.request
+    dest = dest or os.path.join(HERE, "certs")
+    os.makedirs(dest, exist_ok=True)
+    ok = 0
+    for fname, (cn_need, urls) in RU_CERTS.items():
+        if os.path.exists(os.path.join(dest, fname)):
+            ok += 1
+            continue
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                data = urllib.request.urlopen(req, timeout=20, context=_ssl_context()).read()
+                pem = data.decode("ascii", "ignore") if b"BEGIN CERTIFICATE" in data else ssl.DER_cert_to_PEM_cert(data)
+                pem = pem.split("-----END CERTIFICATE-----")[0] + "-----END CERTIFICATE-----\n"
+                info = _decode_der(ssl.PEM_cert_to_DER_cert(pem))
+                if cn_need not in info["subject"]:
+                    if verbose:
+                        print(f"{url}: неожиданный сертификат ({info['subject']}), пропуск")
+                    continue
+                with open(os.path.join(dest, fname), "w", encoding="ascii") as f:
+                    f.write(pem)
+                if verbose:
+                    print(f"Сертификат «{cn_need}» сохранён в папку программы (SHA-256 {info['sha256'][:16]}…)")
+                ok += 1
+                break
+            except Exception as e:
+                if verbose:
+                    print(f"{url}: {e}")
+    reset_http()
+    return ok == len(RU_CERTS)
+
+
+def with_ru_certs(fn):
+    """Выполняет запрос; при ошибке сертификата один раз докачивает сертификаты Минцифры и повторяет."""
+    global _RU_TRIED
+    try:
+        return fn()
+    except CertError:
+        if _RU_TRIED:
+            raise
+        _RU_TRIED = True
+        print("Сертификат сервера не прошёл проверку. Загружаю сертификаты НУЦ Минцифры с госуслуг в папку программы…")
+        if not fetch_ru_certs():
+            raise
+        print("Повторяю запрос.")
+        return fn()
+
+
 def explain_issuer(cert):
     txt = (cert["issuer"] + " " + cert["subject"]).lower()
     if "russian trusted" in txt or "минцифр" in txt:
@@ -290,12 +352,14 @@ ISS = "https://iss.moex.com/iss"
 def iss_get(path, params, retries=4):
     for i in range(retries):
         try:
-            try:
-                r = http().get(ISS + path, params={**params, "iss.meta": "off"}, timeout=30)
-            except requests.exceptions.SSLError as e:
-                if _is_cert_error(e):
-                    raise CertError(urlparse(ISS).hostname, urlparse(ISS).port) from None
-                raise
+            def _get():
+                try:
+                    return http().get(ISS + path, params={**params, "iss.meta": "off"}, timeout=30)
+                except requests.exceptions.SSLError as e:
+                    if _is_cert_error(e):
+                        raise CertError(urlparse(ISS).hostname, urlparse(ISS).port) from None
+                    raise
+            r = with_ru_certs(_get)
             r.raise_for_status()
             return r.json()
         except CertError:
@@ -368,14 +432,16 @@ class TInvest:
         self._shares = {}
 
     def call(self, service, method, body):
-        try:
-            r = http().post(f"{self.base}{SVC}{service}/{method}", headers=self.h, data=json.dumps(body), timeout=30)
-        except requests.exceptions.SSLError as e:
-            if _is_cert_error(e):
-                raise CertError(urlparse(self.base).hostname, urlparse(self.base).port) from None
-            raise RuntimeError(f"Ошибка защищённого соединения с {self.base}: {e}") from None
-        except requests.exceptions.ConnectionError as e:
-            raise RuntimeError(f"Нет соединения с сервером Т-Инвестиций ({self.base}). Проверьте интернет. Детали: {e}") from None
+        def _post():
+            try:
+                return http().post(f"{self.base}{SVC}{service}/{method}", headers=self.h, data=json.dumps(body), timeout=30)
+            except requests.exceptions.SSLError as e:
+                if _is_cert_error(e):
+                    raise CertError(urlparse(self.base).hostname, urlparse(self.base).port) from None
+                raise RuntimeError(f"Ошибка защищённого соединения с {self.base}: {e}") from None
+            except requests.exceptions.ConnectionError as e:
+                raise RuntimeError(f"Нет соединения с сервером Т-Инвестиций ({self.base}). Проверьте интернет. Детали: {e}") from None
+        r = with_ru_certs(_post)
         if r.status_code != 200:
             raise RuntimeError(f"{service}/{method}: HTTP {r.status_code} {r.text[:300]}")
         return r.json()
