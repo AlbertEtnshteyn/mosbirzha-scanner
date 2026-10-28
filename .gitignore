@@ -12,3 +12,5 @@ version.txt
 auto_state.json
 auto_state.json.tmp
 sandbox_spikes.csv
+history5m/
+history5m.zip

@@ -177,6 +177,12 @@ class App(tk.Tk):
         ttk.Entry(bar, textvariable=self.from_var, width=12).pack(side="left")
         ttk.Button(bar, text="Дозаполнить", command=self.journal_backfill).pack(side="left", padx=6)
         ttk.Button(bar, text="Обновить", command=self.refresh_journal).pack(side="left")
+        bar2 = ttk.Frame(t2)
+        bar2.pack(fill="x", pady=(6, 0))
+        ttk.Button(bar2, text="Скачать историю всех акций (для проверки стратегий)", command=self.download_history).pack(side="left")
+        ttk.Button(bar2, text="Стоп", command=self.stop).pack(side="left", padx=6)
+        ttk.Label(bar2, text="5-минутки с 01.10.2025 по всем акциям Мосбиржи → архив history5m.zip рядом с программой",
+                  foreground="#777").pack(side="left", padx=6)
         self.stats_lbl = ttk.Label(t2, text="", justify="left")
         self.stats_lbl.pack(anchor="w", pady=(8, 4))
         self.j_tree = self._tree(t2, [("date", "Дата", 90), ("ticker", "Бумага", 70), ("side", "Сторона", 70),
@@ -692,6 +698,12 @@ class App(tk.Tk):
                 d += timedelta(days=1)
             sc.stats()
         self.submit(f"Дозаполнение журнала с {d0}", job, lambda _: self.refresh_journal())
+
+    def download_history(self):
+        import history_dl
+        tok = os.environ.get("TINVEST_TOKEN")
+        self.submit("Выгрузка истории всех акций",
+                    lambda: history_dl.download_all(tok, bool(self.s.get("sandbox_token", True))))
 
     def refresh_journal(self):
         self.j_tree.delete(*self.j_tree.get_children())
