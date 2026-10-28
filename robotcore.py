@@ -14,7 +14,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "leverage": "1",
             "spike_half": 50, "spike_trail": 1.0, "spike_max": 5, "spike_share": 10, "two_takes": True,
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False,
-            "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "all_hours": True}
+            "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19"}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -24,6 +24,7 @@ def load_settings(path=SETTINGS):
     try:
         with open(path, encoding="utf-8") as f:
             s.update(json.load(f))
+        s.pop("all_hours", None)                 # старое окно 07:00–23:40 заменено выбором 9–19 / 10–18
     except Exception:
         pass
     return s
@@ -48,7 +49,7 @@ def spike_cfg(s):
             "leverage": s.get("leverage", "1"),
             "two_takes": bool(s.get("two_takes", True)),
             "trend_on": bool(s.get("trend_on", True)), "trend_trade": bool(s.get("trend_trade", False)),
-            "tier_profile": bool(s.get("tier_profile", True)), "all_hours": bool(s.get("all_hours", True))}
+            "tier_profile": bool(s.get("tier_profile", True)), "window": s.get("entry_window", "9-19")}
 
 
 def chart_sp(s):
@@ -86,7 +87,7 @@ def chart_data(token, sandbox, ticker, tf, s):
                     days[r["t"].date()] = days.get(r["t"].date(), 0) + r["val"]
             med = at._median(list(days.values())) if days else 0
             tier = "2" if med >= at.TIER2_TURNOVER else "3"
-        trades = at.history_trades(bars, at.params(chart_sp(s), tf), tf, tier, bool(s.get("all_hours", True)))
+        trades = at.history_trades(bars, at.params(chart_sp(s), tf), tf, tier, s.get("entry_window", "9-19"))
     return rows, trades, tier
 
 

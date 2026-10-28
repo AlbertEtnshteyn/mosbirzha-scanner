@@ -400,7 +400,7 @@ function renderSettings(s) {
     ${chk("trend_on", "Искать трендовые откаты", "Импульс на объёме был в последние дни, EMA10 над EMA20, касание EMA20 + подтверждение.")}
     ${chk("trend_trade", "…и торговать все трендовые откаты", "На истории в целом в минусе; по умолчанию только по профилю ниже.")}
     ${chk("tier_profile", "Профиль по эшелонам", "Индекс — формация 15 мин и 1 час; 2-й эшелон — формация 1 час и трендовый откат 15 мин; 3-й эшелон не торгуется.")}
-    ${chk("all_hours", "Входить по формациям с 07:00 до 23:40", "Выход 23:45, позиция в плюсе переносится (до 2 дней).")}
+    ${sel("entry_window", "Время входов (позиция в плюсе переносится на следующий день, до 2 дней)", [["9-19", "09:00–19:00, выход 19:25"], ["10-18", "10:00–18:00, выход 18:25"]])}
     <div class="f"><span>Чем торговать</span>
       ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="mk_${k}" ${mk.includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
     ${sel("two_takes", "Тейки", [["true", "два тейка"], ["false", "один тейк"]])}
@@ -453,7 +453,7 @@ $("#setForm").addEventListener("submit", async (e) => {
   const out = {
     sandbox_token: c("sandbox_token"), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
     spike_on: c("spike_on"), spike_tfs: [5, 15, 60].filter((t) => c("tf" + t)),
-    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), all_hours: c("all_hours"),
+    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"),
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),

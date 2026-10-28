@@ -183,7 +183,7 @@ class App(tk.Tk):
         self.robot_lbl = ttk.Label(t3, text="Запускаю поиск формаций…", style="Big.TLabel")
         self.robot_lbl.pack(anchor="w", pady=(10, 2))
         ttk.Label(t3, text="Поиск формаций идёт постоянно с открытия программы — по будням с 07:00 до 23:50. "
-                           "«Старт торговли» — робот сам входит и выходит на демо-счёте (входы 07:00–23:40; "
+                           "«Старт торговли» — робот сам входит и выходит на демо-счёте (входы 09:00–19:00 или 10:00–18:00 — в настройках; "
                            "позиция в плюсе переносится на следующий день, до 2 дней); "
                            "«Стоп торговли» — только наблюдение и уведомления. Стратегия «15:00»: каждую минуту "
                            "пересчитывает движение акций индекса, во время входа сам открывает сделки, стоп 3%, выход 16:59:50. "
@@ -327,7 +327,8 @@ class App(tk.Tk):
         self.v_trend_on = tk.BooleanVar(value=self.s.get("trend_on", True))
         self.v_trend_trade = tk.BooleanVar(value=self.s.get("trend_trade", False))
         self.v_tier = tk.BooleanVar(value=self.s.get("tier_profile", True))
-        self.v_allh = tk.BooleanVar(value=self.s.get("all_hours", True))
+        self.WIN = {"9-19": "09:00–19:00, выход 19:25", "10-18": "10:00–18:00, выход 18:25"}
+        self.v_win = tk.StringVar(value=self.WIN.get(self.s.get("entry_window", "9-19"), self.WIN["9-19"]))
         self.v_takes = tk.StringVar(value="два тейка" if self.s.get("two_takes", True) else "один тейк у хая")
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
         self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [15, 60])) for tf in (5, 15, 60)}
@@ -373,7 +374,7 @@ class App(tk.Tk):
         ttk.Checkbutton(g, text="Робот торгует по этой формации", variable=self.v_spk).grid(row=r, column=1, sticky="w")
         r += 1
         tk.Label(g, text="Время входа не задаётся: робот входит сразу, как только формация подтверждена "
-                         "(07:00–23:40) и выходит по стопу, тейку, трейлингу "
+                         "(в выбранное ниже время входов) и выходит по стопу, тейку, трейлингу "
                          "или в конце дня; если позиция в плюсе или тейк1 взят — переносит её на следующий день (до 2 дней).",
                  justify="left", anchor="w", font=("Segoe UI", 9, "bold"), fg="#0a5a2f", bg=bg, wraplength=740).grid(row=r, column=1, sticky="w")
         r += 1
@@ -391,8 +392,10 @@ class App(tk.Tk):
         ttk.Checkbutton(f, text="Профиль по эшелонам (по проверке на 152 акциях): индекс — формация 15 мин и 1 час; "
                                 "2-й эшелон — формация 1 час и трендовый откат 15 мин после роста ≥5% на объёме ×10; "
                                 "3-й эшелон и 5 мин — никогда не торгуются, только уведомления", variable=self.v_tier).pack(anchor="w")
-        ttk.Checkbutton(f, text="Входить по формациям с 07:00 до 23:40 (выход 23:45, перенос в плюсе). Если снять — как на истории лучше: "
-                                "индекс 15 мин весь день, остальное 10:00–18:00", variable=self.v_allh).pack(anchor="w")
+        fw = ttk.Frame(f); fw.pack(anchor="w", pady=(4, 0))
+        ttk.Label(fw, text="Время входов:").pack(side="left")
+        ttk.Combobox(fw, textvariable=self.v_win, width=26, state="readonly", values=list(self.WIN.values())).pack(side="left", padx=6)
+        ttk.Label(fw, text="позиция в плюсе (или с взятым тейком1) переносится на следующий день, до 2 дней", foreground="#555").pack(side="left")
         r += 1
         ttk.Label(g, text="Чем торговать:").grid(row=r, column=0, sticky="e", padx=(0, 6))
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
@@ -604,7 +607,7 @@ class App(tk.Tk):
                       tg_token=self.v_tg_tok.get().strip(), tg_chat=self.v_tg_chat.get().strip(),
                       tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get(),
                       tg_trend=self.v_tg_trend.get(), trend_on=self.v_trend_on.get(), trend_trade=self.v_trend_trade.get(),
-                      tier_profile=self.v_tier.get(), all_hours=self.v_allh.get())
+                      tier_profile=self.v_tier.get(), entry_window={v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19"))
         if self.s["token"]:
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         else:

@@ -44,7 +44,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "all_hours": True, "max_pos": 5, "share": 0.10,
+                  "markets": ["all_shares"], "window": "9-19", "max_pos": 5, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -220,18 +220,22 @@ TIER2_TREND = {"mult": 10.0, "body": 0.05, "K": 4, "min_value": 5e6, "trend_days
 MAX_CARRY_DAYS = 2
 
 
-def trade_profile(tier, tf, kind, all_hours=False):
+WINDOWS = {
+    "9-19": {"from": 9 * 60, "to": 19 * 60, "exit": 19 * 60 + 25, "carry": True, "name": "09:00–19:00, выход 19:25"},
+    "10-18": {"from": 10 * 60, "to": 18 * 60, "exit": 18 * 60 + 25, "carry": True, "name": "10:00–18:00, выход 18:25"},
+}
+
+
+def trade_profile(tier, tf, kind, window="9-19"):
     """
-    Окно входов, время выхода и перенос — по прогону на 152 акциях (10.2025–10.2026, затраты 0,16%):
-      индекс, формация 15 мин: входы 07:00–23:30, выход 23:45, перенос в плюсе — +0,30% на сделку, 162 сделки;
-      индекс, формация 1 час: 10:00–18:00, выход 18:25 + перенос — +0,63%, 28 сделок;
-      2-й эшелон, формация 1 час: 10:00–18:00 + перенос — +1,14%, 42 сделки;
-      2-й эшелон, трендовый откат 15 мин: 10:00–18:00 + перенос — +0,46%, 100 сделок.
+    Окно входов, время выхода и перенос — выбор в настройках (прогон на 152 акциях, 10.2025–10.2026, затраты 0,16%):
+      09:00–19:00, выход 19:25 + перенос: 303 сделки, в плюсе 44%, +0,52% на сделку, за год +16,8%, просадка −1,8%;
+      10:00–18:00, выход 18:25 + перенос: 251 сделка, в плюсе 45%, +0,58% на сделку, за год +15,3%, просадка −2,5%.
     Перенос: если к времени выхода позиция в плюсе или тейк1 взят — держим на следующий день (не больше 2 дней).
     """
-    if all_hours or (tier == "index" and kind == "form" and tf == 15):
-        return {"from": 7 * 60, "to": 23 * 60 + 40, "exit": 23 * 60 + 45, "carry": True}
-    return {"from": 10 * 60, "to": 18 * 60, "exit": 18 * 60 + 25, "carry": True}
+    if window is True:                      # старые настройки «07:00–23:40» больше не поддерживаются
+        window = "9-19"
+    return dict(WINDOWS.get(window if isinstance(window, str) else "9-19", WINDOWS["9-19"]))
 
 
 def tier_rules(tier, tf, kind):
@@ -294,7 +298,7 @@ def find_trend_pullback(bars, sp, em20):
     return None
 
 
-def history_trades(bars, sp, tf=None, tier="index", all_hours=True):
+def history_trades(bars, sp, tf=None, tier="index", window="9-19"):
     """
     Сделки на истории графика по правилам робота: формация (и трендовый откат для 2-го эшелона на 15 мин),
     правила эшелонов (5 мин и 3-й эшелон не торгуются), окно входов, выход в конце дня, перенос позиции в плюсе
@@ -326,7 +330,7 @@ def history_trades(bars, sp, tf=None, tier="index", all_hours=True):
         ok, _ = tier_rules(tier, tf, kind)
         if not ok:
             continue
-        prof = trade_profile(tier, tf, kind, all_hours)
+        prof = trade_profile(tier, tf, kind, window)
         e = k + 1
         if bars[e]["t"].date() != bars[k]["t"].date() or bars[k]["t"].date() in used_days:
             continue
@@ -522,6 +526,7 @@ class AutoTrader:
         self.market = None
         self.prices = {}
         self.opens = {}              # цена открытия дня 10:00
+        self.pre_opens = {}          # цена открытия утренней сессии (индекс до 10:00)
         self.open_tries = {}
         self.seen_spikes = set()
         self.tickers = []
@@ -579,7 +584,7 @@ class AutoTrader:
     # ------------------------------------------------------------------ главный цикл
     def run(self):
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Мониторинг по будням {hm(DAY_START)}–{hm(DAY_END)} МСК, "
-                 f"входы по формации: акции индекса 15 мин — 07:00–23:30 (выход 23:45), остальное — 10:00–18:00 (выход 18:25); "
+                 f"входы по формации: {trade_profile('index', 15, 'form', self.sp.get('window', '9-19'))['name']}; "
                  f"позиция в плюсе или с взятым тейком1 переносится на следующий день (до {MAX_CARRY_DAYS} дней). "
                  f"Направление: {self._dir_name()}.")
         if not self.day_on:
@@ -654,6 +659,7 @@ class AutoTrader:
         self.st = self._fresh(now.date().isoformat())
         self.st["positions"] = keep
         self.opens, self.open_tries, self.scan_rows, self.market, self.prices = {}, {}, [], None, {}
+        self.pre_opens = {}
         self.spikes, self.seen_spikes, self.hist, self.hist_loaded, self.waits = [], set(), {}, {}, {}
         self._save()
 
@@ -717,8 +723,9 @@ class AutoTrader:
             self._set_status(f"{mk}сканирую рынок — вход «движение дня» в {hm(sc.ENTRY_MIN)}")
         elif not self.st["entered"]:
             self._set_status(f"{mk}ищу формации (вход сразу при подтверждении); «движение дня» — в {hm(sc.ENTRY_MIN)}")
-        elif self.sp["on"] and t < self.sp["to_min"]:
-            self._set_status(f"ТОРГОВЛЯ: {mk}ищу формации, входы до {hm(self.sp['to_min'])}")
+        elif self.sp["on"] and t < trade_profile("index", 15, "form", self.sp.get("window", "9-19"))["to"]:
+            w = trade_profile("index", 15, "form", self.sp.get("window", "9-19"))
+            self._set_status(f"ТОРГОВЛЯ: {mk}ищу формации, входы {hm(w['from'])}–{hm(w['to'])}")
         else:
             self._set_status(f"ТОРГОВЛЯ: {mk}входы на сегодня закончены — мониторинг до {hm(DAY_END)}")
 
@@ -740,6 +747,8 @@ class AutoTrader:
             except Exception as e:
                 self.log(f"  {tk}: свечи не получены ({e})")
                 continue
+            if rows and tk not in self.pre_opens:
+                self.pre_opens[tk] = rows[0]["o"]          # открытие утренней сессии — для индекса до 10:00
             first = [r for r in rows if sc.OPEN_MIN <= sc.minute_of(r["t"]) <= sc.OPEN_MIN + 5]
             if first:
                 self.opens[tk] = first[0]["o"]
@@ -747,6 +756,18 @@ class AutoTrader:
                 self.opens[tk] = None      # не торговалась в начале сессии — как в бэктесте, пропускаем
         live = [tk for tk, o in self.opens.items() if o]
         if not live:
+            # до 10:00: движение индекса от открытия утренней сессии (для фильтра «шорт только при падающем индексе»)
+            pre = [tk for tk in self.tickers if self.pre_opens.get(tk)]
+            if pre and t < sc.OPEN_MIN + 6:
+                try:
+                    self.prices.update(self.b.last_prices(pre))
+                except Exception:
+                    return
+                mv = [self.prices[tk] / self.pre_opens[tk] - 1 for tk in pre if self.prices.get(tk)]
+                if mv:
+                    self.market = sum(mv) / len(mv)
+                    self.last_scan = now
+                    self._push()
             return
         self.prices.update(self.b.last_prices(live))
         moves = {tk: self.prices[tk] / self.opens[tk] - 1 for tk in live if self.prices.get(tk)}
@@ -974,7 +995,7 @@ class AutoTrader:
                 self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status, sig_t])
         enter, why = False, ""
         tc = sig["confirm"]["t"].hour * 60 + sig["confirm"]["t"].minute + sig["tf"]      # время закрытия свечи-подтверждения
-        prof = trade_profile(sig.get("tier", "index"), sig["tf"], "trend" if trend else "form", sp.get("all_hours", True))
+        prof = trade_profile(sig.get("tier", "index"), sig["tf"], "trend" if trend else "form", sp.get("window", "9-19"))
         te = imp.get("t_end", imp["t"])
         ti = te.hour * 60 + te.minute                       # время последней свечи импульса (как в проверке на истории)
         if not self.trade:
