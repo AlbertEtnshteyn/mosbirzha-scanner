@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 import scanner as sc
 
 DAY_START = 7 * 60            # 07:00 — робот начинает рабочий день
-DAY_END = 18 * 60 + 50        # 18:50 — мониторинг до закрытия основной сессии (18:40 + аукцион закрытия)
+DAY_END = 23 * 60 + 50        # 23:50 — мониторинг и торговля до конца вечерней сессии
 SESSION_CLOSE = 18 * 60 + 40  # 18:40 — конец основной сессии
 TRADE_END = 18 * 60 + 30      # 18:30 — к этому времени все позиции закрыты
 STOP_POLL = 15                # проверка стопов и тейков, секунд
@@ -46,7 +46,7 @@ SPIKE_PRESETS = {
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
                   "markets": ["all_shares"], "max_pos": 5, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
-                  "scan_from": 7 * 60, "scan_to": 18 * 60 + 40}                     # окно поиска формаций — до закрытия основной сессии
+                  "scan_from": 7 * 60, "scan_to": 23 * 60 + 30}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
 MARKETS = [
     ("all_shares", "Все российские акции"),
@@ -215,6 +215,23 @@ TREND_DAYS = 3     # трендовый откат: импульс на объё
 #   3-й эшелон и всё остальное — только уведомления (на истории в минусе).
 TIER2_TURNOVER = 30e6       # средний дневной оборот для 2-го эшелона, ₽
 TIER2_TREND = {"mult": 10.0, "body": 0.05, "K": 4, "min_value": 5e6, "trend_days": 1, "slot_mult": 2.0}
+
+
+MAX_CARRY_DAYS = 2
+
+
+def trade_profile(tier, tf, kind):
+    """
+    Окно входов, время выхода и перенос — по прогону на 152 акциях (10.2025–10.2026, затраты 0,16%):
+      индекс, формация 15 мин: входы 07:00–23:30, выход 23:45, перенос в плюсе — +0,30% на сделку, 162 сделки;
+      индекс, формация 1 час: 10:00–18:00, выход 18:25 + перенос — +0,63%, 28 сделок;
+      2-й эшелон, формация 1 час: 10:00–18:00 + перенос — +1,14%, 42 сделки;
+      2-й эшелон, трендовый откат 15 мин: 10:00–18:00 + перенос — +0,46%, 100 сделок.
+    Перенос: если к времени выхода позиция в плюсе или тейк1 взят — держим на следующий день (не больше 2 дней).
+    """
+    if tier == "index" and kind == "form" and tf == 15:
+        return {"from": 7 * 60, "to": 23 * 60 + 30, "exit": 23 * 60 + 45, "carry": True}
+    return {"from": 10 * 60, "to": 18 * 60, "exit": 18 * 60 + 25, "carry": True}
 
 
 def tier_rules(tier, tf, kind):
@@ -505,6 +522,18 @@ class AutoTrader:
     def positions(self):
         return self.st["positions"]
 
+    def _carry_ok(self, p):
+        if p.get("strat") != "spike" or not p.get("carry") or p.get("carried", 0) >= MAX_CARRY_DAYS:
+            return False
+        lp = self.prices.get(p["ticker"])
+        try:
+            lp = self.b.last_prices([p["ticker"]]).get(p["ticker"]) or lp
+        except Exception:
+            pass
+        if lp:
+            self.prices[p["ticker"]] = lp
+        return p.get("stage", 0) >= 1 or (lp is not None and p["side"] * (lp / p["entry"] - 1) > 0)
+
     def _set_status(self, text):
         self.status = text
         self._push()
@@ -518,7 +547,8 @@ class AutoTrader:
     # ------------------------------------------------------------------ главный цикл
     def run(self):
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Мониторинг по будням {hm(DAY_START)}–{hm(DAY_END)} МСК, "
-                 f"входы по формации {hm(self.sp['from_min'])}–{hm(self.sp['to_min'])}, все позиции закрыты к {hm(TRADE_END)}. "
+                 f"входы по формации: акции индекса 15 мин — 07:00–23:30 (выход 23:45), остальное — 10:00–18:00 (выход 18:25); "
+                 f"позиция в плюсе или с взятым тейком1 переносится на следующий день (до {MAX_CARRY_DAYS} дней). "
                  f"Направление: {self._dir_name()}.")
         if not self.day_on:
             self.log("Стратегия «движение дня» (вход в заданное время) выключена в настройках.")
@@ -545,8 +575,6 @@ class AutoTrader:
                     self._set_status("выходной — жду понедельника")
                     self._sleep(300)
                     continue
-                if self.positions and t >= TRADE_END:
-                    self._close_all(f"конец торгового окна {hm(TRADE_END)}")
                 if t < DAY_START or t >= DAY_END:
                     self._set_status(f"биржа закрыта — жду {hm(DAY_START)}")
                     self._sleep(60)
@@ -582,12 +610,17 @@ class AutoTrader:
         self._set_status("остановлен")
 
     def _new_day(self, now):
-        if self.positions:
-            self.log("Остались позиции прошлого дня — закрываю.")
-            self._close_all("позиция прошлого дня")
-            if self.positions:
+        keep = [p for p in self.positions if p.get("carried")]
+        other = [p for p in self.positions if not p.get("carried")]
+        if other:
+            self.log("Остались позиции прошлого дня (без переноса) — закрываю.")
+            self._close_all("позиция прошлого дня", only=other)
+            if any(not p.get("carried") for p in self.positions):
                 return        # не удалось закрыть — попробуем снова на следующем шаге
+        if keep:
+            self.log(f"Перенесённые позиции: {', '.join(p['ticker'] for p in keep)} — веду дальше.")
         self.st = self._fresh(now.date().isoformat())
+        self.st["positions"] = keep
         self.opens, self.open_tries, self.scan_rows, self.market, self.prices = {}, {}, [], None, {}
         self.spikes, self.seen_spikes, self.hist, self.hist_loaded, self.waits = [], set(), {}, {}, {}
         self._save()
@@ -597,8 +630,20 @@ class AutoTrader:
         secs = t * 60 + now.second
         # 1) сопровождение позиций: выход по времени, стоп, тейк
         if self.positions:
-            for p in [p for p in self.positions if secs >= p.get("exit_min", sc.EXIT_MIN) * 60 - 10]:
-                self._close_all(hm(p.get("exit_min", sc.EXIT_MIN)), only=[p])
+            today = now.date().isoformat()
+            for p in [p for p in self.positions if secs >= p.get("exit_min", sc.EXIT_MIN) * 60 - 10
+                      and p.get("carry_date") != today]:
+                if self._carry_ok(p):
+                    p["carried"] = p.get("carried", 0) + 1
+                    p["carry_date"] = today
+                    self._save()
+                    lp = self.prices.get(p["ticker"]) or p["entry"]
+                    self.log(f"  {p['ticker']}: позиция в плюсе ({p['side'] * (lp / p['entry'] - 1) * 100:+.2f}%"
+                             + (", тейк1 взят" if p.get("stage", 0) >= 1 else "") + f") — переношу на следующий день "
+                             f"({p['carried']}/{MAX_CARRY_DAYS}), стоп {p['stop']:.4g}")
+                    self.on_event("carry", {"ticker": p["ticker"], "days": p["carried"]})
+                else:
+                    self._close_all(hm(p.get("exit_min", sc.EXIT_MIN)), only=[p])
             if self.positions:
                 self._check_stops()
         if self.st["entered"] and secs >= sc.EXIT_MIN * 60 - 10 and not self.st["done"] \
@@ -616,7 +661,7 @@ class AutoTrader:
             self.st.update(entered=True, done=True)      # стратегия «движение дня» выключена
             self._save()
         entry_due = self.trade and (not self.st["entered"]) and sc.ENTRY_MIN <= t < sc.LATE_CUTOFF_MIN
-        if t < TRADE_END + 60 and (entry_due or self.last_scan is None or (now - self.last_scan).total_seconds() >= SCAN_EVERY - 1):
+        if t < DAY_END and (entry_due or self.last_scan is None or (now - self.last_scan).total_seconds() >= SCAN_EVERY - 1):
             self._scan(now)
         # 4) вход
         if entry_due:
@@ -743,7 +788,7 @@ class AutoTrader:
             return
         self.last_bar_check = key
         due = [tf for tf in sp["tfs"] if bar_end % tf == 0]            # у каких ТФ только что закрылась свеча
-        session_over = t >= SESSION_CLOSE + 5
+        session_over = SESSION_CLOSE + 5 <= t < 19 * 60 + 5        # перерыв между основной и вечерней сессией
         if session_over and self.final_scan != now.date():
             # основная сессия закрылась: незаконченные свечи 15 мин и 1 час (18:30, 18:00) считаем закрытыми — финальный проход
             self.final_scan = now.date()
@@ -893,6 +938,7 @@ class AutoTrader:
                 self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status])
         enter, why = False, ""
         tc = sig["confirm"]["t"].hour * 60 + sig["confirm"]["t"].minute + sig["tf"]      # время закрытия свечи-подтверждения
+        prof = trade_profile(sig.get("tier", "index"), sig["tf"], "trend" if trend else "form")
         te = imp.get("t_end", imp["t"])
         ti = te.hour * 60 + te.minute                       # время последней свечи импульса (как в проверке на истории)
         if not self.trade:
@@ -905,8 +951,8 @@ class AutoTrader:
             why = sig.get("why_no") or "трендовый откат (объём был раньше) — только уведомление, на истории такие входы в минусе"
         elif sig.get("late"):
             why = (f"поздний откат ({sig['age']} свечей после импульса, на истории в этом случае хуже) — только уведомление")
-        elif not (sp["from_min"] <= tc < sp["to_min"]) or ti < sp["from_min"]:
-            why = f"вне времени входа {hm(sp['from_min'])}–{hm(sp['to_min'])} — только уведомление"
+        elif not (prof["from"] <= tc < prof["to"]) or ti < prof["from"]:
+            why = f"вне времени входа {hm(prof['from'])}–{hm(prof['to'])} для этого варианта — только уведомление"
         elif not self._side_ok(s):
             why = f"в настройках — {self._dir_name()}, не вхожу"
         elif status != "ПОДТВЕРЖДЁН":
@@ -943,7 +989,7 @@ class AutoTrader:
         self.log(f"  размер позиции: {sp['share'] * 100:g}% от {'портфеля' if base != self.capital else 'капитала'} "
                  f"{base:,.0f} ₽{lev_txt} = {alloc:,.0f} ₽".replace(",", " "))
         self._open(tk, side=s, alloc=alloc, strat="spike", stop_level=level, t1=sig["t1"],
-                   exit_min=sp["exit_min"])
+                   exit_min=prof["exit"], carry=prof["carry"])
 
     # ------------------------------------------------------------------ вход по «15:00»
     def _enter(self, now):
@@ -1006,7 +1052,7 @@ class AutoTrader:
             self._open(tk, side, self.capital / MAX_POS_RESCAN)
 
     # ------------------------------------------------------------------ сделки
-    def _open(self, tk, side, alloc, strat="15", stop_level=None, t1=None, exit_min=None):
+    def _open(self, tk, side, alloc, strat="15", stop_level=None, t1=None, exit_min=None, carry=False):
         self._save()
         try:
             sh = self.b.share(tk)
@@ -1048,7 +1094,8 @@ class AutoTrader:
             take1, take2 = t1, None                                                # один тейк у хая импульса
         pos = {"ticker": tk, "side": side, "lots": lots, "entry": entry, "stop": stop, "take": take1, "take2": take2,
                "strat": strat, "R": abs(entry - stop), "took": False, "stage": 0, "peak": entry,
-               "exit_min": exit_min or sc.EXIT_MIN, "time": self.clock().strftime("%H:%M:%S")}
+               "exit_min": exit_min or sc.EXIT_MIN, "time": self.clock().strftime("%H:%M:%S"), "carry": carry,
+               "date": self.clock().date().isoformat()}
         self.positions.append(pos)
         self._save()
         self.log(f"  {tk}: {'КУПЛЕНО' if side > 0 else 'ПРОДАНО (шорт)'} {lots} лот. по ~{entry:.4g}, стоп {pos['stop']:.4g}"
