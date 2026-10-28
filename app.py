@@ -20,6 +20,22 @@ from tkinter.scrolledtext import ScrolledText
 import scanner as sc
 
 APP_TITLE = "Сканер Мосбиржи"
+
+
+def app_version():
+    """Версия сборки: файл version.txt, который кладёт сборка на GitHub (коммит и дата)."""
+    import sys as _s
+    for base in (getattr(_s, "_MEIPASS", ""), os.path.dirname(os.path.abspath(__file__))):
+        p = os.path.join(base, "version.txt")
+        if base and os.path.exists(p):
+            try:
+                return open(p, encoding="utf-8").read().strip()
+            except Exception:
+                pass
+    return "dev"
+
+
+VERSION = app_version()
 SETTINGS = os.path.join(sc.HERE, "settings.json")
 DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_token": True,
             "auto_signals": True, "auto_journal": True, "auto_sandbox": False, "remember_token": False, "token": ""}
@@ -70,7 +86,7 @@ def now_msk():
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(APP_TITLE)
+        self.title(f"{APP_TITLE} · версия {VERSION}")
         self.geometry("1000x700")
         self.minsize(820, 560)
         self.s = load_settings()
@@ -87,7 +103,7 @@ class App(tk.Tk):
         self.after(200, self._poll)
         self.after(500, self.refresh_journal)
         self.after(600, self.refresh_sandbox)
-        self.log(f"Готово. Порог {self.s['threshold']:g}%, вход в {self.s['entry']}. "
+        self.log(f"Версия {VERSION}. Готово. Порог {self.s['threshold']:g}%, вход в {self.s['entry']}. "
                  f"Журналы сохраняются в папке: {sc.HERE}\n")
 
     # ------------------------------------------------------------------ интерфейс

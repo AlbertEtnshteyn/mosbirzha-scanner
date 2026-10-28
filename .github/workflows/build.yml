@@ -38,8 +38,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path certs | Out-Null
           Set-Content -Path certs/README.txt -Value "Сертификаты НУЦ Минцифры для проверки соединений. В Windows не устанавливаются."
 
+      - name: Номер версии
+        shell: pwsh
+        run: |
+          $when = (Get-Date).ToUniversalTime().AddHours(3).ToString("dd.MM.yyyy HH:mm")
+          Set-Content -Path version.txt -Value ("${{ github.sha }}".Substring(0, 7) + " от " + $when + " МСК") -Encoding utf8
+
       - name: Сборка .exe
-        run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "certs;certs" app.py
+        run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "certs;certs" --add-data "version.txt;." app.py
 
       - name: Архив с инструкцией
         shell: pwsh

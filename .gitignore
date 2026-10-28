@@ -8,3 +8,4 @@ sandbox_trades*.csv
 trusted_certs.pem
 certs/
 trusted_certs.pem
+version.txt
