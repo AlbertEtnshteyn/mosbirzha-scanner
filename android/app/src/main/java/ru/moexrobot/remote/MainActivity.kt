@@ -40,6 +40,13 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import java.io.ByteArrayInputStream
+import java.net.URL
+import java.security.cert.CertificateException
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
+import org.json.JSONObject
 import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
@@ -200,7 +207,102 @@ class MainActivity : Activity() {
         }
         setContentView(w)
         w.loadUrl(c.base + "#k=" + c.key)
+        checkServerVersion(c)
     }
+
+    // ------------------------------------------------------------------ обновление программы сервера
+    // В приложение при сборке вкладывается архив программы сервера (тот же, что ставит установщик на компьютере).
+    // Если на сервере версия старее — приложение предлагает обновить её одной кнопкой (по ключу из кода подключения).
+    private val bundle: ByteArray? by lazy {
+        try { assets.open("server_bundle.zip").use { it.readBytes() } } catch (_: Exception) { null }
+    }
+
+    private fun bundleVersion(): String {
+        val b = bundle ?: return ""
+        java.util.zip.ZipInputStream(ByteArrayInputStream(b)).use { z ->
+            while (true) {
+                val e = z.nextEntry ?: break
+                if (e.name == "version.txt") return z.readBytes().toString(Charsets.UTF_8).trim()
+            }
+        }
+        return ""
+    }
+
+    private fun sha(v: String) = v.trim().split(" ").firstOrNull()?.removePrefix("v") ?: ""
+
+    private fun pinned(c: Conn, path: String): HttpsURLConnection {
+        val tm = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+                val d = MessageDigest.getInstance("SHA-256").digest(chain[0].encoded).joinToString("") { "%02x".format(it) }
+                if (d != c.fp) throw CertificateException("чужой сертификат сервера")
+            }
+            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        }
+        val ctx = SSLContext.getInstance("TLS"); ctx.init(null, arrayOf(tm), null)
+        val conn = URL(c.base.trimEnd('/') + path).openConnection() as HttpsURLConnection
+        conn.sslSocketFactory = ctx.socketFactory
+        conn.hostnameVerifier = HostnameVerifier { _, _ -> true }     // сервер узнаём по отпечатку сертификата
+        conn.setRequestProperty("X-Key", c.key)
+        conn.connectTimeout = 15000; conn.readTimeout = 60000
+        return conn
+    }
+
+    private fun serverVersion(c: Conn): String {
+        val conn = pinned(c, "/api/state")
+        return JSONObject(conn.inputStream.bufferedReader().readText()).optString("version", "")
+    }
+
+    private fun checkServerVersion(c: Conn) {
+        val mine = bundleVersion()
+        if (mine.isEmpty()) return
+        Thread {
+            try {
+                val theirs = serverVersion(c)
+                if (theirs.isNotEmpty() && sha(theirs) != sha(mine) && prefs.getString("skip_ver", "") != sha(mine)) {
+                    runOnUiThread {
+                        AlertDialog.Builder(this)
+                            .setTitle("Обновить программу на сервере?")
+                            .setMessage("На сервере: $theirs\nВ этом приложении: $mine\n\nРобот перезапустится на ~20 секунд; " +
+                                    "позиции, настройки и журналы сохранятся.")
+                            .setPositiveButton("Обновить") { _, _ -> updateServer() }
+                            .setNegativeButton("Не сейчас") { _, _ -> prefs.edit().putString("skip_ver", sha(mine)).apply() }
+                            .show()
+                    }
+                }
+            } catch (_: Exception) {}
+        }.start()
+    }
+
+    private fun updateServer() {
+        val c = conn ?: return
+        val b = bundle ?: run { toast("В приложении нет программы сервера — установите свежую версию приложения."); return }
+        toast("Обновляю сервер…")
+        Thread {
+            try {
+                val body = JSONObject().put("zip", android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP)).toString()
+                val conn = pinned(c, "/api/update")
+                conn.requestMethod = "POST"; conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                val code = conn.responseCode
+                if (code == 404) {
+                    runOnUiThread { AlertDialog.Builder(this).setMessage("Программа на сервере слишком старая и не умеет обновляться с телефона. " +
+                            "Обновите её один раз с компьютера: вкладка «Сервер и телефон» → «Установить / обновить сервер». " +
+                            "Дальше обновлять можно отсюда.").setPositiveButton("Понятно", null).show() }
+                    return@Thread
+                }
+                if (code != 200) throw Exception("сервер ответил $code: " + (conn.errorStream?.bufferedReader()?.readText() ?: ""))
+                runOnUiThread { toast("Сервер обновлён и перезапускается — экран обновится через 20 секунд.") }
+                Thread.sleep(20000)
+                runOnUiThread { showWeb() }
+            } catch (e: Exception) {
+                runOnUiThread { toast("Не удалось обновить сервер: ${e.message}") }
+            }
+        }.start()
+    }
+
+    private fun toast(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
 
     private fun offlinePage(why: String) = """
         <html><body style="background:#0f1420;color:#e6e9f0;font-family:sans-serif;padding:32px 22px">
@@ -236,6 +338,18 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun retry() = runOnUiThread { showWeb() }
+
+        @JavascriptInterface
+        fun bundleVersion(): String = this@MainActivity.bundleVersion()
+
+        @JavascriptInterface
+        fun updateServer() = runOnUiThread {
+            AlertDialog.Builder(this@MainActivity)
+                .setMessage("Обновить программу на сервере до версии из приложения (${bundleVersion()})?\n\n" +
+                        "Робот перезапустится на ~20 секунд; позиции, настройки и журналы сохранятся.")
+                .setPositiveButton("Обновить") { _, _ -> this@MainActivity.updateServer() }
+                .setNegativeButton("Отмена", null).show()
+        }
     }
 
     // ------------------------------------------------------------------ уведомления

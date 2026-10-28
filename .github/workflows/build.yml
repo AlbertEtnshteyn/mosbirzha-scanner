@@ -103,6 +103,17 @@ jobs:
         with:
           gradle-version: "8.7"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Программа сервера внутрь приложения (кнопка «Обновить сервер» на телефоне)
+        run: |
+          pip install -q requests certifi
+          echo "$(echo ${{ github.sha }} | cut -c1-7) от $(TZ=Europe/Moscow date +'%d.%m.%Y %H:%M') МСК" > version.txt
+          mkdir -p android/app/src/main/assets
+          python -c "import serverinstall as si; b = si.bundle_bytes(); open('android/app/src/main/assets/server_bundle.zip', 'wb').write(b); print(len(b))"
+
       - name: Сборка APK
         working-directory: android
         env:

@@ -344,6 +344,62 @@ def chart(ticker, tf):
             "tbank": sc.tbank_url(ticker, (ROBOT.robot._terms_cache.get(ticker, ("share",))[0] if ROBOT.robot else "share"))}
 
 
+# ============================================================================ обновление программы с телефона/компьютера
+CODE_FILES = {"server.py", "scanner.py", "autotrader.py", "robotcore.py", "tgnotify.py", "history_dl.py", "version.txt"}
+CODE_DIRS = ("web/", "tools/")
+
+
+def apply_update(data):
+    """Новая версия программы сервера (тот же архив, что ставит установщик): заменить код и перезапуститься.
+    Настройки, журналы, позиции, ключ и сертификат сервера не трогаются."""
+    import shutil
+    import tempfile
+    import zipfile
+    z = zipfile.ZipFile(io.BytesIO(data))
+    names = z.namelist()
+    if "server.py" not in names or "autotrader.py" not in names:
+        raise ValueError("это не архив программы сервера")
+    code_dir = os.path.dirname(os.path.abspath(__file__))
+    tmp = tempfile.mkdtemp(prefix="upd_", dir=code_dir)
+    try:
+        for n in names:
+            if n.endswith("/") or ".." in n or n.startswith("/"):
+                continue
+            if n in CODE_FILES or n.startswith(CODE_DIRS):
+                dst = os.path.join(tmp, n)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with open(dst, "wb") as f:
+                    f.write(z.read(n))
+        for py in ("server.py", "scanner.py", "autotrader.py", "robotcore.py"):    # архив целый и код читается
+            compile(open(os.path.join(tmp, py), encoding="utf-8").read(), py, "exec")
+        for d in CODE_DIRS:
+            if os.path.isdir(os.path.join(tmp, d)):
+                shutil.rmtree(os.path.join(code_dir, d), ignore_errors=True)
+                shutil.copytree(os.path.join(tmp, d), os.path.join(code_dir, d))
+        for f in CODE_FILES:
+            if os.path.exists(os.path.join(tmp, f)):
+                os.replace(os.path.join(tmp, f), os.path.join(code_dir, f))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ver = ""
+    try:
+        ver = z.read("version.txt").decode("utf-8").strip()
+    except Exception:
+        pass
+    log(f"Программа сервера обновлена до версии {ver}. Перезапускаюсь (позиции и настройки сохраняются)…")
+
+    def restart():
+        time.sleep(2)                                        # сначала ответ телефону/компьютеру
+        try:
+            if ROBOT and ROBOT.running():
+                ROBOT.robot.request_stop(False)
+                time.sleep(3)
+        finally:
+            os._exit(3)                                      # служба systemd поднимет сервер уже с новым кодом
+    threading.Thread(target=restart, daemon=True).start()
+    return ver
+
+
 # ============================================================================ сертификат и ключ доступа
 def ensure_cert():
     if os.path.exists(CERT) and os.path.exists(KEY):
@@ -420,7 +476,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self):
         n = int(self.headers.get("Content-Length") or 0)
-        if n > 1_000_000:
+        if n > 12_000_000:
             raise ValueError("слишком большой запрос")
         return json.loads(self.rfile.read(n) or b"{}")
 
@@ -489,6 +545,9 @@ class Handler(BaseHTTPRequestHandler):
                 tok = b.get("tg_token") or ROBOT.s.get("tg_token")
                 cid, name = tg.find_chat_id(tok)
                 return self._send(200, {"ok": bool(cid), "chat": cid, "name": name})
+            if u.path == "/api/update":
+                ver = apply_update(base64.b64decode(b.get("zip", "")))
+                return self._send(200, {"ok": True, "version": ver})
             if u.path == "/api/journal_fill":
                 d0 = date.fromisoformat(b.get("from"))
                 threading.Thread(target=self._fill, args=(d0,), daemon=True).start()

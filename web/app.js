@@ -433,7 +433,8 @@ function renderSettings(s) {
   <div class="grp"><h3>Этот телефон</h3>
     <label class="c"><input type="checkbox" id="phSound" ${store("sound") === "0" ? "" : "checked"}><span>Звук при входе и выходе (пока открыт пульт)</span></label>
     <button type="button" class="btn small ghost" id="forget">Сменить сервер / код подключения</button>
-    <p class="muted small">Версия сервера: ${esc(ST ? ST.version : "")}</p>
+    <p class="muted small">Программа на сервере: ${esc(ST ? ST.version : "")}${NATIVE && NATIVE.bundleVersion ? "<br>В этом приложении: " + esc(NATIVE.bundleVersion()) : ""}</p>
+    ${NATIVE && NATIVE.updateServer ? '<button type="button" class="btn small" id="srvUpd">Обновить программу на сервере</button>' : ""}
   </div>
   <button type="submit" class="btn primary wide save">Сохранить настройки</button>`;
   const fillExit = () => {
@@ -450,6 +451,7 @@ function renderSettings(s) {
   };
   $("#tgTest").onclick = async () => { try { await api("/api/tg_test", {}); toast("Отправлено — проверьте Telegram (нужно сначала сохранить)"); } catch (e) { toast("Не отправилось: " + e.message); } };
   $("#phSound").onchange = (e) => store("sound", e.target.checked ? "1" : "0");
+  if ($("#srvUpd")) $("#srvUpd").onclick = () => NATIVE.updateServer();
   $("#forget").onclick = async () => {
     if (!(await ask("Забыть код подключения на этом телефоне?", [["Забыть", true, "danger"], ["Отмена", false]]))) return;
     store("key", null);

@@ -141,6 +141,14 @@ class RemoteRobot:
     def request_stop(self, close_positions=False):
         self.stop_event.set()
 
+    def update_server(self, data):
+        import base64
+        r = self.c.s.post(self.c.base + "/api/update", json={"zip": base64.b64encode(data).decode()}, timeout=120)
+        if r.status_code == 404:
+            raise RuntimeError("программа на сервере старая и не умеет обновляться так — обновите её с паролем")
+        r.raise_for_status()
+        return r.json().get("version", "")
+
     def trades(self):
         return self.c.get("/api/trades")
 

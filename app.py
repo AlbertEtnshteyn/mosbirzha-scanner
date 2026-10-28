@@ -298,6 +298,7 @@ class App(tk.Tk):
         f6 = ttk.Frame(g6); f6.grid(row=4, column=1, columnspan=2, sticky="w", pady=10)
         ttk.Button(f6, text="Установить / обновить сервер", style="Start.TButton", command=self.server_install).pack(side="left")
         ttk.Button(f6, text="Показать QR-код для телефона", command=self.server_qr).pack(side="left", padx=8)
+        ttk.Button(f6, text="Обновить сервер без пароля", command=self.server_update_quick).pack(side="left")
 
         # --- Настройки
         t4o = ttk.Frame(nb)
@@ -1053,6 +1054,19 @@ class App(tk.Tk):
                 self.show_qr(code)
                 self.restart_robot()                       # окно программы — пульт робота на сервере
         self.submit(f"Установка сервера на {a[0]}", job, done)
+
+    def server_update_quick(self):
+        """Обновить программу на сервере по коду подключения (без пароля от VPS)."""
+        if not (self.remote_mode() and self.robot_running() and hasattr(self.robot, "update_server")):
+            messagebox.showinfo(APP_TITLE, "Нет связи с сервером. Используйте «Установить / обновить сервер» с паролем.")
+            return
+        if not messagebox.askyesno(APP_TITLE, f"Обновить программу на сервере до версии {VERSION}?\n\n"
+                                              "Робот на сервере перезапустится на ~20 секунд; позиции, настройки и журналы сохранятся."):
+            return
+        import serverinstall as si
+        rr = self.robot
+        self.submit("Обновление сервера", lambda: print("Сервер обновлён до версии " + rr.update_server(si.bundle_bytes())
+                                                         + " и перезапускается."))
 
     def _srv_remote_toggle(self):
         on = self.v_srv_remote.get()
