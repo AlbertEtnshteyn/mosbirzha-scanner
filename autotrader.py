@@ -26,6 +26,7 @@ import scanner as sc
 
 DAY_START = 7 * 60            # 07:00 — робот начинает рабочий день
 DAY_END = 18 * 60 + 50        # 18:50 — мониторинг до закрытия основной сессии (18:40 + аукцион закрытия)
+SESSION_CLOSE = 18 * 60 + 40  # 18:40 — конец основной сессии
 TRADE_END = 18 * 60 + 30      # 18:30 — к этому времени все позиции закрыты
 STOP_POLL = 15                # проверка стопов и тейков, секунд
 SCAN_EVERY = 60               # пересчёт рынка и поиск всплесков, секунд
@@ -149,7 +150,7 @@ def find_pullback(bars, sp, em=None, last=None):
         if not imp:
             continue
         a, s, med, body, total = imp
-        bi = dict(bars[i], o=bars[a]["o"], val=total, t=bars[a]["t"], n=i - a + 1)   # импульс как одна «свеча»
+        bi = dict(bars[i], o=bars[a]["o"], val=total, t=bars[a]["t"], n=i - a + 1, t_end=bars[i]["t"])   # импульс как одна «свеча»
         bi["h"] = max(b["h"] for b in bars[a:i + 1])
         bi["l"] = min(b["l"] for b in bars[a:i + 1])
         ext = bi["h"] if s > 0 else bi["l"]
@@ -170,6 +171,17 @@ def find_pullback(bars, sp, em=None, last=None):
                                 "buf": sp["buf"], "age": j - i, "late": j - i > sp.get("win_trade", sp["win"])}
                     break
             tch = (bj["l"] <= em[j]) if s > 0 else (bj["h"] >= em[j])
+            # отбой одной свечой: коснулась EMA20, закрылась по направлению, над EMA20 и в верхних 40% своего диапазона
+            rng = bj["h"] - bj["l"]
+            if tch and rng > 0 and (bj["c"] - em[j]) * s > 0 and (bj["c"] - bj["o"]) * s > 0 and \
+                    ((bj["c"] - bj["l"]) if s > 0 else (bj["h"] - bj["c"])) >= 0.6 * rng:
+                if j == last:
+                    lo = (min(pl, bj["l"]) if pl is not None else bj["l"]) if s > 0 else \
+                        (max(pl, bj["h"]) if pl is not None else bj["h"])
+                    return {"side": s, "impulse": bi, "touch": bj, "confirm": bj, "level": lo, "t1": ext,
+                            "ema": em[j], "value": bi["val"], "mult": bi["val"] / bi["n"] / med, "body": body,
+                            "buf": sp["buf"], "age": j - i, "late": j - i > sp.get("win_trade", sp["win"]), "hammer": True}
+                break
             if tch and (not sp.get("touch_close", True) or (bj["c"] - em[j] * (1 - s * 0.003)) * s >= 0):
                 touch = j
             pl = (bj["l"] if pl is None else min(pl, bj["l"])) if s > 0 else (bj["h"] if pl is None else max(pl, bj["h"]))
@@ -240,8 +252,9 @@ def history_trades(bars, sp):
         if bars[e]["t"].date() != bars[k]["t"].date() or bars[k]["t"].date() in used_days:
             continue
         te = bars[e]["t"].hour * 60 + bars[e]["t"].minute
-        ti = sig["impulse"]["t"].hour * 60 + sig["impulse"]["t"].minute
-        if not (sp["from_min"] <= te < sp["to_min"]) or ti < sp["from_min"] - 60:
+        _te = sig["impulse"].get("t_end", sig["impulse"]["t"])
+        ti = _te.hour * 60 + _te.minute
+        if not (sp["from_min"] <= te < sp["to_min"]) or ti < sp["from_min"]:
             continue
         s = sig["side"]
         px = bars[e]["o"]
@@ -407,6 +420,7 @@ class AutoTrader:
         self.last_bar_check = None
         self.universe = []
         self.waits = {}
+        self.final_scan = None
         self._terms_cache = {}
         self.state_path = state_path or STATE_FILE
         self.status = "остановлен"
@@ -685,6 +699,12 @@ class AutoTrader:
             return
         self.last_bar_check = key
         due = [tf for tf in sp["tfs"] if bar_end % tf == 0]            # у каких ТФ только что закрылась свеча
+        session_over = t >= SESSION_CLOSE + 5
+        if session_over and self.final_scan != now.date():
+            # основная сессия закрылась: незаконченные свечи 15 мин и 1 час (18:30, 18:00) считаем закрытыми — финальный проход
+            self.final_scan = now.date()
+            due = list(sp["tfs"])
+            self.log("Основная сессия закрыта — финальная проверка формаций по последним свечам 15 мин и 1 час.")
         for n, tk in enumerate(self.universe):
             if self.stop_event.is_set():
                 return
@@ -701,7 +721,7 @@ class AutoTrader:
                 continue
             for tf in due:
                 bars = aggregate([dict(b) for b in b5], tf)
-                if tf != 5 and bars and bars[-1]["t"] + timedelta(minutes=tf) > now.replace(tzinfo=None):
+                if tf != 5 and bars and bars[-1]["t"] + timedelta(minutes=tf) > now.replace(tzinfo=None) and not session_over:
                     bars = bars[:-1]                                        # последняя свеча ТФ ещё не закрыта
                 if len(bars) < 25:
                     continue
@@ -798,14 +818,15 @@ class AutoTrader:
                 self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status])
         enter, why = False, ""
         tc = sig["confirm"]["t"].hour * 60 + sig["confirm"]["t"].minute + sig["tf"]      # время закрытия свечи-подтверждения
-        ti = imp["t"].hour * 60 + imp["t"].minute
+        te = imp.get("t_end", imp["t"])
+        ti = te.hour * 60 + te.minute                       # время последней свечи импульса (как в проверке на истории)
         if not self.trade:
             why = "наблюдение — торговля выключена (кнопка «Старт»)"
         elif trend and not sp.get("trend_trade", False):
             why = "трендовый откат (объём был раньше) — только уведомление, на истории такие входы в минусе"
         elif sig.get("late"):
             why = (f"поздний откат ({sig['age']} свечей после импульса, на истории в этом случае хуже) — только уведомление")
-        elif not (sp["from_min"] <= tc < sp["to_min"]) or ti < sp["from_min"] - 60:
+        elif not (sp["from_min"] <= tc < sp["to_min"]) or ti < sp["from_min"]:
             why = f"вне времени входа {hm(sp['from_min'])}–{hm(sp['to_min'])} — только уведомление"
         elif not self._side_ok(s):
             why = f"в настройках — {self._dir_name()}, не вхожу"
