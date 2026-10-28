@@ -44,7 +44,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "window": "9-19", "max_pos": 5, "share": 0.10,
+                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "max_pos": 5, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -221,21 +221,27 @@ MAX_CARRY_DAYS = 2
 
 
 WINDOWS = {
-    "9-19": {"from": 9 * 60, "to": 19 * 60, "exit": 23 * 60 + 45, "carry": True, "name": "09:00–19:00, выход 23:45"},
-    "10-18": {"from": 10 * 60, "to": 18 * 60, "exit": 23 * 60 + 45, "carry": True, "name": "10:00–18:00, выход 23:45"},
+    "9-19": {"from": 9 * 60, "to": 19 * 60, "exit_early": 19 * 60 + 25, "carry": True, "name": "09:00–19:00"},
+    "10-18": {"from": 10 * 60, "to": 18 * 60, "exit_early": 18 * 60 + 45, "carry": True, "name": "10:00–18:00"},
 }
+LATE_EXIT = 23 * 60 + 45
 
 
-def trade_profile(tier, tf, kind, window="9-19"):
+def trade_profile(tier, tf, kind, window="9-19", late=True):
     """
-    Окно входов, время выхода и перенос — выбор в настройках (прогон на 152 акциях, 10.2025–10.2026, затраты 0,16%):
-      09:00–19:00, выход 23:45 + перенос: 303 сделки, в плюсе 45%, +0,45% на сделку, за год +14,2%, просадка −1,9%;
-      10:00–18:00, выход 23:45 + перенос: 251 сделка, в плюсе 47%, +0,53% на сделку, за год +14,0%, просадка −2,3%.
-    Перенос: если к времени выхода позиция в плюсе или тейк1 взят — держим на следующий день (не больше 2 дней).
+    Окно входов и время выхода — выбор в настройках; позиция в плюсе (или с взятым тейком1) к выходу не закрывается,
+    а переносится на следующий день (не больше 2 дней). Прогон на 152 акциях, 10.2025–10.2026, затраты 0,16%:
+      09:00–19:00, выход 19:25: 303 сделки, в плюсе 44%, +0,52% на сделку, за год +16,8%, просадка −1,8%;
+      09:00–19:00, выход 23:45: 303 сделки, в плюсе 45%, +0,45% на сделку, за год +14,2%, просадка −1,9%;
+      10:00–18:00, выход 23:45: 251 сделка, в плюсе 47%, +0,53% на сделку, за год +14,0%, просадка −2,3%;
+      10:00–18:00, выход 18:25 (для сравнения): 251 сделка, в плюсе 45%, +0,58%, за год +15,3%.
     """
-    if window is True:                      # старые настройки «07:00–23:40» больше не поддерживаются
+    if not isinstance(window, str):
         window = "9-19"
-    return dict(WINDOWS.get(window if isinstance(window, str) else "9-19", WINDOWS["9-19"]))
+    w = dict(WINDOWS.get(window, WINDOWS["9-19"]))
+    w["exit"] = LATE_EXIT if late else w["exit_early"]
+    w["name"] = f"{w['name']}, выход {hm(w['exit'])}"
+    return w
 
 
 def tier_rules(tier, tf, kind):
@@ -298,7 +304,7 @@ def find_trend_pullback(bars, sp, em20):
     return None
 
 
-def history_trades(bars, sp, tf=None, tier="index", window="9-19"):
+def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True):
     """
     Сделки на истории графика по правилам робота: формация (и трендовый откат для 2-го эшелона на 15 мин),
     правила эшелонов (5 мин и 3-й эшелон не торгуются), окно входов, выход в конце дня, перенос позиции в плюсе
@@ -330,7 +336,7 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19"):
         ok, _ = tier_rules(tier, tf, kind)
         if not ok:
             continue
-        prof = trade_profile(tier, tf, kind, window)
+        prof = trade_profile(tier, tf, kind, window, late)
         e = k + 1
         if bars[e]["t"].date() != bars[k]["t"].date() or bars[k]["t"].date() in used_days:
             continue
@@ -584,7 +590,7 @@ class AutoTrader:
     # ------------------------------------------------------------------ главный цикл
     def run(self):
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Мониторинг по будням {hm(DAY_START)}–{hm(DAY_END)} МСК, "
-                 f"входы по формации: {trade_profile('index', 15, 'form', self.sp.get('window', '9-19'))['name']}; "
+                 f"входы по формации: {trade_profile('index', 15, 'form', self.sp.get('window', '9-19'), self.sp.get('exit_late', True))['name']}; "
                  f"позиция в плюсе или с взятым тейком1 переносится на следующий день (до {MAX_CARRY_DAYS} дней). "
                  f"Направление: {self._dir_name()}.")
         if not self.day_on:
@@ -723,8 +729,8 @@ class AutoTrader:
             self._set_status(f"{mk}сканирую рынок — вход «движение дня» в {hm(sc.ENTRY_MIN)}")
         elif not self.st["entered"]:
             self._set_status(f"{mk}ищу формации (вход сразу при подтверждении); «движение дня» — в {hm(sc.ENTRY_MIN)}")
-        elif self.sp["on"] and t < trade_profile("index", 15, "form", self.sp.get("window", "9-19"))["to"]:
-            w = trade_profile("index", 15, "form", self.sp.get("window", "9-19"))
+        elif self.sp["on"] and t < trade_profile("index", 15, "form", self.sp.get("window", "9-19"), self.sp.get("exit_late", True))["to"]:
+            w = trade_profile("index", 15, "form", self.sp.get("window", "9-19"), self.sp.get("exit_late", True))
             self._set_status(f"ТОРГОВЛЯ: {mk}ищу формации, входы {hm(w['from'])}–{hm(w['to'])}")
         else:
             self._set_status(f"ТОРГОВЛЯ: {mk}входы на сегодня закончены — мониторинг до {hm(DAY_END)}")
@@ -995,7 +1001,8 @@ class AutoTrader:
                 self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status, sig_t])
         enter, why = False, ""
         tc = sig["confirm"]["t"].hour * 60 + sig["confirm"]["t"].minute + sig["tf"]      # время закрытия свечи-подтверждения
-        prof = trade_profile(sig.get("tier", "index"), sig["tf"], "trend" if trend else "form", sp.get("window", "9-19"))
+        prof = trade_profile(sig.get("tier", "index"), sig["tf"], "trend" if trend else "form", sp.get("window", "9-19"),
+                             sp.get("exit_late", True))
         te = imp.get("t_end", imp["t"])
         ti = te.hour * 60 + te.minute                       # время последней свечи импульса (как в проверке на истории)
         if not self.trade:

@@ -327,8 +327,11 @@ class App(tk.Tk):
         self.v_trend_on = tk.BooleanVar(value=self.s.get("trend_on", True))
         self.v_trend_trade = tk.BooleanVar(value=self.s.get("trend_trade", False))
         self.v_tier = tk.BooleanVar(value=self.s.get("tier_profile", True))
-        self.WIN = {"9-19": "09:00–19:00, выход 23:45", "10-18": "10:00–18:00, выход 23:45"}
+        self.WIN = {"9-19": "09:00–19:00", "10-18": "10:00–18:00"}
+        self.EXIT_EARLY = {"9-19": "19:25", "10-18": "18:45"}
         self.v_win = tk.StringVar(value=self.WIN.get(self.s.get("entry_window", "9-19"), self.WIN["9-19"]))
+        self.v_exit = tk.StringVar(value="23:45" if self.s.get("exit_late", True) else
+                                   self.EXIT_EARLY.get(self.s.get("entry_window", "9-19"), "19:25"))
         self.v_takes = tk.StringVar(value="два тейка" if self.s.get("two_takes", True) else "один тейк у хая")
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
         self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [15, 60])) for tf in (5, 15, 60)}
@@ -394,7 +397,20 @@ class App(tk.Tk):
                                 "3-й эшелон и 5 мин — никогда не торгуются, только уведомления", variable=self.v_tier).pack(anchor="w")
         fw = ttk.Frame(f); fw.pack(anchor="w", pady=(4, 0))
         ttk.Label(fw, text="Время входов:").pack(side="left")
-        ttk.Combobox(fw, textvariable=self.v_win, width=26, state="readonly", values=list(self.WIN.values())).pack(side="left", padx=6)
+        cw = ttk.Combobox(fw, textvariable=self.v_win, width=13, state="readonly", values=list(self.WIN.values()))
+        cw.pack(side="left", padx=6)
+        ttk.Label(fw, text="выход позиции в минусе:").pack(side="left", padx=(8, 0))
+        ce = ttk.Combobox(fw, textvariable=self.v_exit, width=7, state="readonly")
+        ce.pack(side="left", padx=6)
+
+        def _exits(*_):
+            k = {v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19")
+            vals = [self.EXIT_EARLY[k], "23:45"]
+            ce.configure(values=vals)
+            if self.v_exit.get() not in vals:
+                self.v_exit.set(vals[0] if self.v_exit.get() != "23:45" else "23:45")
+        cw.bind("<<ComboboxSelected>>", _exits)
+        _exits()
         ttk.Label(fw, text="позиция в плюсе (или с взятым тейком1) переносится на следующий день, до 2 дней", foreground="#555").pack(side="left")
         r += 1
         ttk.Label(g, text="Чем торговать:").grid(row=r, column=0, sticky="e", padx=(0, 6))
@@ -607,7 +623,8 @@ class App(tk.Tk):
                       tg_token=self.v_tg_tok.get().strip(), tg_chat=self.v_tg_chat.get().strip(),
                       tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get(),
                       tg_trend=self.v_tg_trend.get(), trend_on=self.v_trend_on.get(), trend_trade=self.v_trend_trade.get(),
-                      tier_profile=self.v_tier.get(), entry_window={v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19"))
+                      tier_profile=self.v_tier.get(), entry_window={v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19"),
+                      exit_late=self.v_exit.get() == "23:45")
         if self.s["token"]:
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         else:

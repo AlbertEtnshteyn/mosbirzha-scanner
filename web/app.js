@@ -400,7 +400,9 @@ function renderSettings(s) {
     ${chk("trend_on", "Искать трендовые откаты", "Импульс на объёме был в последние дни, EMA10 над EMA20, касание EMA20 + подтверждение.")}
     ${chk("trend_trade", "…и торговать все трендовые откаты", "На истории в целом в минусе; по умолчанию только по профилю ниже.")}
     ${chk("tier_profile", "Профиль по эшелонам", "Индекс — формация 15 мин и 1 час; 2-й эшелон — формация 1 час и трендовый откат 15 мин; 3-й эшелон не торгуется.")}
-    ${sel("entry_window", "Время входов (позиция в плюсе переносится на следующий день, до 2 дней)", [["9-19", "09:00–19:00, выход 23:45"], ["10-18", "10:00–18:00, выход 23:45"]])}
+    ${sel("entry_window", "Время входов", [["9-19", "09:00–19:00"], ["10-18", "10:00–18:00"]])}
+    <label class="f"><span>Выход позиции в минусе (в плюсе — перенос на следующий день, до 2 дней)</span>
+      <select name="exit_late" id="exitSel"></select></label>
     <div class="f"><span>Чем торговать</span>
       ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="mk_${k}" ${mk.includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
     ${sel("two_takes", "Тейки", [["true", "два тейка"], ["false", "один тейк"]])}
@@ -434,6 +436,13 @@ function renderSettings(s) {
     <p class="muted small">Версия сервера: ${esc(ST ? ST.version : "")}</p>
   </div>
   <button type="submit" class="btn primary wide save">Сохранить настройки</button>`;
+  const fillExit = () => {
+    const f = $("#setForm"), early = f.entry_window.value === "10-18" ? "18:45" : "19:25";
+    const cur = f.exit_late.value || (SET.exit_late === false ? "early" : "late");
+    f.exit_late.innerHTML = `<option value="early">${early}</option><option value="late">23:45</option>`;
+    f.exit_late.value = cur;
+  };
+  fillExit(); $("#setForm").entry_window.onchange = fillExit;
   $("#tgFind").onclick = async () => {
     const r = await api("/api/tg_find", { tg_token: $("#setForm").tg_token.value.trim() });
     if (r.ok) { $("#setForm").tg_chat.value = r.chat; toast(`Найден чат ${r.name}. Нажмите «Сохранить».`); }
@@ -453,7 +462,7 @@ $("#setForm").addEventListener("submit", async (e) => {
   const out = {
     sandbox_token: c("sandbox_token"), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
     spike_on: c("spike_on"), spike_tfs: [5, 15, 60].filter((t) => c("tf" + t)),
-    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"),
+    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") !== "early",
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
