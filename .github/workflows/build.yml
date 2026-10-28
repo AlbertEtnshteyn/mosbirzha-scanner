@@ -38,10 +38,28 @@ jobs:
           Copy-Item README.md release/
           Compress-Archive -Path release/* -DestinationPath MoexScanner-windows.zip -Force
 
+      # Хранилище артефактов ограничено на весь аккаунт — не даём ему ломать сборку
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: MoexScanner-windows
           path: MoexScanner-windows.zip
+          retention-days: 3
+
+      - name: Релиз «latest» (постоянная ссылка на последнюю сборку)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag --yes 2>$null
+          $global:LASTEXITCODE = 0
+          $sha = "${{ github.sha }}".Substring(0, 7)
+          $when = (Get-Date).ToUniversalTime().AddHours(3).ToString("dd.MM.yyyy HH:mm")
+          gh release create latest MoexScanner-windows.zip --target "${{ github.sha }}" `
+            --title "Последняя сборка ($when МСК)" `
+            --notes "Сборка из коммита $sha. Скачайте MoexScanner-windows.zip, распакуйте в отдельную папку и запустите MoexScanner.exe." `
+            --latest
 
       - name: Релиз (для тегов v*)
         if: startsWith(github.ref, 'refs/tags/v')
