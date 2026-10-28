@@ -44,7 +44,7 @@ SETTINGS = os.path.join(sc.HERE, "settings.json")
 DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_token": True,
             "auto_signals": True, "auto_journal": True, "remember_token": False, "token": "",
             "rescan": False, "autostart": False, "day_on": True, "sound_on": True,
-            "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "spike_half": 50, "spike_trail": 1.0,
+            "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "leverage": "1", "spike_half": 50, "spike_trail": 1.0,
             "spike_max": 5, "two_takes": True,
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False}
 
@@ -369,19 +369,31 @@ class App(tk.Tk):
         ttk.Label(f, text="Вход в позицию, % от портфеля:").pack(side="left")
         ttk.Combobox(f, textvariable=self.v_spk_share, width=5,
                      values=["1", "2", "3", "5", "10", "15", "20", "25", "33", "50", "100"]).pack(side="left", padx=(4, 8))
+        LEV = {"1": "без маржи", "auto": "с маржой — плечо брокера по бумаге", "2": "с маржой ×2", "3": "с маржой ×3",
+               "5": "с маржой ×5"}
+        self.LEV = LEV
+        self.v_lev = tk.StringVar(value=LEV.get(str(self.s.get("leverage", "1")), "без маржи"))
+        ttk.Combobox(f, textvariable=self.v_lev, width=32, state="readonly", values=list(LEV.values())).pack(side="left", padx=(0, 8))
+        r += 1
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
         self.share_lbl = ttk.Label(f, text="", foreground="#555")
         self.share_lbl.pack(side="left")
         def _upd_share(*_):
             try:
                 pct, mx = float(self.v_spk_share.get().replace(",", ".")), int(self.v_spk_max.get())
-                txt = f"при {mx} позициях занято до {pct * mx:g}% портфеля"
-                if pct * mx > 100:
-                    txt += " — больше 100%, нужна маржа (плечо)"
-                self.share_lbl.configure(text=txt, foreground="#b3261e" if pct * mx > 100 else "#555")
+                lk = {v: k for k, v in self.LEV.items()}.get(self.v_lev.get(), "1")
+                lv = 1.0 if lk in ("1", "auto") else float(lk)
+                tot = pct * mx * lv
+                txt = (f"одна позиция = {pct * lv:g}% портфеля" + (" × плечо брокера по бумаге" if lk == "auto" else "")
+                       + f"; при {mx} позициях до {tot:g}%" + (" × плечо" if lk == "auto" else ""))
+                if lk == "1" and pct * mx > 100:
+                    txt += " — больше 100%: без маржи брокер не даст открыть все позиции"
+                self.share_lbl.configure(text=txt, foreground="#b3261e" if (lk == "1" and pct * mx > 100) else "#555")
             except ValueError:
                 self.share_lbl.configure(text="введите число")
         self.v_spk_share.trace_add("write", _upd_share)
         self.v_spk_max.trace_add("write", _upd_share)
+        self.v_lev.trace_add("write", _upd_share)
         _upd_share()
         r += 1
         tk.Label(g, text="На истории (44 акции индекса, 10.2025–10.2026):\n" + "\n".join(f"  • {at.SPIKE_PRESETS[tf]['bt']}" for tf in (5, 15, 60))
@@ -541,6 +553,7 @@ class App(tk.Tk):
                       spike_markets=[k for k, _ in at.MARKETS if self.v_mk[k].get()] or ["imoex"], spike_half=int(self.v_spk_half.get()),
                       spike_trail=float(self.v_spk_trail.get()), spike_max=int(self.v_spk_max.get()),
                       spike_share=self._pct(self.v_spk_share.get()),
+                      leverage={v: k for k, v in self.LEV.items()}.get(self.v_lev.get(), "1"),
                       two_takes=self.v_takes.get() == "два тейка",
                       tg_token=self.v_tg_tok.get().strip(), tg_chat=self.v_tg_chat.get().strip(),
                       tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get())
@@ -719,6 +732,7 @@ class App(tk.Tk):
                  "markets": list(self.s.get("spike_markets", ["all_shares"])), "half": int(self.s.get("spike_half", 50)) / 100,
                  "trail_r": float(self.s.get("spike_trail", 1.0)), "max_pos": int(self.s.get("spike_max", 5)),
                  "share": float(self.s.get("spike_share", 10)) / 100,
+                 "leverage": self.s.get("leverage", "1"),
                  "two_takes": bool(self.s.get("two_takes", True))}
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
                                    day_on=bool(self.s.get("day_on", True)), direction=self.s.get("direction", "both"),

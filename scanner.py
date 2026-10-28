@@ -565,7 +565,8 @@ class TInvest:
                 continue
             tk = ins["ticker"]
             self._shares[tk] = {"uid": ins["uid"], "lot": int(ins.get("lot", 1)), "short": bool(ins.get("shortEnabledFlag", False)),
-                                "kind": "share", "pv": 1.0}
+                                "kind": "share", "pv": 1.0,
+                                "dlong": self.q(ins.get("dlong")), "dshort": self.q(ins.get("dshort"))}
             out.append(tk)
         return sorted(out)
 
@@ -636,7 +637,8 @@ class TInvest:
                            {"idType": "INSTRUMENT_ID_TYPE_TICKER", "classCode": "TQBR", "id": ticker})
             ins = js["instrument"]
             self._shares[ticker] = {"uid": ins["uid"], "lot": int(ins.get("lot", 1)),
-                                    "short": bool(ins.get("shortEnabledFlag", False)), "kind": "share", "pv": 1.0}
+                                    "short": bool(ins.get("shortEnabledFlag", False)), "kind": "share", "pv": 1.0,
+                                "dlong": self.q(ins.get("dlong")), "dshort": self.q(ins.get("dshort"))}
         return self._shares[ticker]
 
     INTERVALS = {1: "CANDLE_INTERVAL_1_MIN", 5: "CANDLE_INTERVAL_5_MIN", 15: "CANDLE_INTERVAL_15_MIN", 60: "CANDLE_INTERVAL_HOUR",

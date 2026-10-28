@@ -723,9 +723,11 @@ class AutoTrader:
                 base = self.b.portfolio_value() or self.capital
             except Exception:
                 pass
+        lev, lev_txt = self._leverage(tk, s)
+        alloc = base * sp["share"] * lev
         self.log(f"  размер позиции: {sp['share'] * 100:g}% от {'портфеля' if base != self.capital else 'капитала'} "
-                 f"{base:,.0f} ₽ = {base * sp['share']:,.0f} ₽".replace(",", " "))
-        self._open(tk, side=s, alloc=base * sp["share"], strat="spike", stop_level=level, t1=sig["t1"],
+                 f"{base:,.0f} ₽{lev_txt} = {alloc:,.0f} ₽".replace(",", " "))
+        self._open(tk, side=s, alloc=alloc, strat="spike", stop_level=level, t1=sig["t1"],
                    exit_min=sp["exit_min"])
 
     # ------------------------------------------------------------------ вход по «15:00»
@@ -930,6 +932,24 @@ class AutoTrader:
         if res:
             self.log(f"Итог дня по «{hm(sc.ENTRY_MIN)}»: сделок {len(res)}, в среднем {sum(res) / len(res) * 100:+.2f}% на сделку "
                      f"(до комиссий), в плюсе {sum(1 for r in res if r > 0)}.")
+
+    def _leverage(self, tk, side):
+        """Плечо: 1 — без маржи; число — фиксированное; "auto" — максимум брокера по ставке риска бумаги (1/dlong, 1/dshort)."""
+        lev = self.sp.get("leverage", 1)
+        if lev in (1, "1", None):
+            return 1.0, ""
+        if lev == "auto":
+            try:
+                sh = self.b.share(tk)
+                d = sh.get("dlong" if side > 0 else "dshort") or 0
+                if d > 0:
+                    x = max(1.0, min(1 / d, 10.0))
+                    return x, f" × плечо {x:.2f} (ставка риска {d * 100:.1f}%)"
+            except Exception:
+                pass
+            return 1.0, " (ставка риска не получена — без плеча)"
+        x = float(lev)
+        return x, f" × плечо {x:g}"
 
     def _side_ok(self, side):
         return self.direction == "both" or (self.direction == "long") == (side > 0)
