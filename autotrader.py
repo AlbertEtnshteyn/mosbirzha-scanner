@@ -125,13 +125,30 @@ def _impulse(bars, i, sp, minv, em=None):
             return None
         med = _median(base)
         mv = bi["c"] / bars[a]["o"] - 1
-        if med > 0 and abs(mv) >= sp["body"] and total / k >= sp["mult"] * med and total >= minv:
+        slot_ok = True
+        if sp.get("slot_mult"):
+            # и не меньше slot_mult × обычного оборота для этого времени дня (медиана тех же свечей за прошлые дни)
+            sl = [b.get("slot") for b in bars[a:i + 1]]
+            if all(x for x in sl):
+                slot_ok = total >= sp["slot_mult"] * sum(sl)
+        if med > 0 and slot_ok and abs(mv) >= sp["body"] and total / k >= sp["mult"] * med and total >= minv:
             s = 1 if mv > 0 else -1
             # свеча i — по направлению импульса и закрылась по свою сторону EMA20 (рост — над EMA20, падение — под ней).
             # Красная свеча над EMA20 после роста — это начало отката, а не шорт-импульс.
             if (bi["c"] - bi["o"]) * s > 0 and (em is None or (bi["c"] - em[i]) * s > 0):
                 return a, s, med, mv, total
     return None
+
+
+def add_slot(bars, days=10, min_days=3):
+    """Каждой свече — медиана оборота свечей того же времени дня за прошлые дни (поле slot)."""
+    hist = {}
+    for b in bars:
+        key = (b["t"].hour, b["t"].minute)
+        prev = hist.setdefault(key, [])
+        b["slot"] = _median(prev[-days:]) if len(prev) >= min_days else None
+        prev.append(b["val"])
+    return bars
 
 
 def find_pullback(bars, sp, em=None, last=None):
@@ -197,7 +214,7 @@ TREND_DAYS = 3     # трендовый откат: импульс на объё
 #               и трендовый откат 15 мин после сильного роста: объём ×10, рост от 5%, не раньше вчера (+0,21%, 100 сделок);
 #   3-й эшелон и всё остальное — только уведомления (на истории в минусе).
 TIER2_TURNOVER = 30e6       # средний дневной оборот для 2-го эшелона, ₽
-TIER2_TREND = {"mult": 10.0, "body": 0.05, "K": 4, "min_value": 5e6, "trend_days": 1}
+TIER2_TREND = {"mult": 10.0, "body": 0.05, "K": 4, "min_value": 5e6, "trend_days": 1, "slot_mult": 2.0}
 
 
 def tier_rules(tier, tf, kind):
@@ -756,6 +773,9 @@ class AutoTrader:
                 tier = self._tier(tk, b5)
                 if tier == "2" and tf == 60:
                     p["min_value"] = 15e6                                   # 2-й эшелон: порог оборота ниже
+                if tf == 60:
+                    p["slot_mult"] = 2.0                                    # всплеск — и к соседним свечам, и к этому часу прошлых дней
+                add_slot(bars)
                 em = ema([b["c"] for b in bars])
                 self._note_impulse(tk, bars, p, em)
                 self._update_waits(tk, p, bars, em)
