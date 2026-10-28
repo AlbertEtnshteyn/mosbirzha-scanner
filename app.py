@@ -42,7 +42,7 @@ SETTINGS = os.path.join(sc.HERE, "settings.json")
 DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_token": True,
             "auto_signals": True, "auto_journal": True, "remember_token": False, "token": "",
             "rescan": False, "autostart": False,
-            "spike_on": True, "spike_tfs": [5, 15, 60], "spike_all": True, "spike_half": 50, "spike_trail": 1.0,
+            "spike_on": True, "spike_tfs": [15, 60], "spike_all": True, "spike_half": 50, "spike_trail": 1.0,
             "spike_max": 5}
 
 
@@ -193,7 +193,7 @@ class App(tk.Tk):
         self.robot_lbl.pack(anchor="w", pady=(10, 2))
         ttk.Label(t3, text="По будням 07:00–18:30 МСК, сделки на демо-счёте песочницы. Стратегия «15:00»: каждую минуту "
                            "пересчитывает движение акций индекса, во время входа сам открывает сделки, стоп 3%, выход 16:59:50. "
-                           "Всплески объёма: после каждой 5-минутки ищет импульс на объёме → касание EMA20 → свечу-подтверждение "
+                           "Всплески объёма: после каждой 5-минутки ищет импульс на объёме (одна или несколько свечей подряд) → касание EMA20 → свечу-подтверждение "
                            "(5м/15м/1ч), входит сам, стоп под низом всего отката, тейк1 50% у хая импульса, затем стоп в б/у и трейлинг. "
                            "Компьютер не должен засыпать, приложение должно быть открыто.",
                   foreground="#555", justify="left", wraplength=1040).pack(anchor="w", pady=(0, 6))
@@ -238,7 +238,7 @@ class App(tk.Tk):
         self.v_rescan = tk.BooleanVar(value=self.s.get("rescan", False))
         self.v_autostart = tk.BooleanVar(value=self.s.get("autostart", False))
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
-        self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [5, 15, 60])) for tf in (5, 15, 60)}
+        self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [15, 60])) for tf in (5, 15, 60)}
         self.v_spk_all = tk.BooleanVar(value=self.s.get("spike_all", True))
         self.v_spk_half = tk.StringVar(value=str(self.s.get("spike_half", 50)))
         self.v_spk_trail = tk.StringVar(value=f"{self.s.get('spike_trail', 1.0):g}")
@@ -603,7 +603,7 @@ class App(tk.Tk):
         self._apply_settings()
         log = lambda m: self.q.put(("log", f"[робот {now_msk():%H:%M:%S}] {m}\n"))
         broker = at.SandboxBroker(tok, float(self.s["capital"]), log=log)
-        spike = {"on": bool(self.s.get("spike_on")), "tfs": list(self.s.get("spike_tfs", [5, 15, 60])),
+        spike = {"on": bool(self.s.get("spike_on")), "tfs": list(self.s.get("spike_tfs", [15, 60])),
                  "all_market": bool(self.s.get("spike_all", True)), "half": int(self.s.get("spike_half", 50)) / 100,
                  "trail_r": float(self.s.get("spike_trail", 1.0)), "max_pos": int(self.s.get("spike_max", 5))}
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,

@@ -34,14 +34,14 @@ STATE_FILE = os.path.join(sc.HERE, "auto_state.json")
 # Пресеты по таймфрейму: лучшие варианты на истории 10.2025–10.2026 (44 акции, затраты 0,16%)
 # Параметры формации по таймфреймам и результат на истории 10.2025–10.2026 (44 акции индекса, затраты 0,16%)
 SPIKE_PRESETS = {
-    5: {"mult": 3.0, "body": 0.02, "win": 24, "min_value": 20e6, "buf": 0.003, "touch_close": False,
-        "bt": "5 мин: 56 сделок за год, в плюсе 46%, в среднем +0,03% после затрат, итог +0,1%, просадка −4,8%"},
-    15: {"mult": 3.0, "body": 0.02, "win": 16, "min_value": 60e6, "buf": 0.003, "touch_close": False,
-         "bt": "15 мин: 42 сделки за год, в плюсе 50%, в среднем +0,12% после затрат, итог +6,2%, просадка −3,6%"},
-    60: {"mult": 5.0, "body": 0.01, "win": 8, "min_value": 150e6, "buf": 0.001, "touch_close": True,
-         "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат, итог +2,8%, просадка −1,8%"},
+    5: {"K": 6, "mult": 3.0, "body": 0.02, "win": 40, "min_value": 20e6, "buf": 0.003, "touch_close": False,
+        "bt": "5 мин: 556 сделок за год (около 2 в день на 44 акциях), в плюсе 43%, в среднем −0,12% после затрат — в минусе"},
+    15: {"K": 4, "mult": 3.0, "body": 0.03, "win": 16, "min_value": 60e6, "buf": 0.003, "touch_close": False,
+         "bt": "15 мин: 78 сделок за год, в плюсе 53%, в среднем +0,24% после затрат (первая половина года +0,26%, вторая +0,22%)"},
+    60: {"K": 1, "mult": 5.0, "body": 0.01, "win": 8, "min_value": 150e6, "buf": 0.001, "touch_close": True,
+         "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
-SPIKE_DEFAULTS = {"on": True, "tfs": [5, 15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
+SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
                   "all_market": True, "max_pos": 5, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25}
 HIST_DAYS = 5                 # сколько календарных дней истории грузить для EMA20 и медианы объёма
@@ -80,6 +80,40 @@ def ema(vals, span=20):
     return out
 
 
+def _median(xs):
+    xs = sorted(xs)
+    m = len(xs) // 2
+    return xs[m] if len(xs) % 2 else (xs[m - 1] + xs[m]) / 2
+
+
+def _impulse(bars, i, sp, minv):
+    """
+    Импульс — серия из 1..K свечей подряд, заканчивающаяся свечой i (свеча i — по направлению импульса):
+    движение от открытия первой свечи ≥ порога, средний оборот серии ≥ mult × медиана оборота 20 свечей до неё.
+    Возвращает (начало, сторона, медиана, движение, оборот) или None.
+    """
+    bi = bars[i]
+    tod = bi["t"].hour * 60 + bi["t"].minute
+    if not (sp["from_min"] <= tod < sp["to_min"]):
+        return None
+    total = 0.0
+    for k in range(1, sp.get("K", 1) + 1):
+        a = i - k + 1
+        if a < 1 or bars[a]["t"].date() != bi["t"].date():
+            return None
+        total += bars[a]["val"]
+        base = [b["val"] for b in bars[max(0, a - 20):a]]
+        if len(base) < 10:
+            return None
+        med = _median(base)
+        mv = bi["c"] / bars[a]["o"] - 1
+        if med > 0 and abs(mv) >= sp["body"] and total / k >= sp["mult"] * med and total >= minv:
+            s = 1 if mv > 0 else -1
+            if (bi["c"] - bi["o"]) * s > 0:
+                return a, s, med, mv, total
+    return None
+
+
 def find_pullback(bars, sp):
     """
     bars: закрытые свечи ТФ подряд (t, o, h, l, c, val — оборот ₽). Ищет формацию, у которой свеча-подтверждение —
@@ -92,17 +126,13 @@ def find_pullback(bars, sp):
     minv = sp["min_value"]
     last = n - 1
     for i in range(max(1, last - sp["win"]), last - 1):
-        bi = bars[i]
-        base = sorted(b["val"] for b in bars[max(0, i - 20):i])
-        if len(base) < 10:
+        imp = _impulse(bars, i, sp, minv)
+        if not imp:
             continue
-        med = base[len(base) // 2] if len(base) % 2 else (base[len(base) // 2 - 1] + base[len(base) // 2]) / 2
-        body = bi["c"] / bi["o"] - 1
-        tod = bi["t"].hour * 60 + bi["t"].minute
-        if med <= 0 or bi["val"] < sp["mult"] * med or bi["val"] < minv or abs(body) < sp["body"] \
-                or not (sp["from_min"] <= tod < sp["to_min"]):
-            continue
-        s = 1 if body > 0 else -1
+        a, s, med, body, total = imp
+        bi = dict(bars[i], o=bars[a]["o"], val=total, t=bars[a]["t"], n=i - a + 1)   # импульс как одна «свеча»
+        bi["h"] = max(b["h"] for b in bars[a:i + 1])
+        bi["l"] = min(b["l"] for b in bars[a:i + 1])
         ext = bi["h"] if s > 0 else bi["l"]
         touch = -1
         pl = None                     # крайняя точка всего отката (с «закруглением» под EMA20) — под ней стоп
@@ -117,7 +147,7 @@ def find_pullback(bars, sp):
                     if j == last:
                         lo = min(pl, bj["l"]) if s > 0 else max(pl, bj["h"])
                         return {"side": s, "impulse": bi, "touch": bt, "confirm": bj, "level": lo, "t1": ext,
-                                "ema": em[j], "value": bi["val"], "mult": bi["val"] / med, "body": body,
+                                "ema": em[j], "value": bi["val"], "mult": bi["val"] / bi["n"] / med, "body": body,
                                 "buf": sp["buf"]}
                     break
             tch = (bj["l"] <= em[j]) if s > 0 else (bj["h"] >= em[j])
@@ -476,22 +506,18 @@ class AutoTrader:
 
     def _note_impulse(self, tk, bars, p):
         """Таблица «всплески объёма»: импульсная свеча, только что закрытая."""
-        b = bars[-1]
-        base = sorted(x["val"] for x in bars[-21:-1])
-        if len(base) < 10:
-            return
-        med = base[len(base) // 2]
-        body = b["c"] / b["o"] - 1
-        tod = b["t"].hour * 60 + b["t"].minute
-        if med > 0 and b["val"] >= p["mult"] * med and b["val"] >= p["min_value"] and abs(body) >= p["body"] \
-                and p["from_min"] <= tod < p["to_min"]:
+        imp = _impulse(bars, len(bars) - 1, p, p["min_value"])
+        if imp:
+            a, s_, med, body, total = imp
+            nb = len(bars) - a
+            b = dict(bars[a], val=total)
             k = (tk, p["tf"], b["t"].isoformat())
             if k not in self.seen_spikes:
                 self.seen_spikes.add(k)
-                self.spikes.append([b["t"].strftime("%H:%M"), tk, self._tf_name(p["tf"]), b["val"], b["val"] / med, body,
+                self.spikes.append([b["t"].strftime("%H:%M"), tk, self._tf_name(p["tf"]), b["val"], b["val"] / nb / med, body,
                                     "жду отката к EMA20"])
                 self.log(f"Всплеск объёма {tk} ({self._tf_name(p['tf'])}, {b['t']:%H:%M}): оборот {b['val'] / 1e6:.0f} млн ₽ "
-                         f"(×{b['val'] / med:.1f}), {'рост' if body > 0 else 'падение'} {abs(body) * 100:.2f}% — жду отката к EMA20.")
+                         f"(×{b['val'] / nb / med:.1f}, свечей: {nb}), {'рост' if body > 0 else 'падение'} {abs(body) * 100:.2f}% — жду отката к EMA20.")
 
     def _pullback_signal(self, tk, sig):
         sp = self.sp
