@@ -548,7 +548,22 @@ class TInvest:
                                     "short": bool(ins.get("shortEnabledFlag", False))}
         return self._shares[ticker]
 
-    INTERVALS = {1: "CANDLE_INTERVAL_1_MIN", 5: "CANDLE_INTERVAL_5_MIN", 15: "CANDLE_INTERVAL_15_MIN", 60: "CANDLE_INTERVAL_HOUR"}
+    INTERVALS = {1: "CANDLE_INTERVAL_1_MIN", 5: "CANDLE_INTERVAL_5_MIN", 15: "CANDLE_INTERVAL_15_MIN", 60: "CANDLE_INTERVAL_HOUR",
+                 1440: "CANDLE_INTERVAL_DAY"}
+
+    def candles_range(self, ticker, frm, to, tf):
+        """Свечи tf за период frm..to (с поясом); запросы режутся по дням (дневные — по году)."""
+        out, step = [], timedelta(days=365 if tf >= 1440 else (7 if tf >= 60 else 1))
+        a = frm
+        while a < to:
+            b = min(a + step, to)
+            out += self.candles(ticker, a.date(), a, b, tf)
+            a = b
+        seen, res = set(), []
+        for r in out:
+            if r["t"] not in seen:
+                seen.add(r["t"]); res.append(r)
+        return res
 
     def candles(self, ticker, day, frm=None, to=None, tf=1):
         """Свечи tf минут (время МСК без пояса). v — объём в лотах. frm/to — время с поясом (по умолчанию весь день)."""
