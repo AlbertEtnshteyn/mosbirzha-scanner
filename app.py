@@ -22,6 +22,7 @@ import scanner as sc
 import autotrader as at
 import chart
 import tgnotify as tg
+import robotcore as rc
 
 APP_TITLE = "Сканер Мосбиржи"
 
@@ -40,32 +41,10 @@ def app_version():
 
 
 VERSION = app_version()
-SETTINGS = os.path.join(sc.HERE, "settings.json")
-DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_token": True,
-            "auto_signals": True, "auto_journal": True, "remember_token": False, "token": "",
-            "rescan": False, "autostart": False, "day_on": True, "sound_on": True,
-            "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "leverage": "1", "spike_half": 50, "spike_trail": 1.0,
-            "spike_max": 5, "two_takes": True,
-            "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False,
-            "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "all_hours": True}
-
-
-def load_settings():
-    s = dict(DEFAULTS)
-    try:
-        with open(SETTINGS, encoding="utf-8") as f:
-            s.update(json.load(f))
-    except Exception:
-        pass
-    return s
-
-
-def save_settings(s):
-    data = dict(s)
-    if not data.get("remember_token"):
-        data["token"] = ""
-    with open(SETTINGS, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
+SETTINGS = rc.SETTINGS
+DEFAULTS = rc.DEFAULTS
+load_settings = rc.load_settings
+save_settings = rc.save_settings
 
 
 class QueueWriter:
@@ -769,14 +748,7 @@ class App(tk.Tk):
         self._apply_settings()
         log = lambda m: self.q.put(("log", f"[робот {now_msk():%H:%M:%S}] {m}\n"))
         broker = at.SandboxBroker(tok, float(self.s["capital"]), log=log)
-        spike = {"on": bool(self.s.get("spike_on")), "tfs": list(self.s.get("spike_tfs", [15, 60])),
-                 "markets": list(self.s.get("spike_markets", ["all_shares"])), "half": int(self.s.get("spike_half", 50)) / 100,
-                 "trail_r": float(self.s.get("spike_trail", 1.0)), "max_pos": int(self.s.get("spike_max", 5)),
-                 "share": float(self.s.get("spike_share", 10)) / 100,
-                 "leverage": self.s.get("leverage", "1"),
-                 "two_takes": bool(self.s.get("two_takes", True)),
-                 "trend_on": bool(self.s.get("trend_on", True)), "trend_trade": bool(self.s.get("trend_trade", False)),
-                 "tier_profile": bool(self.s.get("tier_profile", True)), "all_hours": bool(self.s.get("all_hours", True))}
+        spike = rc.spike_cfg(self.s)
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
                                    day_on=bool(self.s.get("day_on", True)), direction=self.s.get("direction", "both"), trade=trade,
                                    on_event=lambda kind, info: self.q.put(("call", self.on_trade, (kind, info))),

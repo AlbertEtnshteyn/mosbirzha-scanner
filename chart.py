@@ -10,12 +10,13 @@ from tkinter import ttk
 
 import scanner as sc
 import autotrader as at
+import robotcore as rc
 
 BG, GRID, TXT = "#131722", "#1f2433", "#b2b5be"
 UP, DOWN = "#26a69a", "#ef5350"
 EMA10_C, EMA20_C = "#e8e8e8", "#2962ff"
 TFS = [(1, "1м"), (5, "5м"), (15, "15м"), (60, "1ч"), (1440, "Д")]
-DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}           # сколько дней истории грузить
+DEPTH = rc.CHART_DEPTH
 
 
 def ema(vals, span):
@@ -123,34 +124,8 @@ class ChartWindow(tk.Toplevel):
 
         def job():
             try:
-                ti = sc.TInvest(tok, env)
-                now = datetime.now(sc.MSK)
-                frm = (now - timedelta(days=DEPTH[tf])).replace(hour=0, minute=0, second=0, microsecond=0)
-                rows = ti.candles_range(tk_, frm, now + timedelta(minutes=1), tf)
-                trades = []
-                if tf in (5, 15, 60) and rows:
-                    per_lot = 1.0
-                    try:
-                        sh = ti.share(tk_)
-                        per_lot = float(sh["lot"])
-                        if sh.get("kind") == "future":
-                            per_lot *= ti.future_terms(tk_)[0]
-                    except Exception:
-                        pass
-                    bars = [dict(r, val=r.get("v", 0) * per_lot * (r["h"] + r["l"] + r["c"]) / 3) for r in rows]
-                    if tk_ in sc.FALLBACK_TICKERS:
-                        tier = "index"
-                    else:
-                        days = {}
-                        for r in bars:
-                            m = r["t"].hour * 60 + r["t"].minute
-                            if 600 <= m < 1120:
-                                days[r["t"].date()] = days.get(r["t"].date(), 0) + r["val"]
-                        med = at._median(list(days.values())) if days else 0
-                        tier = "2" if med >= at.TIER2_TURNOVER * (1 if tf >= 5 else 1) else "3"
-                    self.tier = tier
-                    trades = at.history_trades(bars, at.params(self._sp(), tf), tf, tier,
-                                               bool(self.app.s.get("all_hours", True)))
+                rows, trades, tier = rc.chart_data(tok, bool(self.app.s.get("sandbox_token")), tk_, tf, self.app.s)
+                self.tier = tier or ""
                 self.res.put((tk_, tf, (rows, trades), None))
             except Exception as e:
                 self.res.put((tk_, tf, None, e))

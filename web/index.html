@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1420">
+<title>Робот Мосбиржи</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="login" class="screen" hidden>
+  <div class="card login">
+    <h1>Робот Мосбиржи</h1>
+    <p>Вставьте код подключения — его показывает программа на компьютере после установки сервера
+      (строка вида <code>moexrobot://…</code>).</p>
+    <textarea id="codeIn" rows="3" placeholder="moexrobot://адрес:8443/ключ/отпечаток"></textarea>
+    <button class="btn primary wide" id="codeBtn">Подключиться</button>
+    <p class="muted" id="loginErr"></p>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header class="top">
+    <div class="top-row">
+      <span id="tradeBadge" class="badge">—</span>
+      <span id="clock" class="muted small"></span>
+    </div>
+    <div id="status" class="status"></div>
+  </header>
+
+  <main>
+    <!-- Робот -->
+    <section id="tab-robot" class="tab">
+      <div class="card">
+        <div class="row between">
+          <div>
+            <div class="label">Рынок (индекс с открытия)</div>
+            <div id="market" class="big">—</div>
+          </div>
+          <button class="btn start" id="startBtn">Старт</button>
+        </div>
+        <p class="muted small" id="robotHint"></p>
+      </div>
+
+      <h2>Открытые позиции <span id="posCount" class="muted"></span></h2>
+      <div id="positions" class="list"></div>
+      <button class="btn danger wide" id="closeAllBtn" hidden>Закрыть все позиции</button>
+
+      <details class="card">
+        <summary>«Движение дня»: кандидаты <span id="scanInfo" class="muted small"></span></summary>
+        <div id="scan" class="list compact"></div>
+      </details>
+
+      <details class="card" id="logBox">
+        <summary>Журнал действий</summary>
+        <pre id="log" class="log"></pre>
+      </details>
+    </section>
+
+    <!-- Формации -->
+    <section id="tab-spikes" class="tab" hidden>
+      <h2>Всплески объёма и формации</h2>
+      <p class="muted small">Нажмите на строку — откроется график.</p>
+      <div id="spikes" class="list"></div>
+    </section>
+
+    <!-- График -->
+    <section id="tab-chart" class="tab chart-tab" hidden>
+      <div class="chart-bar">
+        <input id="chTicker" value="SBER" autocapitalize="characters" autocomplete="off" spellcheck="false">
+        <div class="seg" id="tfSeg">
+          <button data-tf="1">1м</button><button data-tf="5">5м</button><button data-tf="15" class="on">15м</button><button data-tf="60">1ч</button><button data-tf="1440">Д</button>
+        </div>
+      </div>
+      <div class="chart-bar2">
+        <label class="chk"><input type="checkbox" id="chHist" checked> сделки на истории</label>
+        <button class="btn small" id="chPrev">◀ к формации</button>
+        <a class="btn small ghost" id="chTbank" target="_blank" rel="noopener">Т-Инвест</a>
+      </div>
+      <div id="chartInfo" class="muted small"></div>
+      <div id="chart"></div>
+      <div id="chartHover" class="small mono"></div>
+      <div id="chTrades" class="list compact"></div>
+    </section>
+
+    <!-- Сделки -->
+    <section id="tab-trades" class="tab" hidden>
+      <div class="seg wide" id="trSeg">
+        <button data-v="robot" class="on">Сделки робота</button><button data-v="journal">Журнал «движения дня»</button>
+      </div>
+      <div id="trSum" class="card small"></div>
+      <div id="trJournalFill" class="row" hidden>
+        <input id="fillFrom" type="date">
+        <button class="btn small" id="fillBtn">Дозаполнить журнал</button>
+      </div>
+      <div id="trList" class="list compact"></div>
+    </section>
+
+    <!-- Настройки -->
+    <section id="tab-settings" class="tab" hidden>
+      <form id="setForm" autocomplete="off"></form>
+    </section>
+  </main>
+
+  <nav class="bottom">
+    <button data-tab="robot" class="on"><span class="ic">◉</span>Робот</button>
+    <button data-tab="spikes"><span class="ic">⚡</span>Формации</button>
+    <button data-tab="chart"><span class="ic">▥</span>График</button>
+    <button data-tab="trades"><span class="ic">≡</span>Сделки</button>
+    <button data-tab="settings"><span class="ic">⚙</span>Настройки</button>
+  </nav>
+</div>
+
+<div id="modal" class="modal" hidden>
+  <div class="card modal-box">
+    <p id="modalText"></p>
+    <div id="modalBtns" class="col"></div>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

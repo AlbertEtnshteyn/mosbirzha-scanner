@@ -14,3 +14,11 @@ auto_state.json.tmp
 sandbox_spikes.csv
 history5m/
 history5m.zip
+server.json
+server_cert.pem
+server_key.pem
+connect_code.txt
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

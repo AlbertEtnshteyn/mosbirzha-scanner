@@ -83,3 +83,38 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: MoexScanner-windows.zip
+
+  android:
+    # APK для телефона собирается после exe и добавляется в тот же релиз «latest»
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Сборка APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          KEYSTORE_FILE: ${{ github.workspace }}/android/release.jks
+          KEYSTORE_PASSWORD: "t72fRU_gaU53Pm7wKfphPo9i"
+          KEY_ALIAS: moexrobot
+          KEY_PASSWORD: "t72fRU_gaU53Pm7wKfphPo9i"
+        run: |
+          export VERSION_NAME="$(echo ${{ github.sha }} | cut -c1-7) от $(TZ=Europe/Moscow date +'%d.%m.%Y %H:%M')"
+          gradle assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk ../MoexRobot-android.apk
+
+      - name: APK в релиз «latest»
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload latest MoexRobot-android.apk --clobber
