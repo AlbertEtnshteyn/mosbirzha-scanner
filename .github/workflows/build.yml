@@ -27,8 +27,11 @@ jobs:
       - name: Проверка кода
         run: python -c "import scanner, app; print('ok')"
 
+      - name: Сертификаты НУЦ Минцифры (официальный сервер госуслуг)
+        run: python tools/get_ru_certs.py certs
+
       - name: Сборка .exe
-        run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner app.py
+        run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "certs;certs" app.py
 
       - name: Архив с инструкцией
         shell: pwsh

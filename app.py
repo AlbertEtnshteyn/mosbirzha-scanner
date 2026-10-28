@@ -253,23 +253,6 @@ class App(tk.Tk):
                 e.widget.tag_add("sel", "1.0", "end")
             return "break"
 
-    def ask_trust(self, host, anchor, chain, task):
-        names = "\n".join(f"  • {c['subject']}" for c in chain)
-        text = (f"Сервер {host} предъявил сертификат, издатель которого неизвестен этому компьютеру.\n\n"
-                f"Предлагается доверять сертификату:\n{anchor['subject']}\n"
-                f"Выдан: {anchor['issuer']}\nДействует до: {anchor['not_after']}\n"
-                f"SHA-256: {anchor['sha256'][:32]}…\n\n{sc.explain_issuer(anchor)}\n\n"
-                f"Цепочка сервера:\n{names}\n\n"
-                "Если доверить, приложение запомнит только этот сертификат. Проверка соединения не отключается: "
-                "любой другой, подменённый сертификат будет отвергнут.\n\nДоверять этому сертификату?")
-        if messagebox.askyesno(APP_TITLE, text, icon="warning"):
-            sc.add_trusted(anchor)
-            self.log(f"Сертификат «{anchor['subject']}» добавлен в доверенные ({sc.TRUST_FILE}). Повторяю задачу.\n")
-            name, fn, on_done = task
-            self.submit(name, fn, on_done)
-        else:
-            self.log("Сертификату не доверили. Соединение с сервером невозможно.\n")
-
     def paste_token(self):
         try:
             txt = self.clipboard_get().strip()
@@ -360,12 +343,13 @@ class App(tk.Tk):
             except SystemExit as e:
                 self.q.put(("log", f"{e}\n"))
             except sc.CertError as e:
-                self.q.put(("log", f"{e}\n"))
+                self.q.put(("log", f"Ошибка: {e}\n"))
                 try:
                     anchor, chain = sc.trust_anchor(e.host, e.port)
-                    self.q.put(("call", lambda _x, h=e.host, a=anchor, c=chain, t=(name, fn, on_done): self.ask_trust(h, a, c, t), None))
-                except Exception as e2:
-                    self.q.put(("log", f"Не удалось получить сертификат сервера {e.host}: {e2}\n"))
+                    self.q.put(("log", "Сервер предъявил сертификаты: " + "; ".join(
+                        f"{c['subject']} (выдан: {c['issuer']})" for c in chain) + "\n"))
+                except Exception:
+                    pass
             except RuntimeError as e:
                 self.q.put(("log", f"Ошибка: {e}\n"))
             except BaseException:

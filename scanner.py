@@ -84,8 +84,12 @@ class CertError(RuntimeError):
     def __init__(self, host, port=443):
         self.host = host
         self.port = port or 443
-        super().__init__(f"Сертификат сервера {host} не прошёл проверку: его издатель неизвестен этому компьютеру. "
-                         "Приложение предложит доверять этому сертификату.")
+        super().__init__(
+            f"Сертификат сервера {host} не прошёл проверку, хотя в программу встроены сертификаты Минцифры. "
+            "Скорее всего, защищённое соединение подменяет антивирус или программа фильтрации трафика. "
+            "Добавьте MoexScanner.exe в исключения проверки защищённых соединений антивируса "
+            "(в Kaspersky: Настройки → Сетевые параметры → Исключения; в ESET: Фильтрация SSL/TLS → Исключения) "
+            "и повторите.")
 
 
 def _ssl_context():
@@ -95,6 +99,16 @@ def _ssl_context():
         ctx.load_verify_locations(certifi.where())
     except Exception:
         pass
+    # встроенные в программу сертификаты НУЦ Минцифры (папка certs при сборке)
+    for base in {getattr(sys, "_MEIPASS", HERE), HERE}:
+        cdir = os.path.join(base, "certs")
+        if os.path.isdir(cdir):
+            for fn in sorted(os.listdir(cdir)):
+                if fn.endswith(".pem"):
+                    try:
+                        ctx.load_verify_locations(os.path.join(cdir, fn))
+                    except Exception as e:
+                        print(f"Сертификат {fn} не загрузился: {e}")
     if os.path.exists(TRUST_FILE):
         try:
             ctx.load_verify_locations(TRUST_FILE)
@@ -102,6 +116,9 @@ def _ssl_context():
             print("Файл доверенных сертификатов повреждён:", e)
     # доверенный сертификат может быть промежуточным, а не корневым
     ctx.verify_flags |= getattr(ssl, "VERIFY_X509_PARTIAL_CHAIN", 0)
+    # строгий режим Python 3.13 отвергает часть реальных сертификатов (без расширения keyUsage и т.п.);
+    # обычная проверка цепочки, срока и имени сервера при этом остаётся
+    ctx.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
     return ctx
 
 
