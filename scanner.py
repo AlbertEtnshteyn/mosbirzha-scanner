@@ -40,6 +40,21 @@ try:
 except ImportError:
     sys.exit("Установите библиотеку: pip install requests")
 
+# Проверять сертификаты через хранилище Windows/macOS, как браузер. Без этого соединение
+# ломается, если антивирус проверяет HTTPS (Kaspersky и др.) или сайт использует сертификат,
+# которого нет во встроенном списке Python (например, российский корневой сертификат Минцифры).
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
+SSL_HELP = ("Не удалось проверить сертификат сервера. Обычно причина — антивирус, который проверяет защищённые "
+            "соединения (например, Kaspersky), или российский корневой сертификат Минцифры, не установленный в Windows.\n"
+            "Что сделать: 1) откройте адрес в браузере — если браузер тоже ругается, установите сертификаты Минцифры "
+            "с госуслуг (gosuslugi.ru/crt); 2) в антивирусе добавьте MoexScanner.exe в исключения проверки защищённых "
+            "соединений; 3) перезапустите приложение.")
+
 MSK = timezone(timedelta(hours=3))
 
 # ---- параметры стратегии (из бэктеста) -------------------------------------
@@ -135,7 +150,10 @@ ISS = "https://iss.moex.com/iss"
 def iss_get(path, params, retries=4):
     for i in range(retries):
         try:
-            r = requests.get(ISS + path, params={**params, "iss.meta": "off"}, timeout=30)
+            try:
+                r = requests.get(ISS + path, params={**params, "iss.meta": "off"}, timeout=30)
+            except requests.exceptions.SSLError:
+                raise RuntimeError(SSL_HELP) from None
             r.raise_for_status()
             return r.json()
         except Exception:
@@ -202,7 +220,12 @@ class TInvest:
         self._shares = {}
 
     def call(self, service, method, body):
-        r = requests.post(f"{self.base}{SVC}{service}/{method}", headers=self.h, data=json.dumps(body), timeout=30)
+        try:
+            r = requests.post(f"{self.base}{SVC}{service}/{method}", headers=self.h, data=json.dumps(body), timeout=30)
+        except requests.exceptions.SSLError:
+            raise RuntimeError(SSL_HELP) from None
+        except requests.exceptions.ConnectionError as e:
+            raise RuntimeError(f"Нет соединения с сервером Т-Инвестиций ({self.base}). Проверьте интернет. Детали: {e}") from None
         if r.status_code != 200:
             raise RuntimeError(f"{service}/{method}: HTTP {r.status_code} {r.text[:300]}")
         return r.json()

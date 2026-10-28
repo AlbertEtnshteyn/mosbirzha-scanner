@@ -292,6 +292,8 @@ class App(tk.Tk):
                     result = fn()
             except SystemExit as e:
                 self.q.put(("log", f"{e}\n"))
+            except RuntimeError as e:
+                self.q.put(("log", f"Ошибка: {e}\n"))
             except BaseException:
                 self.q.put(("log", traceback.format_exc()))
             finally:
