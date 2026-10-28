@@ -262,6 +262,40 @@ class App(tk.Tk):
         ttk.Checkbutton(g5, text="Входы и выходы робота", variable=self.v_tg_trades).grid(row=6, column=1, sticky="w")
         ttk.Button(g5, text="Сохранить настройки", command=self.save).grid(row=7, column=1, sticky="w", pady=12)
 
+        # --- Сервер и телефон
+        t6 = ttk.Frame(nb, padding=14)
+        nb.add(t6, text="Сервер и телефон")
+        ttk.Label(t6, text="Круглосуточная работа на сервере и управление с телефона", style="Big.TLabel").pack(anchor="w")
+        ttk.Label(t6, justify="left", foreground="#555", wraplength=900, text=(
+            "1. Арендуйте VPS на Ubuntu 22.04 или 24.04 (1 ядро, 1–2 ГБ памяти; например Timeweb Cloud, Selectel, REG.RU — "
+            "около 300–600 ₽ в месяц). Провайдер пришлёт IP-адрес и пароль root.\n"
+            "2. Введите их ниже и нажмите «Установить / обновить сервер» — программа сама поставит робота на сервер "
+            "(служба запускается сама после перезагрузки и сбоев) и перенесёт туда токен, настройки Telegram и журналы.\n"
+            "3. Установите на телефон приложение «Робот Мосбиржи» (файл MoexRobot-android.apk из той же сборки) и "
+            "отсканируйте им QR-код, который покажет программа.\n\n"
+            "Пароль от VPS не сохраняется. Соединение телефона с сервером шифруется собственным сертификатом сервера, "
+            "который знает только приложение по отпечатку из QR-кода — ни в Windows, ни в телефон сертификаты не устанавливаются.\n"
+            "Важно: после переноса робот на этом компьютере переходит в режим наблюдения, чтобы два робота не торговали "
+            "одним демо-счётом.")).pack(anchor="w", pady=(6, 10))
+        g6 = ttk.Frame(t6); g6.pack(anchor="w")
+        self.v_srv_ip = tk.StringVar(value=self.s.get("srv_ip", ""))
+        self.v_srv_user = tk.StringVar(value=self.s.get("srv_user", "root"))
+        self.v_srv_pass = tk.StringVar()
+        self.v_srv_tr = tk.BooleanVar(value=True)
+        ttk.Label(g6, text="IP-адрес сервера:").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Entry(g6, textvariable=self.v_srv_ip, width=24).grid(row=0, column=1, sticky="w")
+        ttk.Label(g6, text="Логин:").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(g6, textvariable=self.v_srv_user, width=24).grid(row=1, column=1, sticky="w")
+        ttk.Label(g6, text="Пароль:").grid(row=2, column=0, sticky="w", pady=4)
+        pe = ttk.Entry(g6, textvariable=self.v_srv_pass, width=24, show="•")
+        pe.grid(row=2, column=1, sticky="w")
+        ttk.Button(g6, text="Вставить из буфера", command=lambda: self._paste_to(self.v_srv_pass)).grid(row=2, column=2, padx=6)
+        ttk.Checkbutton(g6, text="Перенести на сервер токен, настройки, Telegram, открытые позиции и журналы",
+                        variable=self.v_srv_tr).grid(row=3, column=1, columnspan=2, sticky="w", pady=4)
+        f6 = ttk.Frame(g6); f6.grid(row=4, column=1, columnspan=2, sticky="w", pady=10)
+        ttk.Button(f6, text="Установить / обновить сервер", style="Start.TButton", command=self.server_install).pack(side="left")
+        ttk.Button(f6, text="Показать QR-код для телефона", command=self.server_qr).pack(side="left", padx=8)
+
         # --- Настройки
         t4o = ttk.Frame(nb)
         nb.add(t4o, text="Настройки")
@@ -903,6 +937,77 @@ class App(tk.Tk):
             messagebox.showinfo(APP_TITLE, "Тестовое сообщение отправлено — проверьте Telegram.")
         except Exception as e:
             messagebox.showerror(APP_TITLE, f"Не отправилось: {e}")
+
+    # --- сервер на VPS
+    def _srv_args(self):
+        ip, user, pw = self.v_srv_ip.get().strip(), self.v_srv_user.get().strip() or "root", self.v_srv_pass.get()
+        if not ip or not pw:
+            messagebox.showinfo(APP_TITLE, "Введите IP-адрес сервера и пароль (их присылает провайдер VPS после аренды).")
+            return None
+        self.s.update(srv_ip=ip, srv_user=user)
+        save_settings(self.s)
+        return ip, user, pw
+
+    def server_install(self):
+        a = self._srv_args()
+        if not a:
+            return
+        if not messagebox.askyesno(APP_TITLE, f"Установить (или обновить) робота на сервер {a[0]}?\n\n"
+                                              "Займёт 2–5 минут, ход виден в журнале действий внизу."):
+            return
+        import serverinstall as si
+        transfer = self.v_srv_tr.get()
+        settings = dict(self.s)
+        if transfer and self.robot_running():
+            self.robot.set_trade(False)                    # два робота на одном демо-счёте торговать не должны
+            self.s["autostart"] = False
+            save_settings(self.s)
+            self._robot_buttons()
+            self.log("Робот на этом компьютере переведён в режим наблюдения — торговать будет сервер.\n")
+
+        def job():
+            return si.install(a[0], a[1], a[2], settings, transfer=transfer, log=lambda m: print(m))
+
+        def done(code):
+            if code:
+                self.s["srv_code"] = code
+                save_settings(self.s)
+                self.show_qr(code)
+        self.submit(f"Установка сервера на {a[0]}", job, done)
+
+    def server_qr(self):
+        if self.s.get("srv_code") and self.s.get("srv_ip") == self.v_srv_ip.get().strip():
+            self.show_qr(self.s["srv_code"])
+            return
+        a = self._srv_args()
+        if not a:
+            return
+        import serverinstall as si
+        self.submit("Код подключения с сервера", lambda: si.connect_code(*a),
+                    lambda c: self.show_qr(c) if c else messagebox.showinfo(APP_TITLE, "На сервере робот не найден — сначала установите его."))
+
+    def show_qr(self, code):
+        import serverinstall as si
+        w = tk.Toplevel(self)
+        w.title("Код подключения для телефона")
+        w.configure(bg="white")
+        tk.Label(w, text="Откройте на телефоне «Робот Мосбиржи» → «Сканировать QR-код»", bg="white",
+                 font=("Segoe UI", 11, "bold")).pack(padx=16, pady=(14, 6))
+        m = si.qr_matrix(code)
+        cell = max(4, 330 // len(m))
+        cv = tk.Canvas(w, width=len(m) * cell, height=len(m) * cell, bg="white", highlightthickness=0)
+        cv.pack(padx=16, pady=6)
+        for y, row in enumerate(m):
+            for x, v in enumerate(row):
+                if v:
+                    cv.create_rectangle(x * cell, y * cell, (x + 1) * cell, (y + 1) * cell, fill="black", outline="black")
+        tk.Label(w, text="или вставьте код вручную:", bg="white").pack()
+        e = ttk.Entry(w, width=70)
+        e.insert(0, code)
+        e.configure(state="readonly")
+        e.pack(padx=16, pady=4)
+        ttk.Button(w, text="Скопировать код", command=lambda: (self.clipboard_clear(), self.clipboard_append(code))).pack(pady=(4, 14))
+        tk.Label(w, text="Код — это ключ к управлению роботом. Никому его не пересылайте.", bg="white", fg="#b3261e").pack(pady=(0, 12))
 
     def _sel_ticker(self, tv, col=0):
         sel = tv.selection()

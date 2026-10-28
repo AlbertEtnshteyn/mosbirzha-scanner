@@ -44,8 +44,11 @@ jobs:
           $when = (Get-Date).ToUniversalTime().AddHours(3).ToString("dd.MM.yyyy HH:mm")
           Set-Content -Path version.txt -Value ("${{ github.sha }}".Substring(0, 7) + " от " + $when + " МСК") -Encoding utf8
 
+      - name: Программа для сервера (ставится на VPS из exe)
+        run: python -c "import serverinstall as si; open('server_bundle.zip','wb').write(si.bundle_bytes())"
+
       - name: Сборка .exe
-        run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "certs;certs" --add-data "version.txt;." app.py
+        run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "certs;certs" --add-data "version.txt;." --add-data "server_bundle.zip;." app.py
 
       - name: Архив с инструкцией
         shell: pwsh
