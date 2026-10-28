@@ -292,6 +292,9 @@ class App(tk.Tk):
         ttk.Button(g6, text="Вставить из буфера", command=lambda: self._paste_to(self.v_srv_pass)).grid(row=2, column=2, padx=6)
         ttk.Checkbutton(g6, text="Перенести на сервер токен, настройки, Telegram, открытые позиции и журналы",
                         variable=self.v_srv_tr).grid(row=3, column=1, columnspan=2, sticky="w", pady=4)
+        self.v_srv_remote = tk.BooleanVar(value=bool(self.s.get("srv_remote", True)))
+        ttk.Checkbutton(g6, text="Эта программа — пульт робота на сервере (свой робот на компьютере не запускается)",
+                        variable=self.v_srv_remote, command=self._srv_remote_toggle).grid(row=5, column=1, columnspan=2, sticky="w")
         f6 = ttk.Frame(g6); f6.grid(row=4, column=1, columnspan=2, sticky="w", pady=10)
         ttk.Button(f6, text="Установить / обновить сервер", style="Start.TButton", command=self.server_install).pack(side="left")
         ttk.Button(f6, text="Показать QR-код для телефона", command=self.server_qr).pack(side="left", padx=8)
@@ -611,6 +614,17 @@ class App(tk.Tk):
         self.refresh_journal()
         self.refresh_sandbox()
         self.log(f"Настройки сохранены: порог {self.s['threshold']:g}%, вход {self.s['entry']}.\n")
+        if self.remote_mode() and self.robot_running() and hasattr(self.robot, "push_settings"):
+            rr, snap_s = self.robot, dict(self.s)
+
+            def push():
+                try:
+                    rr.push_settings(snap_s)
+                    self.q.put(("log", "Настройки отправлены на сервер — робот там перезапускается с ними.\n"))
+                except Exception as e:
+                    self.q.put(("log", f"Настройки на сервер не отправились: {e}\n"))
+            threading.Thread(target=push, daemon=True).start()
+            return
         self.restart_robot()
 
     # ------------------------------------------------------------------ задачи
@@ -764,6 +778,10 @@ class App(tk.Tk):
         self.submit("Проверка доступа", lambda: sc.check_mode(types.SimpleNamespace(sandbox_token=self.s["sandbox_token"])))
 
     # --- робот
+    def remote_mode(self):
+        """Сервер установлен — программа служит его пультом, своего робота не запускает."""
+        return bool(self.s.get("srv_code")) and bool(self.s.get("srv_remote", True))
+
     def robot_running(self):
         return bool(self.robot_thread and self.robot_thread.is_alive())
 
@@ -771,6 +789,28 @@ class App(tk.Tk):
         if self.robot_running():
             if trade and not self.robot.trade:
                 self.robot.set_trade(True)
+            self._robot_buttons()
+            return
+        if self.remote_mode():
+            import remote
+            log = lambda m: self.q.put(("log", f"[{now_msk():%H:%M:%S}] {m}\n"))
+            try:
+                rr = remote.RemoteRobot(self.s["srv_code"], log,
+                                        on_update=lambda snap: self.q.put(("call", self.show_robot, snap)),
+                                        on_event=lambda kind, info: self.q.put(("call", self.on_trade, (kind, info))))
+            except Exception as e:
+                log(f"Код подключения к серверу не подошёл: {e}")
+                return
+            self.robot = rr
+            self.robot_lbl.configure(text=f"Подключаюсь к роботу на сервере {rr.where}…")
+
+            def run_remote():
+                try:
+                    rr.run()
+                finally:
+                    self.q.put(("call", lambda _: self._robot_buttons(), None))
+            self.robot_thread = threading.Thread(target=run_remote, daemon=True)
+            self.robot_thread.start()
             self._robot_buttons()
             return
         tok = os.environ.get("TINVEST_TOKEN")
@@ -839,7 +879,8 @@ class App(tk.Tk):
         self.btn_start.configure(state="disabled" if trading else "normal")
         self.btn_stop.configure(state="normal" if trading else "disabled")
         if not run:
-            self.robot_lbl.configure(text="Робот выключен (нужен токен песочницы в «Настройках»). Нажмите «Старт».")
+            self.robot_lbl.configure(text="Нет связи с сервером." if self.remote_mode() else
+                                     "Робот выключен (нужен токен песочницы в «Настройках»). Нажмите «Старт».")
             self.refresh_sandbox()
 
     def show_robot(self, snap):
@@ -848,7 +889,8 @@ class App(tk.Tk):
             self._robot_buttons()
         mk = snap.get("market")
         ls = snap.get("last_scan")
-        self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: рынок {mk * 100:+.2f}%, порог {sc.THRESHOLD * 100:g}%"
+        thr = snap.get("threshold") or sc.THRESHOLD
+        self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: рынок {mk * 100:+.2f}%, порог {thr * 100:g}%"
                                       if ls and mk is not None else "Данные появятся после 10:01."))
         self.scan_tree.delete(*self.scan_tree.get_children())
         for tk, mv, why in snap["scan"][:60]:
@@ -881,6 +923,19 @@ class App(tk.Tk):
     # --- сделки: звук, ручное закрытие, график
     def on_trade(self, ev):
         kind, info = ev
+        if info.get("remote"):                              # событие робота на сервере: Telegram шлёт сам сервер
+            if kind in ("open", "close", "carry"):
+                self.log(f"[сервер] {info.get('text', '')}\n")
+            if kind in ("open", "close") and self.s.get("sound_on", True):
+                try:
+                    import winsound
+                    winsound.PlaySound("SystemAsterisk" if kind == "open" else "SystemExclamation",
+                                       winsound.SND_ALIAS | winsound.SND_ASYNC)
+                except Exception:
+                    self.bell()
+            if kind in ("open", "close"):
+                self.refresh_sandbox()
+            return
         tok, chat = self.s.get("tg_token"), self.s.get("tg_chat")
         tglog = lambda m: self.q.put(("log", m + "\n"))
         if kind == "formation":
@@ -972,9 +1027,26 @@ class App(tk.Tk):
                     self._robot_buttons()
                     self.log("Робот на этом компьютере переведён в режим наблюдения — торговать будет сервер.\n")
                 self.s["autostart"] = False
+                self.s["srv_remote"] = True
+                self.v_srv_remote.set(True)
                 save_settings(self.s)
                 self.show_qr(code)
+                self.restart_robot()                       # окно программы — пульт робота на сервере
         self.submit(f"Установка сервера на {a[0]}", job, done)
+
+    def _srv_remote_toggle(self):
+        on = self.v_srv_remote.get()
+        if on and not self.s.get("srv_code"):
+            messagebox.showinfo(APP_TITLE, "Сначала установите сервер (или нажмите «Показать QR-код», чтобы программа узнала код подключения).")
+            self.v_srv_remote.set(False)
+            return
+        if not on and not messagebox.askyesno(APP_TITLE, "Запустить робота на этом компьютере?\n\nЕсли робот на сервере тоже торгует, "
+                                                         "два робота будут торговать одним демо-счётом. Выключите торговлю на сервере («Стоп»)."):
+            self.v_srv_remote.set(True)
+            return
+        self.s["srv_remote"] = on
+        save_settings(self.s)
+        self.restart_robot()
 
     def server_qr(self):
         if self.s.get("srv_code") and self.s.get("srv_ip") == self.v_srv_ip.get().strip():
@@ -984,8 +1056,16 @@ class App(tk.Tk):
         if not a:
             return
         import serverinstall as si
-        self.submit("Код подключения с сервера", lambda: si.connect_code(*a),
-                    lambda c: self.show_qr(c) if c else messagebox.showinfo(APP_TITLE, "На сервере робот не найден — сначала установите его."))
+        def got(c):
+            if not c:
+                messagebox.showinfo(APP_TITLE, "На сервере робот не найден — сначала установите его.")
+                return
+            self.s["srv_code"] = c
+            save_settings(self.s)
+            self.show_qr(c)
+            if self.remote_mode():
+                self.restart_robot()
+        self.submit("Код подключения с сервера", lambda: si.connect_code(*a), got)
 
     def show_qr(self, code):
         import serverinstall as si
@@ -1079,18 +1159,32 @@ class App(tk.Tk):
         chart.ChartWindow(self, ticker, tf)
 
     def on_close(self):
-        if self.robot_running() and (self.robot.trade or self.robot.positions):
+        if self.robot_running() and not self.remote_mode() and (self.robot.trade or self.robot.positions):
             if not messagebox.askyesno(APP_TITLE, "Робот работает. Если закрыть программу, он перестанет торговать "
                                                   "(открытые позиции останутся и будут подхвачены при следующем «Старт»).\n\nЗакрыть?"):
                 return
         self.destroy()
 
     def refresh_sandbox(self):
-        self.sb_tree.delete(*self.sb_tree.get_children())
+        if self.remote_mode() and self.robot_running() and hasattr(self.robot, "trades"):
+            rr = self.robot
+
+            def job():                                       # закрытые сделки — с сервера
+                try:
+                    rows = rr.trades().get("rows", [])
+                    self.q.put(("call", self._fill_sandbox, rows))
+                except Exception:
+                    pass
+            threading.Thread(target=job, daemon=True).start()
+            return
         rows = [dict(r, strat="15:00") for r in read_csv(sc.SANDBOX_LOG)[-500:]] + \
                [dict(r, strat="всплеск") for r in read_csv(sc.SPIKE_LOG)[-500:]]
         rows.sort(key=lambda r: r["date"])
-        for r in reversed(rows):
+        self._fill_sandbox(list(reversed(rows)))
+
+    def _fill_sandbox(self, rows):
+        self.sb_tree.delete(*self.sb_tree.get_children())
+        for r in rows:
             res = float(r["result_pct"])
             self.sb_tree.insert("", "end", tags=("pos" if res > 0 else "neg",), values=(
                 r["date"], r["strat"], r["ticker"], r["side"], r["lots"], r["entry"], r["exit"], r["reason"], f"{res:+.2f}%"))
