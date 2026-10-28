@@ -46,7 +46,7 @@ SPIKE_PRESETS = {
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
                   "markets": ["all_shares"], "all_hours": True, "max_pos": 5, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
-                  "scan_from": 7 * 60, "scan_to": 23 * 60 + 30}                     # окно поиска формаций — весь торговый день
+                  "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
 MARKETS = [
     ("all_shares", "Все российские акции"),
@@ -230,7 +230,7 @@ def trade_profile(tier, tf, kind, all_hours=False):
     Перенос: если к времени выхода позиция в плюсе или тейк1 взят — держим на следующий день (не больше 2 дней).
     """
     if all_hours or (tier == "index" and kind == "form" and tf == 15):
-        return {"from": 7 * 60, "to": 23 * 60 + 30, "exit": 23 * 60 + 45, "carry": True}
+        return {"from": 7 * 60, "to": 23 * 60 + 40, "exit": 23 * 60 + 45, "carry": True}
     return {"from": 10 * 60, "to": 18 * 60, "exit": 18 * 60 + 25, "carry": True}
 
 
