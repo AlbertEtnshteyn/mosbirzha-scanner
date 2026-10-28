@@ -285,8 +285,9 @@ def configure(threshold_pct=2.0, entry="15:00"):
     """Задаёт порог и время входа; у каждой комбинации свой журнал."""
     global THRESHOLD, ENTRY_MIN, JOURNAL, DAYS_LOG, SANDBOX_LOG
     THRESHOLD = threshold_pct / 100
-    ENTRY_MIN = 14 * 60 + 30 if entry == "14:30" else 15 * 60
-    sfx = ("_1430" if entry == "14:30" else "") + (f"_t{threshold_pct:g}".replace(".", "_") if threshold_pct != 2.0 else "")
+    hh, mm = (int(x) for x in str(entry).split(":"))
+    ENTRY_MIN = hh * 60 + mm
+    sfx = (f"_{hh:02d}{mm:02d}" if ENTRY_MIN != 15 * 60 else "") + (f"_t{threshold_pct:g}".replace(".", "_") if threshold_pct != 2.0 else "")
     JOURNAL = os.path.join(HERE, f"forward_journal{sfx}.csv")
     DAYS_LOG = os.path.join(HERE, f"forward_days{sfx}.csv")
     SANDBOX_LOG = os.path.join(HERE, f"sandbox_trades{sfx}.csv")
@@ -298,6 +299,30 @@ def minute_of(ts):
 
 
 LAST_MOVES = {}
+ENTRY_CHOICES = ["12:00", "13:00", "14:00", "14:30", "15:00"]
+THRESHOLD_CHOICES = [1.0, 1.5, 2.0, 2.5]
+BACKTEST = {  # (вход, порог %) -> (средняя сделка %, итог %, макс. просадка %, сделок) за 10.2025–10.2026, затраты 0,16%
+    ("12:00", 1): (-0.2, -33.7, -37.4, 2061),
+    ("12:00", 1.5): (-0.17, -11.9, -21.0, 919),
+    ("12:00", 2): (-0.09, -0.1, -11.0, 426),
+    ("12:00", 2.5): (-0.16, 6.4, -9.5, 204),
+    ("13:00", 1): (-0.06, -8.1, -18.2, 2529),
+    ("13:00", 1.5): (-0.05, 7.8, -10.2, 1307),
+    ("13:00", 2): (-0.06, 3.4, -16.5, 679),
+    ("13:00", 2.5): (-0.01, 14.5, -13.6, 360),
+    ("14:00", 1): (-0.02, 1.8, -12.9, 3003),
+    ("14:00", 1.5): (-0.02, 12.3, -10.1, 1584),
+    ("14:00", 2): (0.04, 37.0, -5.7, 855),
+    ("14:00", 2.5): (0.08, 40.4, -6.1, 483),
+    ("14:30", 1): (0.02, 4.5, -8.1, 3033),
+    ("14:30", 1.5): (0.02, 16.7, -9.1, 1649),
+    ("14:30", 2): (0.04, 21.8, -13.0, 905),
+    ("14:30", 2.5): (0.08, 38.1, -9.8, 522),
+    ("15:00", 1): (0.04, -1.2, -9.5, 3288),
+    ("15:00", 1.5): (0.1, 8.1, -6.4, 1789),
+    ("15:00", 2): (0.15, 23.3, -6.9, 992),
+    ("15:00", 2.5): (0.22, 35.3, -6.6, 587),
+}
 LATE_OK_MIN = 5              # опоздание до 5 мин — обычный вход
 LATE_CUTOFF_MIN = 16 * 60 + 30   # позже 16:30 не входим: до выхода в 17:00 слишком мало времени
 
@@ -843,8 +868,8 @@ def main():
     b.add_argument("--capital", type=float, default=1_000_000)
     b.add_argument("--now", action="store_true", help="не ждать 15:00 (для проверки)")
     for p_ in (j, sub.choices["stats"], s, b):
-        p_.add_argument("--entry", choices=["15:00", "14:30"], default="15:00",
-                        help="время входа: 15:00 (основной вариант) или 14:30")
+        p_.add_argument("--entry", choices=ENTRY_CHOICES, default="15:00",
+                        help="время входа (основной вариант 15:00)")
         p_.add_argument("--threshold", type=float, default=2.0,
                         help="порог движения акции от открытия, %% (2 — основной, 2.5 — меньше сделок, выше средняя)")
     args = ap.parse_args()

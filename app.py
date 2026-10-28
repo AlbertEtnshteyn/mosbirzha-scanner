@@ -195,15 +195,18 @@ class App(tk.Tk):
         g = ttk.Frame(t4)
         g.pack(anchor="nw", fill="x")
         r = 0
-        ttk.Label(g, text="Порог движения акции:").grid(row=r, column=0, sticky="w", pady=4)
+        ttk.Label(g, text="Порог движения акции, %:").grid(row=r, column=0, sticky="w", pady=4)
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
-        ttk.Radiobutton(f, text="2% (больше сделок)", value="2", variable=self.v_thr).pack(side="left")
-        ttk.Radiobutton(f, text="2,5% (выше средняя сделка)", value="2.5", variable=self.v_thr).pack(side="left", padx=10)
+        ttk.Combobox(f, textvariable=self.v_thr, width=6, state="readonly",
+                     values=[f"{x:g}" for x in sc.THRESHOLD_CHOICES]).pack(side="left")
+        ttk.Label(f, text="   Время входа:").pack(side="left")
+        ttk.Combobox(f, textvariable=self.v_entry, width=7, state="readonly", values=sc.ENTRY_CHOICES).pack(side="left")
         r += 1
-        ttk.Label(g, text="Время входа:").grid(row=r, column=0, sticky="w", pady=4)
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
-        ttk.Radiobutton(f, text="15:00 (основной)", value="15:00", variable=self.v_entry).pack(side="left")
-        ttk.Radiobutton(f, text="14:30 (слабее, для сравнения)", value="14:30", variable=self.v_entry).pack(side="left", padx=10)
+        self.bt_lbl = tk.Label(g, text="", justify="left", anchor="w", font=("Segoe UI", 9))
+        self.bt_lbl.grid(row=r, column=1, sticky="w")
+        self.v_thr.trace_add("write", lambda *_: self._show_bt())
+        self.v_entry.trace_add("write", lambda *_: self._show_bt())
+        self._show_bt()
         r += 1
         ttk.Label(g, text="Капитал песочницы, ₽:").grid(row=r, column=0, sticky="w", pady=4)
         ttk.Entry(g, textvariable=self.v_cap, width=14).grid(row=r, column=1, sticky="w")
@@ -280,6 +283,24 @@ class App(tk.Tk):
 
     def toggle_token(self):
         self.tok_entry.configure(show="" if self.tok_entry.cget("show") else "•")
+
+    def _bt(self, entry, thr):
+        return sc.BACKTEST.get((entry, float(thr)))
+
+    def _show_bt(self):
+        try:
+            v = self._bt(self.v_entry.get(), float(self.v_thr.get()))
+        except ValueError:
+            v = None
+        if not v:
+            self.bt_lbl.configure(text="", fg="#555")
+            return
+        per, tot, dd, n = v
+        txt = (f"На истории (10.2025–10.2026, затраты 0,16%): сделок {n}, средняя сделка {per:+.2f}%, "
+               f"итог {tot:+.1f}%, макс. просадка {dd:.1f}%.")
+        if per <= 0:
+            txt += "\nВнимание: это сочетание на истории теряло деньги. Лучшее — вход 15:00, порог 2,5%."
+        self.bt_lbl.configure(text=txt, fg="#b3261e" if per <= 0 else "#0a7a2f")
 
     def _tree(self, parent, cols):
         fr = ttk.Frame(parent)
@@ -474,7 +495,8 @@ class App(tk.Tk):
             f"Сделок: {len(nets)}, в плюсе {wins} ({(wins / len(nets) * 100) if nets else 0:.0f}%). "
             f"Средняя сделка после затрат: {(sum(nets) / len(nets)) if nets else 0:+.3f}%.\n"
             f"Итог: {(eq - 1) * 100:+.2f}%, макс. просадка {dd * 100:.2f}%. "
-            f"Ориентир по бэктесту: {'+0,22' if self.s['threshold'] >= 2.5 else '+0,16'}% на сделку после затрат."))
+            + (lambda v: f"Ориентир по бэктесту: {v[0]:+.2f}% на сделку после затрат." if v else "")(
+                self._bt(self.s["entry"], self.s["threshold"]))))
 
     # --- песочница
     def check_access(self):
@@ -504,7 +526,7 @@ class App(tk.Tk):
                 n = now_msk()
                 today = n.date().isoformat()
                 if n.weekday() < 5:
-                    eh, em = (14, 30) if self.s["entry"] == "14:30" else (15, 0)
+                    eh, em = (int(x) for x in self.s["entry"].split(":"))
                     start = n.replace(hour=eh, minute=em, second=0, microsecond=0)
                     in_window = start - timedelta(minutes=2) <= n < start + timedelta(minutes=10)
                     if in_window and self.done_today.get(("entry", today)) is None:
