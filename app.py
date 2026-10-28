@@ -44,7 +44,7 @@ SETTINGS = os.path.join(sc.HERE, "settings.json")
 DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_token": True,
             "auto_signals": True, "auto_journal": True, "remember_token": False, "token": "",
             "rescan": False, "autostart": False, "day_on": True, "sound_on": True,
-            "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "spike_half": 50, "spike_trail": 1.0,
+            "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "spike_half": 50, "spike_trail": 1.0,
             "spike_max": 5, "two_takes": True,
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False}
 
@@ -323,6 +323,14 @@ class App(tk.Tk):
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
         ttk.Checkbutton(f, text="Запускать робота сразу при открытии программы", variable=self.v_autostart).pack(side="left")
         ttk.Checkbutton(f, text="Звук при входе и выходе из позиции", variable=self.v_sound).pack(side="left", padx=(16, 0))
+        r += 1
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=(4, 0))
+        ttk.Label(f, text="Торговать:").pack(side="left")
+        self.DIRS = {"both": "лонг и шорт", "long": "только лонг", "short": "только шорт"}
+        self.v_dir = tk.StringVar(value=self.DIRS.get(self.s.get("direction", "both"), "лонг и шорт"))
+        for k, name in self.DIRS.items():
+            ttk.Radiobutton(f, text=name, value=name, variable=self.v_dir).pack(side="left", padx=(8, 0))
+        ttk.Label(f, text="(для обеих стратегий)", foreground="#777").pack(side="left", padx=(8, 0))
         bg = ttk.Style().lookup("TFrame", "background") or None
         # --- формация
         r += 1
@@ -529,6 +537,7 @@ class App(tk.Tk):
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
                       rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(), sound_on=self.v_sound.get(),
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
+                      direction={v: k for k, v in self.DIRS.items()}.get(self.v_dir.get(), "both"),
                       spike_markets=[k for k, _ in at.MARKETS if self.v_mk[k].get()] or ["imoex"], spike_half=int(self.v_spk_half.get()),
                       spike_trail=float(self.v_spk_trail.get()), spike_max=int(self.v_spk_max.get()),
                       spike_share=self._pct(self.v_spk_share.get()),
@@ -712,7 +721,7 @@ class App(tk.Tk):
                  "share": float(self.s.get("spike_share", 10)) / 100,
                  "two_takes": bool(self.s.get("two_takes", True))}
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
-                                   day_on=bool(self.s.get("day_on", True)),
+                                   day_on=bool(self.s.get("day_on", True)), direction=self.s.get("direction", "both"),
                                    on_event=lambda kind, info: self.q.put(("call", self.on_trade, (kind, info))),
                                    on_update=lambda snap: self.q.put(("call", self.show_robot, snap)))
         robot = self.robot

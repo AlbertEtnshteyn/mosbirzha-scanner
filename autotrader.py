@@ -326,7 +326,8 @@ class SandboxBroker:
 
 class AutoTrader:
     def __init__(self, broker, capital, log=print, on_update=None, clock=None, sleep=None,
-                 stop_event=None, rescan=False, state_path=None, spike=None, day_on=True, on_event=None):
+                 stop_event=None, rescan=False, state_path=None, spike=None, day_on=True, on_event=None,
+                 direction="both"):
         self.b = broker
         self.capital = capital
         self.log = log
@@ -340,6 +341,7 @@ class AutoTrader:
         self._sleep = sleep or self._wait
         self.rescan = rescan
         self.day_on = day_on
+        self.direction = direction            # "both" | "long" | "short"
         self.sp = dict(SPIKE_DEFAULTS, **(spike or {}))
         self.hist = {}               # тикер -> свечи 5 мин за несколько дней (из них строятся 15 мин и 1 час)
         self.hist_loaded = {}
@@ -397,7 +399,7 @@ class AutoTrader:
 
     # ------------------------------------------------------------------ главный цикл
     def run(self):
-        self.log(f"Робот запущен. Рабочее время по будням {hm(DAY_START)}–{hm(DAY_END)} МСК.")
+        self.log(f"Робот запущен. Рабочее время по будням {hm(DAY_START)}–{hm(DAY_END)} МСК. Направление: {self._dir_name()}.")
         if not self.day_on:
             self.log("Стратегия «движение дня» (вход в заданное время) выключена в настройках.")
         else:
@@ -690,7 +692,9 @@ class AutoTrader:
         else:
             self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status])
         enter, why = False, ""
-        if status != "ПОДТВЕРЖДЁН":
+        if not self._side_ok(s):
+            why = f"в настройках — {self._dir_name()}, не вхожу"
+        elif status != "ПОДТВЕРЖДЁН":
             why = "индекс идёт в другую сторону, не вхожу"
         elif not sp["on"]:
             why = "сигнал (торговля по формации выключена в настройках)"
@@ -735,6 +739,9 @@ class AutoTrader:
             self.log(f"   {tk:6s} {mv * 100:+.2f}%  {why}")
         if sigs and t - sc.ENTRY_MIN > sc.LATE_OK_MIN:
             sigs = self._check_late(now, sigs)
+        for s in [s for s in sigs if not self._side_ok(s[1])]:
+            self.log(f"  {s[0]}: {'лонг' if s[1] > 0 else 'шорт'} — в настройках {self._dir_name()}, не вхожу")
+        sigs = [s for s in sigs if self._side_ok(s[1])]
         held = {p["ticker"] for p in self.positions}
         for s in [s for s in sigs if s[0] in held]:
             self.log(f"  {s[0]}: уже есть позиция по всплеску — не дублирую")
@@ -773,7 +780,7 @@ class AutoTrader:
 
     def _enter_new(self, now):
         held = {p["ticker"] for p in self.positions}
-        for tk, side, mv in self._signals_now():
+        for tk, side, mv in [x for x in self._signals_now() if self._side_ok(x[1])]:
             if tk in self.st["traded"] or tk in held or \
                     sum(1 for p in self.positions if p.get("strat") != "spike") >= MAX_POS_RESCAN:
                 continue
@@ -923,6 +930,12 @@ class AutoTrader:
         if res:
             self.log(f"Итог дня по «{hm(sc.ENTRY_MIN)}»: сделок {len(res)}, в среднем {sum(res) / len(res) * 100:+.2f}% на сделку "
                      f"(до комиссий), в плюсе {sum(1 for r in res if r > 0)}.")
+
+    def _side_ok(self, side):
+        return self.direction == "both" or (self.direction == "long") == (side > 0)
+
+    def _dir_name(self):
+        return {"long": "только лонг", "short": "только шорт"}.get(self.direction, "лонг и шорт")
 
     def _wait(self, sec):
         self.wake.wait(sec)
