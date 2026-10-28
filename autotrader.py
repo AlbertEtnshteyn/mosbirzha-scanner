@@ -34,12 +34,12 @@ STATE_FILE = os.path.join(sc.HERE, "auto_state.json")
 # Пресеты по таймфрейму: лучшие варианты на истории 10.2025–10.2026 (44 акции, затраты 0,16%)
 # Параметры формации по таймфреймам и результат на истории 10.2025–10.2026 (44 акции индекса, затраты 0,16%)
 SPIKE_PRESETS = {
-    5: {"mult": 3.0, "body": 0.01, "win": 24, "min_value": 20e6,
-        "bt": "5 мин: на истории акций индекса в минусе (около −0,2% на сделку) — проверка вживую"},
-    15: {"mult": 3.0, "body": 0.02, "win": 16, "min_value": 60e6,
-         "bt": "15 мин: 44 сделки за год, в плюсе 50%, в среднем +0,05% после затрат, итог +2,1%, просадка −3,1%"},
-    60: {"mult": 5.0, "body": 0.01, "win": 8, "min_value": 150e6,
-         "bt": "1 час: 19 сделок за год, в плюсе 58%, в среднем +0,15% после затрат, итог +3,6%, просадка −1,8%"},
+    5: {"mult": 3.0, "body": 0.02, "win": 24, "min_value": 20e6, "buf": 0.003, "touch_close": False,
+        "bt": "5 мин: 56 сделок за год, в плюсе 46%, в среднем +0,03% после затрат, итог +0,1%, просадка −4,8%"},
+    15: {"mult": 3.0, "body": 0.02, "win": 16, "min_value": 60e6, "buf": 0.003, "touch_close": False,
+         "bt": "15 мин: 42 сделки за год, в плюсе 50%, в среднем +0,12% после затрат, итог +6,2%, просадка −3,6%"},
+    60: {"mult": 5.0, "body": 0.01, "win": 8, "min_value": 150e6, "buf": 0.001, "touch_close": True,
+         "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат, итог +2,8%, просадка −1,8%"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [5, 15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
                   "all_market": True, "max_pos": 5, "share": 0.10,
@@ -105,6 +105,7 @@ def find_pullback(bars, sp):
         s = 1 if body > 0 else -1
         ext = bi["h"] if s > 0 else bi["l"]
         touch = -1
+        pl = None                     # крайняя точка всего отката (с «закруглением» под EMA20) — под ней стоп
         for j in range(i + 1, min(n, i + sp["win"] + 1)):
             bj = bars[j]
             if bj["t"].date() != bi["t"].date() or (bj["c"] - bi["o"]) * s < 0:
@@ -114,13 +115,15 @@ def find_pullback(bars, sp):
                 conf = (bj["c"] > bj["o"] and bj["c"] > bt["c"]) if s > 0 else (bj["c"] < bj["o"] and bj["c"] < bt["c"])
                 if conf and (bj["c"] - em[j]) * s > 0:
                     if j == last:
-                        lo = min(bt["l"], bj["l"]) if s > 0 else max(bt["h"], bj["h"])
+                        lo = min(pl, bj["l"]) if s > 0 else max(pl, bj["h"])
                         return {"side": s, "impulse": bi, "touch": bt, "confirm": bj, "level": lo, "t1": ext,
-                                "ema": em[j], "value": bi["val"], "mult": bi["val"] / med, "body": body}
+                                "ema": em[j], "value": bi["val"], "mult": bi["val"] / med, "body": body,
+                                "buf": sp["buf"]}
                     break
             tch = (bj["l"] <= em[j]) if s > 0 else (bj["h"] >= em[j])
-            if tch and (bj["c"] - em[j] * (1 - s * 0.003)) * s >= 0:
+            if tch and (not sp.get("touch_close", True) or (bj["c"] - em[j] * (1 - s * 0.003)) * s >= 0):
                 touch = j
+            pl = (bj["l"] if pl is None else min(pl, bj["l"])) if s > 0 else (bj["h"] if pl is None else max(pl, bj["h"]))
             ext = max(ext, bj["h"]) if s > 0 else min(ext, bj["l"])
     return None
 
@@ -242,7 +245,7 @@ class AutoTrader:
         sp = self.sp
         tfs = ", ".join(("1 час" if tf == 60 else f"{tf} мин") for tf in sp["tfs"]) or "нет"
         self.log(f"Всплески объёма + откат к EMA20 (таймфреймы: {tfs}): слежу всегда, торговля "
-                 f"{'ВКЛЮЧЕНА' if sp['on'] else 'выключена'}. Касание EMA20 → свеча-подтверждение → вход; стоп под откатом; "
+                 f"{'ВКЛЮЧЕНА' if sp['on'] else 'выключена'}. Касание EMA20 → свеча-подтверждение → вход; стоп под низом всего отката; "
                  f"тейк1 у хая импульса ({sp['half'] * 100:.0f}% позиции), затем стоп в б/у и трейлинг {sp['trail_r']:g}R; "
                  f"шорт только при падающем индексе.")
         if self.positions:
@@ -524,7 +527,7 @@ class AutoTrader:
             return
         self.log(txt + " — вхожу.")
         self.st["spike_traded"].append(tk)
-        level = sig["level"] * (1 - s * sp["buf"])
+        level = sig["level"] * (1 - s * sig["buf"])
         self._open(tk, side=s, alloc=self.capital * sp["share"], strat="spike", stop_level=level, t1=sig["t1"],
                    exit_min=sp["exit_min"])
 
