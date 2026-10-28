@@ -1,2 +1,2 @@
 requests>=2.31
-truststore>=0.9; python_version >= "3.10"
+certifi

@@ -5,3 +5,4 @@ dist/
 settings.json
 forward_*.csv
 sandbox_trades*.csv
+trusted_certs.pem

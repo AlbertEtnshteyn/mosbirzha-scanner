@@ -40,21 +40,6 @@ try:
 except ImportError:
     sys.exit("Установите библиотеку: pip install requests")
 
-# Проверять сертификаты через хранилище Windows/macOS, как браузер. Без этого соединение
-# ломается, если антивирус проверяет HTTPS (Kaspersky и др.) или сайт использует сертификат,
-# которого нет во встроенном списке Python (например, российский корневой сертификат Минцифры).
-try:
-    import truststore
-    truststore.inject_into_ssl()
-except Exception:
-    pass
-
-SSL_HELP = ("Не удалось проверить сертификат сервера. Обычно причина — антивирус, который проверяет защищённые "
-            "соединения (например, Kaspersky), или российский корневой сертификат Минцифры, не установленный в Windows.\n"
-            "Что сделать: 1) откройте адрес в браузере — если браузер тоже ругается, установите сертификаты Минцифры "
-            "с госуслуг (gosuslugi.ru/crt); 2) в антивирусе добавьте MoexScanner.exe в исключения проверки защищённых "
-            "соединений; 3) перезапустите приложение.")
-
 MSK = timezone(timedelta(hours=3))
 
 # ---- параметры стратегии (из бэктеста) -------------------------------------
@@ -77,6 +62,144 @@ JOURNAL = os.path.join(HERE, "forward_journal.csv")
 DAYS_LOG = os.path.join(HERE, "forward_days.csv")
 SANDBOX_LOG = os.path.join(HERE, "sandbox_trades.csv")
 STOP_EVENT = threading.Event()   # кнопка «Стоп» в приложении
+
+# ============================================================================ защищённые соединения
+# Сертификаты проверяются по трём источникам: хранилище Windows, список certifi и сертификаты,
+# которым пользователь явно доверил (trusted_certs.pem рядом с программой). Последнее нужно, если
+# сервер предъявляет сертификат, неизвестный Windows (российский корневой сертификат Минцифры,
+# антивирус с проверкой HTTPS). Проверка при этом не отключается: доверяется один конкретный
+# сертификат, любой другой будет отвергнут.
+import hashlib
+import socket
+import ssl
+import tempfile
+from urllib.parse import urlparse
+from requests.adapters import HTTPAdapter
+
+TRUST_FILE = os.path.join(HERE, "trusted_certs.pem")
+
+
+class CertError(RuntimeError):
+    """Сервер предъявил сертификат, которому нет доверия."""
+    def __init__(self, host, port=443):
+        self.host = host
+        self.port = port or 443
+        super().__init__(f"Сертификат сервера {host} не прошёл проверку: его издатель неизвестен этому компьютеру. "
+                         "Приложение предложит доверять этому сертификату.")
+
+
+def _ssl_context():
+    ctx = ssl.create_default_context()          # в Windows сюда загружается хранилище системы
+    try:
+        import certifi
+        ctx.load_verify_locations(certifi.where())
+    except Exception:
+        pass
+    if os.path.exists(TRUST_FILE):
+        try:
+            ctx.load_verify_locations(TRUST_FILE)
+        except Exception as e:
+            print("Файл доверенных сертификатов повреждён:", e)
+    # доверенный сертификат может быть промежуточным, а не корневым
+    ctx.verify_flags |= getattr(ssl, "VERIFY_X509_PARTIAL_CHAIN", 0)
+    return ctx
+
+
+class _CtxAdapter(HTTPAdapter):
+    def __init__(self, ctx, **kw):
+        self._ctx = ctx
+        super().__init__(**kw)
+
+    def init_poolmanager(self, *a, **kw):
+        kw["ssl_context"] = self._ctx
+        return super().init_poolmanager(*a, **kw)
+
+    def proxy_manager_for(self, *a, **kw):
+        kw["ssl_context"] = self._ctx
+        return super().proxy_manager_for(*a, **kw)
+
+
+_SESSION = None
+
+
+def http():
+    global _SESSION
+    if _SESSION is None:
+        s = requests.Session()
+        s.mount("https://", _CtxAdapter(_ssl_context()))
+        _SESSION = s
+    return _SESSION
+
+
+def reset_http():
+    global _SESSION
+    _SESSION = None
+
+
+def _is_cert_error(e):
+    t = str(e)
+    return "CERTIFICATE_VERIFY_FAILED" in t or "certificate verify failed" in t
+
+
+def _decode_der(der):
+    """Издатель, владелец и срок сертификата (без внешних библиотек)."""
+    pem = ssl.DER_cert_to_PEM_cert(der)
+    fd, path = tempfile.mkstemp(suffix=".pem")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(pem)
+        d = ssl._ssl._test_decode_cert(path)
+    except Exception:
+        d = {}
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    name = lambda key: ", ".join(f"{k}={v}" for rdn in d.get(key, ()) for k, v in rdn if k in ("commonName", "organizationName", "countryName"))
+    return {"pem": pem, "subject": name("subject") or "?", "issuer": name("issuer") or "?",
+            "not_after": d.get("notAfter", "?"), "sha256": hashlib.sha256(der).hexdigest().upper()}
+
+
+def server_chain(host, port=443):
+    """Цепочка сертификатов, которую предъявляет сервер (без проверки — только чтобы показать пользователю)."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((host, port), timeout=15) as sock:
+        with ctx.wrap_socket(sock, server_hostname=host) as ss:
+            chain = []
+            if hasattr(ss, "get_unverified_chain"):
+                for c in ss.get_unverified_chain() or []:
+                    der = c if isinstance(c, (bytes, bytearray)) else (c.public_bytes(ssl._ssl.ENCODING_DER) if hasattr(c, "public_bytes") else None)
+                    if der:
+                        chain.append(bytes(der))
+            if not chain:
+                chain = [ss.getpeercert(binary_form=True)]
+    return [_decode_der(d) for d in chain]
+
+
+def trust_anchor(host, port=443):
+    """Сертификат, которому предлагаем доверять: самый верхний из предъявленных сервером."""
+    chain = server_chain(host, port)
+    return chain[-1], chain
+
+
+def add_trusted(cert):
+    note = f"# {cert['subject']} | issuer: {cert['issuer']} | SHA-256 {cert['sha256']}\n"
+    with open(TRUST_FILE, "a", encoding="ascii", errors="replace") as f:
+        f.write(note.encode("ascii", "replace").decode("ascii"))
+        f.write(cert["pem"])
+    reset_http()
+
+
+def explain_issuer(cert):
+    txt = (cert["issuer"] + " " + cert["subject"]).lower()
+    if "russian trusted" in txt or "минцифр" in txt:
+        return "Это российский удостоверяющий центр Минцифры: им подписаны сертификаты многих российских сервисов."
+    if any(w in txt for w in ("kaspersky", "eset", "dr.web", "drweb", "avast", "avg", "bitdefender", "norton", "fortinet")):
+        return "Это сертификат антивируса: он проверяет защищённые соединения на вашем компьютере."
+    return "Издатель неизвестен. Доверяйте, только если это ваш домашний компьютер и вы понимаете, откуда этот сертификат."
 
 
 def configure(threshold_pct=2.0, entry="15:00"):
@@ -151,11 +274,15 @@ def iss_get(path, params, retries=4):
     for i in range(retries):
         try:
             try:
-                r = requests.get(ISS + path, params={**params, "iss.meta": "off"}, timeout=30)
-            except requests.exceptions.SSLError:
-                raise RuntimeError(SSL_HELP) from None
+                r = http().get(ISS + path, params={**params, "iss.meta": "off"}, timeout=30)
+            except requests.exceptions.SSLError as e:
+                if _is_cert_error(e):
+                    raise CertError(urlparse(ISS).hostname, urlparse(ISS).port) from None
+                raise
             r.raise_for_status()
             return r.json()
+        except CertError:
+            raise
         except Exception:
             if i == retries - 1:
                 raise
@@ -171,6 +298,8 @@ def imoex_tickers():
         t = sorted({row[k] for row in b["data"] if row[k]})
         if len(t) >= 20:
             return t
+    except CertError:
+        raise
     except Exception as e:
         print("Состав индекса не получен, беру список из бэктеста:", e)
     return FALLBACK_TICKERS
@@ -202,6 +331,8 @@ def iss_day(day, tickers):
             rows = iss_candles(tk, day)
             if rows:
                 data[tk] = rows
+        except CertError:
+            raise
         except Exception as e:
             print(f"  {tk}: не загрузилось ({e})")
     return data
@@ -221,9 +352,11 @@ class TInvest:
 
     def call(self, service, method, body):
         try:
-            r = requests.post(f"{self.base}{SVC}{service}/{method}", headers=self.h, data=json.dumps(body), timeout=30)
-        except requests.exceptions.SSLError:
-            raise RuntimeError(SSL_HELP) from None
+            r = http().post(f"{self.base}{SVC}{service}/{method}", headers=self.h, data=json.dumps(body), timeout=30)
+        except requests.exceptions.SSLError as e:
+            if _is_cert_error(e):
+                raise CertError(urlparse(self.base).hostname, urlparse(self.base).port) from None
+            raise RuntimeError(f"Ошибка защищённого соединения с {self.base}: {e}") from None
         except requests.exceptions.ConnectionError as e:
             raise RuntimeError(f"Нет соединения с сервером Т-Инвестиций ({self.base}). Проверьте интернет. Детали: {e}") from None
         if r.status_code != 200:
@@ -396,6 +529,8 @@ def live_candles(tickers, day, ti=None):
         for tk in tickers:
             try:
                 data[tk] = ti.candles(tk, day)
+            except CertError:
+                raise
             except Exception as e:
                 print(f"  {tk}: {e}")
         return data
