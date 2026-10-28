@@ -22,8 +22,12 @@ def _src_dir():
 def bundle_bytes():
     """Архив с программой для сервера: из сборки (exe) или из папки с исходниками."""
     packed = os.path.join(_src_dir(), "server_bundle.zip")
-    if os.path.exists(packed):
-        return open(packed, "rb").read()
+    if getattr(sys, "frozen", False) and os.path.exists(packed):
+        data = open(packed, "rb").read()
+        names = zipfile.ZipFile(io.BytesIO(data)).namelist()    # испорченный архив — сразу понятная ошибка
+        if "install.sh" not in names:
+            raise RuntimeError("в программе нет архива для сервера — скачайте новую сборку")
+        return data
     base = _src_dir()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -71,7 +75,10 @@ def install(host, user, password, settings, transfer=True, log=print, port=22):
         log("Передаю программу на сервер…")
         run(f"rm -rf {REMOTE} && mkdir -p {REMOTE} && chmod 777 {REMOTE}", show=False)
         sftp = cli.open_sftp()
-        sftp.putfo(io.BytesIO(bundle_bytes()), f"{REMOTE}/bundle.zip")
+        data = bundle_bytes()
+        sftp.putfo(io.BytesIO(data), f"{REMOTE}/bundle.zip")
+        if sftp.stat(f"{REMOTE}/bundle.zip").st_size != len(data):
+            raise RuntimeError("архив передался на сервер не полностью — попробуйте ещё раз")
         if transfer:
             sftp.mkdir(f"{REMOTE}/transfer")
             s = dict(settings)

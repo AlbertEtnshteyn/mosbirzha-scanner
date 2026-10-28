@@ -45,7 +45,7 @@ jobs:
           Set-Content -Path version.txt -Value ("${{ github.sha }}".Substring(0, 7) + " от " + $when + " МСК") -Encoding utf8
 
       - name: Программа для сервера (ставится на VPS из exe)
-        run: python -c "import serverinstall as si; open('server_bundle.zip','wb').write(si.bundle_bytes())"
+        run: python -c "import serverinstall as si, zipfile, io; b = si.bundle_bytes(); n = zipfile.ZipFile(io.BytesIO(b)).namelist(); assert 'install.sh' in n and 'server.py' in n, n; open('server_bundle.zip','wb').write(b); print(len(b), n)"
 
       - name: Сборка .exe
         run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "certs;certs" --add-data "version.txt;." --add-data "server_bundle.zip;." app.py
