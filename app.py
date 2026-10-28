@@ -2,7 +2,7 @@
 """
 Сканер Мосбиржи — настольное приложение.
 Стратегия: сильное движение дня по рынку, вход в 15:00, стоп 3%, выход в 17:00.
-Кнопка «Старт» на вкладке «Автоторговля» запускает робота: он сам работает по будням 07:00–18:30.
+Поиск формаций идёт с открытия программы по будням 07:00–18:50; «Старт торговли» включает сделки на демо-счёте.
 """
 import contextlib
 import csv
@@ -116,8 +116,8 @@ class App(tk.Tk):
         self.after(500, self.refresh_journal)
         self.after(600, self.refresh_sandbox)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
-        if self.s.get("autostart"):
-            self.after(1500, self.robot_start)
+        # мониторинг формаций — сразу при открытии программы; торговля — по «Старт» (или сразу, если так в настройках)
+        self.after(1500, lambda: self.robot_start(trade=bool(self.s.get("autostart")), quiet=True))
         self.log(f"Версия {VERSION}. Готово. Порог {self.s['threshold']:g}%, вход в {self.s['entry']}. "
                  f"Журналы сохраняются в папке: {sc.HERE}\n")
 
@@ -187,16 +187,18 @@ class App(tk.Tk):
         nb.insert(0, t3, text="Автоторговля")
         bar = ttk.Frame(t3)
         bar.pack(fill="x")
-        self.btn_start = ttk.Button(bar, text="▶  Старт", command=self.robot_start, style="Start.TButton")
+        self.btn_start = ttk.Button(bar, text="▶  Старт торговли", command=self.robot_start, style="Start.TButton")
         self.btn_start.pack(side="left")
-        self.btn_stop = ttk.Button(bar, text="■  Стоп", command=self.robot_stop, style="Start.TButton", state="disabled")
+        self.btn_stop = ttk.Button(bar, text="■  Стоп торговли", command=self.robot_stop, style="Start.TButton", state="disabled")
         self.btn_stop.pack(side="left", padx=6)
         ttk.Button(bar, text="Проверить доступ", command=self.check_access).pack(side="left", padx=(18, 0))
         ttk.Button(bar, text="Открыть график…", command=lambda: self.open_chart("SBER")).pack(side="left", padx=(6, 0))
         ttk.Button(bar, text="Терминал Т-Инвестиций", command=lambda: self.open_tbank(None)).pack(side="left", padx=(6, 0))
-        self.robot_lbl = ttk.Label(t3, text="Робот остановлен. Нажмите «Старт» — дальше он всё делает сам.", style="Big.TLabel")
+        self.robot_lbl = ttk.Label(t3, text="Запускаю поиск формаций…", style="Big.TLabel")
         self.robot_lbl.pack(anchor="w", pady=(10, 2))
-        ttk.Label(t3, text="По будням 07:00–18:30 МСК, сделки на демо-счёте песочницы. Стратегия «15:00»: каждую минуту "
+        ttk.Label(t3, text="Поиск формаций идёт постоянно с открытия программы — по будням с 07:00 до закрытия основной сессии (18:40). "
+                           "«Старт торговли» — робот сам входит и выходит на демо-счёте (входы 10:00–18:00, все позиции закрыты к 18:30); "
+                           "«Стоп торговли» — только наблюдение и уведомления. Стратегия «15:00»: каждую минуту "
                            "пересчитывает движение акций индекса, во время входа сам открывает сделки, стоп 3%, выход 16:59:50. "
                            "Всплески объёма: после каждой 5-минутки ищет импульс на объёме (одна или несколько свечей подряд) → касание EMA20 → свечу-подтверждение "
                            "(5м/15м/1ч), входит сам, стоп под низом всего отката, тейк1 на половине пути до хая (50%) → стоп в б/у и трейлинг, тейк2 на хае (50% остатка), остаток — трейлинг. "
@@ -321,7 +323,7 @@ class App(tk.Tk):
         ttk.Checkbutton(f, text="Запомнить токен (открытым текстом в settings.json)", variable=self.v_rem).pack(side="left", padx=(16, 0))
         r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
-        ttk.Checkbutton(f, text="Запускать робота сразу при открытии программы", variable=self.v_autostart).pack(side="left")
+        ttk.Checkbutton(f, text="Включать торговлю сразу при открытии программы (поиск формаций включается всегда)", variable=self.v_autostart).pack(side="left")
         ttk.Checkbutton(f, text="Звук при входе и выходе из позиции", variable=self.v_sound).pack(side="left", padx=(16, 0))
         r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=(4, 0))
@@ -566,8 +568,7 @@ class App(tk.Tk):
         self.refresh_journal()
         self.refresh_sandbox()
         self.log(f"Настройки сохранены: порог {self.s['threshold']:g}%, вход {self.s['entry']}.\n")
-        if self.robot_running():
-            self.log("Робот уже работает со старыми настройками. Чтобы применить новые, нажмите «Стоп» и снова «Старт».\n")
+        self.restart_robot()
 
     # ------------------------------------------------------------------ задачи
     def submit(self, name, fn, on_done=None):
@@ -717,13 +718,17 @@ class App(tk.Tk):
     def robot_running(self):
         return bool(self.robot_thread and self.robot_thread.is_alive())
 
-    def robot_start(self):
+    def robot_start(self, trade=True, quiet=False):
         if self.robot_running():
+            if trade and not self.robot.trade:
+                self.robot.set_trade(True)
+            self._robot_buttons()
             return
         tok = os.environ.get("TINVEST_TOKEN")
         if not tok or not self.s["sandbox_token"]:
-            messagebox.showinfo(APP_TITLE, "Для автоторговли нужен токен песочницы: введите его во вкладке «Настройки», "
-                                           "отметьте «Это токен песочницы» и нажмите «Сохранить настройки».")
+            if not quiet:
+                messagebox.showinfo(APP_TITLE, "Для автоторговли нужен токен песочницы: введите его во вкладке «Настройки», "
+                                               "отметьте «Это токен песочницы» и нажмите «Сохранить настройки».")
             return
         self._apply_settings()
         log = lambda m: self.q.put(("log", f"[робот {now_msk():%H:%M:%S}] {m}\n"))
@@ -735,7 +740,7 @@ class App(tk.Tk):
                  "leverage": self.s.get("leverage", "1"),
                  "two_takes": bool(self.s.get("two_takes", True))}
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
-                                   day_on=bool(self.s.get("day_on", True)), direction=self.s.get("direction", "both"),
+                                   day_on=bool(self.s.get("day_on", True)), direction=self.s.get("direction", "both"), trade=trade,
                                    on_event=lambda kind, info: self.q.put(("call", self.on_trade, (kind, info))),
                                    on_update=lambda snap: self.q.put(("call", self.show_robot, snap)))
         robot = self.robot
@@ -754,30 +759,49 @@ class App(tk.Tk):
         self._robot_buttons()
 
     def robot_stop(self):
+        """«Стоп» выключает торговлю; мониторинг формаций продолжается."""
         if not self.robot_running():
             return
-        close = False
         if self.robot.positions:
             ans = messagebox.askyesnocancel(APP_TITLE, "Есть открытые позиции. Закрыть их по рынку?\n\n"
-                                                       "«Да» — закрыть и остановить робота.\n"
-                                                       "«Нет» — остановить, позиции оставить (после «Старт» робот продолжит их вести).")
+                                                       "«Да» — закрыть все и выключить торговлю.\n"
+                                                       "«Нет» — выключить торговлю, а открытые позиции робот доведёт до стопа/тейка/выхода.")
             if ans is None:
                 return
-            close = ans
-        self.robot.request_stop(close)
-        self.robot_lbl.configure(text="Останавливаю робота…")
+            if ans:
+                self.robot.request_close(None)
+        self.robot.set_trade(False)
+        self._robot_buttons()
+
+    def restart_robot(self):
+        """Применить новые настройки: перезапустить робота с тем же режимом (наблюдение/торговля)."""
+        if not self.robot_running():
+            self.robot_start(trade=False, quiet=True)
+            return
+        old, trade = self.robot, self.robot.trade
+        old.request_stop(False)
+        self.robot_lbl.configure(text="Применяю настройки…")
+
+        def wait():
+            if self.robot_thread and self.robot_thread.is_alive():
+                self.after(500, wait)
+            else:
+                self.robot_start(trade=trade, quiet=True)
+        self.after(500, wait)
 
     def _robot_buttons(self):
         run = self.robot_running()
-        self.btn_start.configure(state="disabled" if run else "normal")
-        self.btn_stop.configure(state="normal" if run else "disabled")
+        trading = run and self.robot.trade
+        self.btn_start.configure(state="disabled" if trading else "normal")
+        self.btn_stop.configure(state="normal" if trading else "disabled")
         if not run:
-            self.robot_lbl.configure(text="Робот остановлен. Нажмите «Старт» — дальше он всё делает сам.")
+            self.robot_lbl.configure(text="Робот выключен (нужен токен песочницы в «Настройках»). Нажмите «Старт».")
             self.refresh_sandbox()
 
     def show_robot(self, snap):
         if self.robot_running():
-            self.robot_lbl.configure(text=f"Робот работает: {snap['status']}")
+            self.robot_lbl.configure(text=f"Робот: {snap['status']}")
+            self._robot_buttons()
         mk = snap.get("market")
         ls = snap.get("last_scan")
         self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: рынок {mk * 100:+.2f}%, порог {sc.THRESHOLD * 100:g}%"
@@ -939,7 +963,7 @@ class App(tk.Tk):
         chart.ChartWindow(self, ticker, tf)
 
     def on_close(self):
-        if self.robot_running():
+        if self.robot_running() and (self.robot.trade or self.robot.positions):
             if not messagebox.askyesno(APP_TITLE, "Робот работает. Если закрыть программу, он перестанет торговать "
                                                   "(открытые позиции останутся и будут подхвачены при следующем «Старт»).\n\nЗакрыть?"):
                 return
