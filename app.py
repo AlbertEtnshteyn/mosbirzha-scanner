@@ -960,12 +960,6 @@ class App(tk.Tk):
         import serverinstall as si
         transfer = self.v_srv_tr.get()
         settings = dict(self.s)
-        if transfer and self.robot_running():
-            self.robot.set_trade(False)                    # два робота на одном демо-счёте торговать не должны
-            self.s["autostart"] = False
-            save_settings(self.s)
-            self._robot_buttons()
-            self.log("Робот на этом компьютере переведён в режим наблюдения — торговать будет сервер.\n")
 
         def job():
             return si.install(a[0], a[1], a[2], settings, transfer=transfer, log=lambda m: print(m))
@@ -973,6 +967,11 @@ class App(tk.Tk):
         def done(code):
             if code:
                 self.s["srv_code"] = code
+                if transfer and self.robot_running() and self.robot.trade:
+                    self.robot.set_trade(False)            # два робота на одном демо-счёте торговать не должны
+                    self._robot_buttons()
+                    self.log("Робот на этом компьютере переведён в режим наблюдения — торговать будет сервер.\n")
+                self.s["autostart"] = False
                 save_settings(self.s)
                 self.show_qr(code)
         self.submit(f"Установка сервера на {a[0]}", job, done)
