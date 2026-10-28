@@ -361,7 +361,8 @@ class App(tk.Tk):
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(f, text="Таймфреймы:").pack(side="left")
         for tf in (5, 15, 60):
-            ttk.Checkbutton(f, text="1 час" if tf == 60 else f"{tf} мин", variable=self.v_spk_tf[tf]).pack(side="left", padx=(6, 0))
+            ttk.Checkbutton(f, text="1 час" if tf == 60 else (f"{tf} мин (только уведомления)" if tf == 5 else f"{tf} мин"),
+                            variable=self.v_spk_tf[tf]).pack(side="left", padx=(6, 0))
         r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Checkbutton(f, text="Искать трендовые откаты (импульс на объёме был в последние 3 дня, EMA10 над EMA20, касание EMA20 + подтверждение)",
@@ -370,7 +371,7 @@ class App(tk.Tk):
                         variable=self.v_trend_trade).pack(anchor="w")
         ttk.Checkbutton(f, text="Профиль по эшелонам (по проверке на 152 акциях): индекс — формация 15 мин и 1 час; "
                                 "2-й эшелон — формация 1 час и трендовый откат 15 мин после роста ≥5% на объёме ×10; "
-                                "3-й эшелон — только уведомления", variable=self.v_tier).pack(anchor="w")
+                                "3-й эшелон и 5 мин — никогда не торгуются, только уведомления", variable=self.v_tier).pack(anchor="w")
         r += 1
         ttk.Label(g, text="Чем торговать:").grid(row=r, column=0, sticky="e", padx=(0, 6))
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)

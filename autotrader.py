@@ -877,6 +877,10 @@ class AutoTrader:
         ti = te.hour * 60 + te.minute                       # время последней свечи импульса (как в проверке на истории)
         if not self.trade:
             why = "наблюдение — торговля выключена (кнопка «Старт»)"
+        elif sig.get("tf") == 5:
+            why = "5 мин — не торгую, только уведомление"
+        elif sig.get("tier") == "3":
+            why = "3-й эшелон — не торгую, только уведомление"
         elif not sig.get("tradeable", (not trend) or sp.get("trend_trade", False)):
             why = sig.get("why_no") or "трендовый откат (объём был раньше) — только уведомление, на истории такие входы в минусе"
         elif sig.get("late"):
