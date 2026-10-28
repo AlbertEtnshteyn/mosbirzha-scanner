@@ -44,7 +44,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "max_pos": 5, "share": 0.10,
+                  "markets": ["all_shares"], "all_hours": True, "max_pos": 5, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 30}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -220,7 +220,7 @@ TIER2_TREND = {"mult": 10.0, "body": 0.05, "K": 4, "min_value": 5e6, "trend_days
 MAX_CARRY_DAYS = 2
 
 
-def trade_profile(tier, tf, kind):
+def trade_profile(tier, tf, kind, all_hours=False):
     """
     Окно входов, время выхода и перенос — по прогону на 152 акциях (10.2025–10.2026, затраты 0,16%):
       индекс, формация 15 мин: входы 07:00–23:30, выход 23:45, перенос в плюсе — +0,30% на сделку, 162 сделки;
@@ -229,7 +229,7 @@ def trade_profile(tier, tf, kind):
       2-й эшелон, трендовый откат 15 мин: 10:00–18:00 + перенос — +0,46%, 100 сделок.
     Перенос: если к времени выхода позиция в плюсе или тейк1 взят — держим на следующий день (не больше 2 дней).
     """
-    if tier == "index" and kind == "form" and tf == 15:
+    if all_hours or (tier == "index" and kind == "form" and tf == 15):
         return {"from": 7 * 60, "to": 23 * 60 + 30, "exit": 23 * 60 + 45, "carry": True}
     return {"from": 10 * 60, "to": 18 * 60, "exit": 18 * 60 + 25, "carry": True}
 
@@ -938,7 +938,7 @@ class AutoTrader:
                 self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status])
         enter, why = False, ""
         tc = sig["confirm"]["t"].hour * 60 + sig["confirm"]["t"].minute + sig["tf"]      # время закрытия свечи-подтверждения
-        prof = trade_profile(sig.get("tier", "index"), sig["tf"], "trend" if trend else "form")
+        prof = trade_profile(sig.get("tier", "index"), sig["tf"], "trend" if trend else "form", sp.get("all_hours", True))
         te = imp.get("t_end", imp["t"])
         ti = te.hour * 60 + te.minute                       # время последней свечи импульса (как в проверке на истории)
         if not self.trade:
