@@ -69,3 +69,9 @@ def trade_text(kind, i):
             s += f", тейк1 {fmt(i['take'])}" + (f", тейк2 {fmt(i['take2'])}" if i.get("take2") else "")
         return s
     return f"{'💰' if i['result'] > 0 else '🔻'} {i['ticker']}: закрыто {i['lots']} лот. ({i['why']}), {i['result'] * 100:+.2f}%"
+
+
+def impulse_text(i):
+    return (f"⚡ Всплеск объёма: {i['ticker']} {i['tf']} — {'рост' if i['move'] > 0 else 'падение'} {abs(i['move']) * 100:.2f}% "
+            f"с {i['t']} ({i['bars']} св.), оборот {i['value'] / 1e6:.0f} млн ₽ (×{i['mult']:.1f}), цена {fmt(i['price'])}. "
+            f"Жду отката к EMA20.")

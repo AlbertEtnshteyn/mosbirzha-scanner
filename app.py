@@ -46,7 +46,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "rescan": False, "autostart": False, "day_on": True, "sound_on": True,
             "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "spike_half": 50, "spike_trail": 1.0,
             "spike_max": 5, "two_takes": True,
-            "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True}
+            "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False}
 
 
 def load_settings():
@@ -243,6 +243,7 @@ class App(tk.Tk):
         self.v_tg_chat = tk.StringVar(value=self.s.get("tg_chat", ""))
         self.v_tg_form = tk.BooleanVar(value=self.s.get("tg_form", True))
         self.v_tg_trades = tk.BooleanVar(value=self.s.get("tg_trades", True))
+        self.v_tg_imp = tk.BooleanVar(value=self.s.get("tg_imp", False))
         ttk.Label(t5, text="Уведомления в Telegram о найденных формациях и сделках робота", style="Big.TLabel").pack(anchor="w")
         ttk.Label(t5, justify="left", foreground="#555", text=(
             "1. В Telegram откройте @BotFather → /newbot → придумайте имя → скопируйте токен бота.\n"
@@ -258,10 +259,12 @@ class App(tk.Tk):
         f5 = ttk.Frame(g5); f5.grid(row=2, column=1, sticky="w", pady=6)
         ttk.Button(f5, text="Узнать chat id", command=self.tg_find_chat).pack(side="left")
         ttk.Button(f5, text="Тест", command=self.tg_test).pack(side="left", padx=6)
-        ttk.Checkbutton(g5, text="Сообщать о каждой найденной формации (откат к EMA20 с подтверждением)",
+        ttk.Checkbutton(g5, text="Все найденные формации (откат к EMA20 с подтверждением) — и те, где робот вошёл, и те, где нет",
                         variable=self.v_tg_form).grid(row=3, column=1, sticky="w")
-        ttk.Checkbutton(g5, text="Сообщать о входах и выходах робота", variable=self.v_tg_trades).grid(row=4, column=1, sticky="w")
-        ttk.Button(g5, text="Сохранить настройки", command=self.save).grid(row=5, column=1, sticky="w", pady=12)
+        ttk.Checkbutton(g5, text="Всплески объёма сразу при появлении (до отката; сообщений будет много)",
+                        variable=self.v_tg_imp).grid(row=4, column=1, sticky="w")
+        ttk.Checkbutton(g5, text="Входы и выходы робота", variable=self.v_tg_trades).grid(row=5, column=1, sticky="w")
+        ttk.Button(g5, text="Сохранить настройки", command=self.save).grid(row=6, column=1, sticky="w", pady=12)
 
         # --- Настройки
         t4o = ttk.Frame(nb)
@@ -506,7 +509,7 @@ class App(tk.Tk):
                       spike_trail=float(self.v_spk_trail.get()), spike_max=int(self.v_spk_max.get()),
                       two_takes=self.v_takes.get() == "два тейка",
                       tg_token=self.v_tg_tok.get().strip(), tg_chat=self.v_tg_chat.get().strip(),
-                      tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get())
+                      tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get())
         if self.s["token"]:
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         else:
@@ -760,6 +763,10 @@ class App(tk.Tk):
         if kind == "formation":
             if self.s.get("tg_form", True):
                 tg.send(tok, chat, tg.formation_text(info), tglog)
+            return
+        if kind == "impulse":
+            if self.s.get("tg_imp", False):
+                tg.send(tok, chat, tg.impulse_text(info), tglog)
             return
         if self.s.get("tg_trades", True):
             tg.send(tok, chat, tg.trade_text(kind, info), tglog)

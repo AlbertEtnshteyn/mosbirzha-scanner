@@ -592,6 +592,9 @@ class AutoTrader:
                                     "жду отката к EMA20"])
                 self.log(f"Всплеск объёма {tk} ({self._tf_name(p['tf'])}, {b['t']:%H:%M}): оборот {b['val'] / 1e6:.0f} млн ₽ "
                          f"(×{b['val'] / nb / med:.1f}, свечей: {nb}), {'рост' if body > 0 else 'падение'} {abs(body) * 100:.2f}% — жду отката к EMA20.")
+                self.on_event("impulse", {"ticker": tk, "tf": self._tf_name(p["tf"]), "t": b["t"].strftime("%H:%M"),
+                                          "value": b["val"], "mult": b["val"] / nb / med, "bars": nb, "move": body,
+                                          "price": bars[-1]["c"]})
 
     def _pullback_signal(self, tk, sig):
         sp = self.sp
