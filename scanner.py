@@ -298,7 +298,8 @@ def minute_of(ts):
 
 
 LAST_MOVES = {}
-LATE_LIMIT_MIN = 10          # позже этого опоздания (мин) песочница не открывает сделки
+LATE_OK_MIN = 5              # опоздание до 5 мин — обычный вход
+LATE_CUTOFF_MIN = 16 * 60 + 30   # позже 16:30 не входим: до выхода в 17:00 слишком мало времени
 
 
 def report_movers(market, top=5):
@@ -730,11 +731,24 @@ def sandbox_mode(args):
     if not sigs:
         print("Сегодня сигналов нет — сделок не будет.")
         return
-    if not args.now and late > LATE_LIMIT_MIN:
-        print(f"Время входа прошло {late} мин назад. Сделки не открываются: вход с опозданием — это уже не та стратегия, "
-              f"что в бэктесте. Сигналы выше показаны для сведения. Запустите песочницу до "
-              f"{(ENTRY_MIN + LATE_LIMIT_MIN) // 60}:{(ENTRY_MIN + LATE_LIMIT_MIN) % 60:02d} или включите автоматический режим.")
-        return
+    if not args.now and late > LATE_OK_MIN:
+        now_min = datetime.now(MSK).hour * 60 + datetime.now(MSK).minute
+        if now_min >= LATE_CUTOFF_MIN:
+            print(f"Сейчас {now_min // 60}:{now_min % 60:02d} — до выхода в 17:00 слишком мало времени, сделки не открываются.")
+            return
+        # сигнал должен сохраниться и сейчас: движение от открытия ≥ порога и рынок в ту же сторону
+        _, now_sigs = compute_day(data, with_result=False, entry_min=now_min)
+        still = {(x["ticker"], x["side"]) for x in now_sigs}
+        keep = [x for x in sigs if (x["ticker"], x["side"]) in still]
+        print(f"Вход с опозданием на {late} мин. Проверка, сохранились ли сигналы сейчас: "
+              f"{len(keep)} из {len(sigs)} — {', '.join(x['ticker'] for x in keep) or 'нет'}.")
+        for x in sigs:
+            if (x["ticker"], x["side"]) not in still:
+                print(f"  {x['ticker']}: к {now_min // 60}:{now_min % 60:02d} сигнал пропал (движение ослабло или рынок развернулся) — не входим")
+        sigs = keep
+        if not sigs:
+            print("Подходящих сделок сейчас нет.")
+            return
     alloc = args.capital / len(sigs)
     prices = ti.last_prices([s["ticker"] for s in sigs])
     pos = []
