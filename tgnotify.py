@@ -51,7 +51,8 @@ def fmt(v):
 def formation_text(i):
     side = "ЛОНГ ⬆" if i["side"] > 0 else "ШОРТ ⬇"
     mk = f"{i['market'] * 100:+.2f}%" if i.get("market") is not None else "—"
-    lines = [f"📊 Формация: {i['ticker']} {i['tf']} — {side}",
+    head = "📈 Трендовый откат к EMA20" if i.get("trend") else "📊 Формация"
+    lines = [f"{head}: {i['ticker']} {i['tf']} — {side}",
              f"Импульс {i['impulse_t']}: {i['move'] * 100:+.2f}%, объём ×{i['mult']:.1f}",
              f"Касание EMA20 {i['touch_t']}, подтверждение {i['confirm_t']}",
              f"Цена {fmt(i['price'])} · стоп {fmt(i['stop'])} · тейк1 {fmt(i['take1'])}"

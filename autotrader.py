@@ -177,6 +177,51 @@ def find_pullback(bars, sp, em=None, last=None):
     return None
 
 
+TREND_DAYS = 3     # трендовый откат: импульс на объёме был не раньше чем 3 торговых дня назад
+
+
+def find_trend_pullback(bars, sp, em20):
+    """
+    Трендовый откат к EMA20 (объём мог быть и раньше): за последние TREND_DAYS торговых дней в бумаге был импульс
+    на объёме в ту же сторону, EMA10 над EMA20 и EMA20 растёт (для шорта — наоборот), предпоследняя свеча коснулась
+    EMA20, последняя — подтверждение (по направлению, закрылась дальше предыдущей и по свою сторону EMA20).
+    """
+    n = len(bars)
+    if n < 30:
+        return None
+    i, t = n - 1, n - 2
+    em10 = ema([b["c"] for b in bars], 10)
+    bi, bt = bars[i], bars[t]
+    for s in (1, -1):
+        if not ((em10[t] - em20[t]) * s > 0 and (em20[t] - em20[t - 5]) * s > 0):
+            continue
+        touch = (bt["l"] <= em20[t]) if s > 0 else (bt["h"] >= em20[t])
+        conf = ((bi["c"] > bi["o"] and bi["c"] > bt["c"]) if s > 0 else (bi["c"] < bi["o"] and bi["c"] < bt["c"])) \
+            and (bi["c"] - em20[i]) * s > 0
+        if not (touch and conf):
+            continue
+        days = sorted({b["t"].date() for b in bars})
+        first_day = days[-TREND_DAYS - 1] if len(days) > TREND_DAYS else days[0]
+        imp = None
+        k = t - 1
+        while k > 0 and bars[k]["t"].date() >= first_day:
+            r = _impulse(bars, k, sp, sp["min_value"], em20)
+            if r and r[1] == s:
+                imp = (k, r)
+                break
+            k -= 1
+        if not imp:
+            continue
+        k, (a, s_, med, body, total) = imp
+        ext = max(b["h"] for b in bars[a:i + 1]) if s > 0 else min(b["l"] for b in bars[a:i + 1])
+        lo = min(bt["l"], bi["l"], bars[t - 1]["l"]) if s > 0 else max(bt["h"], bi["h"], bars[t - 1]["h"])
+        impd = dict(bars[k], o=bars[a]["o"], t=bars[a]["t"], val=total, n=k - a + 1)
+        return {"side": s, "impulse": impd, "touch": bt, "confirm": bi, "level": lo, "t1": ext, "ema": em20[i],
+                "value": total, "mult": total / (k - a + 1) / med, "body": body, "buf": sp["buf"], "age": i - k,
+                "late": False, "trend": True}
+    return None
+
+
 def history_trades(bars, sp):
     """
     Формации на истории графика и как бы их отработал робот (без фильтра индекса): вход по открытию свечи
@@ -665,6 +710,8 @@ class AutoTrader:
                 self._note_impulse(tk, bars, p, em)
                 self._update_waits(tk, p, bars, em)
                 sig = find_pullback(bars, p, em)
+                if not sig and sp.get("trend_on", True):
+                    sig = find_trend_pullback(bars, p, em)
                 if sig:
                     sig["tf"] = tf
                     self._pullback_signal(tk, sig)
@@ -726,23 +773,36 @@ class AutoTrader:
             return
         self.seen_spikes.add(k)
         imp = sig["impulse"]
-        txt = (f"Откат к EMA20 {tk} ({tfn}): импульс {imp['t']:%H:%M} ({sig['body'] * 100:+.2f}%, ×{sig['mult']:.1f}), касание "
-               f"{sig['touch']['t']:%H:%M}, подтверждение {sig['confirm']['t']:%H:%M}")
+        trend = sig.get("trend", False)
+        if trend:                                   # трендовый откат — не чаще раза в день по бумаге и ТФ
+            kd = (tk, sig["tf"], sig["confirm"]["t"].date().isoformat(), "trend")
+            if kd in self.seen_spikes:
+                return
+            self.seen_spikes.add(kd)
+        imp_t = imp["t"].strftime("%d.%m %H:%M" if trend else "%H:%M")
+        txt = (f"{'Трендовый откат' if trend else 'Откат'} к EMA20 {tk} ({tfn}): импульс {imp_t} ({sig['body'] * 100:+.2f}%, "
+               f"×{sig['mult']:.1f}), касание {sig['touch']['t']:%H:%M}, подтверждение {sig['confirm']['t']:%H:%M}")
         status = "ПОДТВЕРЖДЁН"
         if sp["index"] and self._terms(tk)[0] == "share" and \
                 (self.market is None or self.market == 0 or (self.market > 0) != (s > 0)):
             status = "против индекса"
-        for row in reversed(self.spikes):
-            if row[1] == tk and row[2] == tfn and row[0] == imp["t"].strftime("%H:%M"):
-                row[6] = status
-                break
+        if trend:
+            self.spikes.append([sig["confirm"]["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"],
+                                "ТРЕНД: " + status + f" (импульс {imp_t})"])
         else:
-            self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status])
+            for row in reversed(self.spikes):
+                if row[1] == tk and row[2] == tfn and row[0] == imp["t"].strftime("%H:%M"):
+                    row[6] = status
+                    break
+            else:
+                self.spikes.append([imp["t"].strftime("%H:%M"), tk, tfn, sig["value"], sig["mult"], sig["body"], status])
         enter, why = False, ""
         tc = sig["confirm"]["t"].hour * 60 + sig["confirm"]["t"].minute + sig["tf"]      # время закрытия свечи-подтверждения
         ti = imp["t"].hour * 60 + imp["t"].minute
         if not self.trade:
             why = "наблюдение — торговля выключена (кнопка «Старт»)"
+        elif trend and not sp.get("trend_trade", False):
+            why = "трендовый откат (объём был раньше) — только уведомление, на истории такие входы в минусе"
         elif sig.get("late"):
             why = (f"поздний откат ({sig['age']} свечей после импульса, на истории в этом случае хуже) — только уведомление")
         elif not (sp["from_min"] <= tc < sp["to_min"]) or ti < sp["from_min"] - 60:
@@ -764,7 +824,7 @@ class AutoTrader:
         price = self.prices.get(tk) or sig["confirm"]["c"]
         two = sp.get("two_takes", True)
         self.on_event("formation", {
-            "ticker": tk, "tf": tfn, "side": s, "impulse_t": imp["t"].strftime("%H:%M"), "move": sig["body"],
+            "ticker": tk, "tf": tfn, "side": s, "impulse_t": imp_t, "move": sig["body"], "trend": trend,
             "mult": sig["mult"], "touch_t": sig["touch"]["t"].strftime("%H:%M"),
             "confirm_t": sig["confirm"]["t"].strftime("%H:%M"), "price": price, "stop": level,
             "take1": price + 0.5 * (sig["t1"] - price) if two else sig["t1"], "take2": sig["t1"] if two else None,

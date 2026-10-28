@@ -46,7 +46,8 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "rescan": False, "autostart": False, "day_on": True, "sound_on": True,
             "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "leverage": "1", "spike_half": 50, "spike_trail": 1.0,
             "spike_max": 5, "two_takes": True,
-            "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False}
+            "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False,
+            "tg_trend": True, "trend_on": True, "trend_trade": False}
 
 
 def load_settings():
@@ -250,6 +251,7 @@ class App(tk.Tk):
         self.v_tg_form = tk.BooleanVar(value=self.s.get("tg_form", True))
         self.v_tg_trades = tk.BooleanVar(value=self.s.get("tg_trades", True))
         self.v_tg_imp = tk.BooleanVar(value=self.s.get("tg_imp", False))
+        self.v_tg_trend = tk.BooleanVar(value=self.s.get("tg_trend", True))
         ttk.Label(t5, text="Уведомления в Telegram о найденных формациях и сделках робота", style="Big.TLabel").pack(anchor="w")
         ttk.Label(t5, justify="left", foreground="#555", text=(
             "1. В Telegram откройте @BotFather → /newbot → придумайте имя → скопируйте токен бота.\n"
@@ -267,10 +269,12 @@ class App(tk.Tk):
         ttk.Button(f5, text="Тест", command=self.tg_test).pack(side="left", padx=6)
         ttk.Checkbutton(g5, text="Все найденные формации (откат к EMA20 с подтверждением) — и те, где робот вошёл, и те, где нет",
                         variable=self.v_tg_form).grid(row=3, column=1, sticky="w")
+        ttk.Checkbutton(g5, text="Трендовые откаты к EMA20 (объём был в последние 3 дня)",
+                        variable=self.v_tg_trend).grid(row=4, column=1, sticky="w")
         ttk.Checkbutton(g5, text="Всплески объёма сразу при появлении (до отката; сообщений будет много)",
-                        variable=self.v_tg_imp).grid(row=4, column=1, sticky="w")
-        ttk.Checkbutton(g5, text="Входы и выходы робота", variable=self.v_tg_trades).grid(row=5, column=1, sticky="w")
-        ttk.Button(g5, text="Сохранить настройки", command=self.save).grid(row=6, column=1, sticky="w", pady=12)
+                        variable=self.v_tg_imp).grid(row=5, column=1, sticky="w")
+        ttk.Checkbutton(g5, text="Входы и выходы робота", variable=self.v_tg_trades).grid(row=6, column=1, sticky="w")
+        ttk.Button(g5, text="Сохранить настройки", command=self.save).grid(row=7, column=1, sticky="w", pady=12)
 
         # --- Настройки
         t4o = ttk.Frame(nb)
@@ -297,6 +301,8 @@ class App(tk.Tk):
         self.v_autostart = tk.BooleanVar(value=self.s.get("autostart", False))
         self.v_day = tk.BooleanVar(value=self.s.get("day_on", True))
         self.v_sound = tk.BooleanVar(value=self.s.get("sound_on", True))
+        self.v_trend_on = tk.BooleanVar(value=self.s.get("trend_on", True))
+        self.v_trend_trade = tk.BooleanVar(value=self.s.get("trend_trade", False))
         self.v_takes = tk.StringVar(value="два тейка" if self.s.get("two_takes", True) else "один тейк у хая")
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
         self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [15, 60])) for tf in (5, 15, 60)}
@@ -349,6 +355,12 @@ class App(tk.Tk):
         ttk.Label(f, text="Таймфреймы:").pack(side="left")
         for tf in (5, 15, 60):
             ttk.Checkbutton(f, text="1 час" if tf == 60 else f"{tf} мин", variable=self.v_spk_tf[tf]).pack(side="left", padx=(6, 0))
+        r += 1
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
+        ttk.Checkbutton(f, text="Искать трендовые откаты (импульс на объёме был в последние 3 дня, EMA10 над EMA20, касание EMA20 + подтверждение)",
+                        variable=self.v_trend_on).pack(anchor="w")
+        ttk.Checkbutton(f, text="…и торговать их (на истории в минусе: −0,1…−0,25% на сделку; по умолчанию только уведомление)",
+                        variable=self.v_trend_trade).pack(anchor="w")
         r += 1
         ttk.Label(g, text="Чем торговать:").grid(row=r, column=0, sticky="e", padx=(0, 6))
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
@@ -558,7 +570,8 @@ class App(tk.Tk):
                       leverage={v: k for k, v in self.LEV.items()}.get(self.v_lev.get(), "1"),
                       two_takes=self.v_takes.get() == "два тейка",
                       tg_token=self.v_tg_tok.get().strip(), tg_chat=self.v_tg_chat.get().strip(),
-                      tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get())
+                      tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get(),
+                      tg_trend=self.v_tg_trend.get(), trend_on=self.v_trend_on.get(), trend_trade=self.v_trend_trade.get())
         if self.s["token"]:
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         else:
@@ -738,7 +751,8 @@ class App(tk.Tk):
                  "trail_r": float(self.s.get("spike_trail", 1.0)), "max_pos": int(self.s.get("spike_max", 5)),
                  "share": float(self.s.get("spike_share", 10)) / 100,
                  "leverage": self.s.get("leverage", "1"),
-                 "two_takes": bool(self.s.get("two_takes", True))}
+                 "two_takes": bool(self.s.get("two_takes", True)),
+                 "trend_on": bool(self.s.get("trend_on", True)), "trend_trade": bool(self.s.get("trend_trade", False))}
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
                                    day_on=bool(self.s.get("day_on", True)), direction=self.s.get("direction", "both"), trade=trade,
                                    on_event=lambda kind, info: self.q.put(("call", self.on_trade, (kind, info))),
@@ -838,7 +852,7 @@ class App(tk.Tk):
         tok, chat = self.s.get("tg_token"), self.s.get("tg_chat")
         tglog = lambda m: self.q.put(("log", m + "\n"))
         if kind == "formation":
-            if self.s.get("tg_form", True):
+            if self.s.get("tg_trend" if info.get("trend") else "tg_form", True):
                 tg.send(tok, chat, tg.formation_text(info), tglog)
             return
         if kind == "impulse":
