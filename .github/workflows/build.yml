@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: write          # чистка старых запусков и кэша после сборки
 
 jobs:
   build:
@@ -58,14 +59,6 @@ jobs:
           Copy-Item README.md release/
           Compress-Archive -Path release/* -DestinationPath MoexScanner-windows.zip -Force
 
-      # Хранилище артефактов ограничено на весь аккаунт — не даём ему ломать сборку
-      - uses: actions/upload-artifact@v4
-        continue-on-error: true
-        with:
-          name: MoexScanner-windows
-          path: MoexScanner-windows.zip
-          retention-days: 3
-
       - name: Релиз «latest» (постоянная ссылка на последнюю сборку)
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         shell: pwsh
@@ -102,6 +95,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
+          cache-disabled: true      # кэш Gradle не копится на GitHub
 
       - uses: actions/setup-python@v5
         with:
@@ -132,3 +126,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload latest MoexRobot-android.apk --clobber
+
+      - name: Чистка GitHub — кэш и старые запуски сборки (остаются 3 последних)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R: ${{ github.repository }}
+        run: |
+          gh cache delete --all -R "$R" || true
+          for id in $(gh api "repos/$R/actions/runs?per_page=100" --jq '.workflow_runs[3:][].id'); do
+            gh api -X DELETE "repos/$R/actions/runs/$id" >/dev/null 2>&1 || true
+          done
+          for a in $(gh api "repos/$R/actions/artifacts?per_page=100" --jq '.artifacts[].id'); do
+            gh api -X DELETE "repos/$R/actions/artifacts/$a" >/dev/null 2>&1 || true
+          done
