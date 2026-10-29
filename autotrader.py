@@ -409,7 +409,12 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, ca
     return out
 
 
-LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct"]
+LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct", "time", "pnl_rub"]
+BAL_COLS = ["time", "value", "deposit"]
+
+
+def bal_log():
+    return os.path.join(sc.HERE, "balance.csv")                 # стоимость портфеля во времени (для результатов за период)
 
 
 def hm(m):
@@ -430,6 +435,8 @@ class SandboxBroker:
         if value < self.capital * 0.5:
             self.log(f"На счёте песочницы {value:,.0f} ₽ — пополняю на {self.capital:,.0f} ₽".replace(",", " "))
             self.ti.sandbox_pay_in(self.acc, self.capital)
+            sc.append_rows(bal_log(), BAL_COLS, [{"time": datetime.now(sc.MSK).strftime("%Y-%m-%d %H:%M"),
+                                                  "value": round(value + self.capital, 2), "deposit": self.capital}])
 
     def tickers(self):
         return sc.imoex_tickers()
@@ -537,6 +544,9 @@ class AutoTrader:
         self.seen_spikes = set()
         self.tickers = []
         self.last_scan = None
+        self.balance = None
+        self._bal_t = None
+        self._bal_logged = None
         self.close_on_stop = False
         self.st = self._load()
 
@@ -590,8 +600,36 @@ class AutoTrader:
     def _push(self):
         self.on_update({"status": self.status, "market": self.market, "scan": list(self.scan_rows),
                         "spikes": list(self.spikes[-50:]),
-                        "positions": [dict(p, last=self.prices.get(p["ticker"])) for p in self.positions],
-                        "last_scan": self.last_scan})
+                        "positions": [self._pos_view(p) for p in self.positions],
+                        "last_scan": self.last_scan, "balance": self.balance})
+
+    def _pos_view(self, p):
+        """Позиция для экрана: текущая цена и результат в ₽ (без комиссий)."""
+        last = self.prices.get(p["ticker"])
+        per_lot = p.get("per_lot") or (self._terms_cache.get(p["ticker"]) or (None, None))[1]
+        pnl = p["side"] * (last - p["entry"]) * p["lots"] * per_lot if last and per_lot else None
+        return dict(p, last=last, pnl_rub=round(pnl, 2) if pnl is not None else None)
+
+    def _balance(self, now):
+        """Стоимость портфеля раз в 5 минут; в файл — при изменении или раз в 30 минут."""
+        if not hasattr(self.b, "portfolio_value"):
+            return
+        if self._bal_t and (now - self._bal_t).total_seconds() < 300:
+            return
+        self._bal_t = now
+        try:
+            v = float(self.b.portfolio_value() or 0)
+        except sc.CertError:
+            raise
+        except Exception:
+            return
+        if v <= 0:
+            return
+        self.balance = v
+        if self._bal_logged is None or abs(v - self._bal_logged[1]) >= 0.01 and (now - self._bal_logged[0]).total_seconds() >= 600 \
+                or (now - self._bal_logged[0]).total_seconds() >= 1800:
+            sc.append_rows(bal_log(), BAL_COLS, [{"time": now.strftime("%Y-%m-%d %H:%M"), "value": round(v, 2), "deposit": ""}])
+            self._bal_logged = (now, v)
 
     # ------------------------------------------------------------------ главный цикл
     def run(self):
@@ -681,6 +719,7 @@ class AutoTrader:
     def _step(self, now):
         t = now.hour * 60 + now.minute
         secs = t * 60 + now.second
+        self._balance(now)
         # 1) сопровождение позиций: выход по времени, стоп, тейк
         if self.positions:
             today = now.date().isoformat()
@@ -1170,7 +1209,7 @@ class AutoTrader:
         if strat == "15" and int(self.sp.get("day_carry", 0) or 0) > 0:
             carry, carry_max = True, int(self.sp["day_carry"])
         pos = {"ticker": tk, "side": side, "lots": lots, "entry": entry, "stop": stop, "take": take1, "take2": take2,
-               "strat": strat, "R": abs(entry - stop), "took": False, "stage": 0, "peak": entry,
+               "strat": strat, "R": abs(entry - stop), "took": False, "per_lot": per_lot, "stage": 0, "peak": entry,
                "exit_min": exit_min or sc.EXIT_MIN, "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
                "date": self.clock().date().isoformat()}
         self.positions.append(pos)
@@ -1256,12 +1295,17 @@ class AutoTrader:
             self.positions.remove(p)
         self.st["results"].append([p.get("strat", "15"), res])
         self._save()
+        try:
+            pnl_rub = p["side"] * (exit_px - p["entry"]) * lots * self._terms(p["ticker"])[1]     # ₽ без комиссий
+        except Exception:
+            pnl_rub = None
         self.log(f"  {p['ticker']}: закрыто {lots} лот. ({why}) по ~{exit_px:.4g}, результат {res * 100:+.2f}%"
                  + (" [всплеск]" if p.get("strat") == "spike" else ""))
         sc.append_rows(sc.SPIKE_LOG if p.get("strat") == "spike" else sc.SANDBOX_LOG, LOG_COLS,
                        [{"date": self.st.get("date") or self.clock().date().isoformat(), "ticker": p["ticker"],
                          "side": "лонг" if p["side"] > 0 else "шорт", "lots": lots, "entry": round(p["entry"], 6),
-                         "exit": round(exit_px, 6), "reason": why, "result_pct": round(res * 100, 4)}])
+                         "exit": round(exit_px, 6), "reason": why, "result_pct": round(res * 100, 4),
+                         "time": self.clock().strftime("%Y-%m-%d %H:%M"), "pnl_rub": round(pnl_rub, 2) if pnl_rub is not None else ""}])
         self.on_event("close", {"ticker": p["ticker"], "why": why, "result": res, "lots": lots})
         self._push()
         return True

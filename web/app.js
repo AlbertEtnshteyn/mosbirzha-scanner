@@ -128,19 +128,34 @@ function renderState(st) {
   const P = st.positions || [];
   $("#posCount").textContent = P.length ? `(${P.length})` : "";
   $("#closeAllBtn").hidden = P.length < 2;
-  $("#positions").innerHTML = P.length ? P.map((p) => {
+  const posCard = (p) => {
     const res = p.last ? p.side * (p.last / p.entry - 1) * 100 : null;
     const take = p.take ? ((p.stage || 0) === 0 ? fmt(p.take) : (p.stage === 1 && p.take2 ? "т2 " + fmt(p.take2) : "трейл")) : "—";
     const strat = p.strat === "spike" ? "всплеск" + (p.took ? " (б/у)" : "") : "15:00";
     return `<div class="item ${p.side > 0 ? "l" : "s"}">
       <div class="hd"><span class="tk">${esc(p.ticker)} <span class="small ${p.side > 0 ? "up" : "down"}">${p.side > 0 ? "ЛОНГ" : "ШОРТ"}</span></span>
-        <span class="big ${cls(res)}" style="font-size:18px">${pct(res)}</span></div>
+        <span style="text-align:right"><span class="big ${cls(res)}" style="font-size:18px">${pct(res)}</span>
+        ${p.pnl_rub != null ? `<div class="small ${cls(p.pnl_rub)}">${rub(p.pnl_rub, true)}</div>` : ""}</span></div>
       <div class="meta">${strat} · ${p.lots} лот.${p.carried ? " · перенос " + p.carried : ""}</div>
       <div class="grid4"><div><span>вход</span><b>${fmt(p.entry)}</b></div><div><span>сейчас</span><b>${fmt(p.last)}</b></div>
         <div><span>стоп</span><b class="down">${fmt(p.stop)}</b></div><div><span>тейк</span><b class="up">${take}</b></div></div>
       <div class="acts"><button class="btn small" data-chart="${esc(p.ticker)}" data-tf="${p.tf || 15}">График</button>
         <button class="btn small danger" data-close="${esc(p.ticker)}">Закрыть</button></div></div>`;
-  }).join("") : `<div class="empty">Открытых позиций нет</div>`;
+  };
+  const PS = st.pos_summary || { by_strat: {}, total: {} };
+  const grpHead = (name, d) => `<div class="grp-h"><span>${name} · ${d.n} поз.</span>
+    <span>${d.avg_pct != null ? `<span class="${cls(d.avg_pct)}">${pct(d.avg_pct)} ср.</span> · ` : ""}<b class="${cls(d.pnl_rub)}">${d.known ? rub(d.pnl_rub, true) : "—"}</b></span></div>`;
+  let html = "";
+  for (const [k, kp, name] of [["всплеск", "spike", "Всплеск + EMA20"], ["15:00", "15", "Движение дня"]]) {
+    const G = P.filter((p) => (p.strat === "spike") === (kp === "spike"));
+    if (!G.length) continue;
+    html += grpHead(name, PS.by_strat[k] || { n: G.length }) + G.map(posCard).join("");
+  }
+  if (P.length) {
+    const T = PS.total || {};
+    html += `<div class="grp-h total"><span>Итого открытые · ${P.length} поз.</span><b class="${cls(T.pnl_rub)}">${T.known ? rub(T.pnl_rub, true) : "—"}</b></div>`;
+  }
+  $("#positions").innerHTML = html || `<div class="empty">Открытых позиций нет</div>`;
 
   // кандидаты «движения дня»
   const S = st.scan || [];
@@ -334,16 +349,53 @@ function hover(p) {
 }
 
 // ---------------------------------------------------------------- сделки и журнал
-let TRV = "robot";
+let TRV = "results", TRF = "";
+const rub = (v, sign) => v == null || isNaN(v) ? "—" : (sign && v > 0 ? "+" : "") + Math.round(v).toLocaleString("ru-RU").replace(/,/g, " ") + " ₽";
+let RES = null, RCH = null;
+async function loadResults() {
+  try { RES = await api("/api/results"); } catch (e) { return; }
+  const d = RES.periods.find((p) => p.kind === "day");
+  $("#balance").textContent = rub(RES.balance);
+  $("#balDay").innerHTML = d && d.change != null ? `сегодня <b class="${cls(d.change)}">${rub(d.change, true)} (${pct(d.change_pct)})</b>` : "";
+  if (TAB !== "trades" || TRV !== "results") return;
+  $("#resBal").textContent = rub(RES.balance);
+  $("#resTime").textContent = "на " + RES.time + " МСК";
+  $("#resTbl").innerHTML = `<tr><th>Период</th><th>Изменение</th><th>%</th><th>Сделок · в +</th><th>итог сделок</th></tr>` +
+    RES.periods.map((p) => `<tr><td>${esc(p.name)}<div class="muted" style="font-size:11px">с ${esc((p.from || "").split("-").reverse().join("."))}</div></td>
+      <td class="${cls(p.change)}">${rub(p.change, true)}</td><td class="${cls(p.change_pct)}">${pct(p.change_pct)}</td>
+      <td>${p.trades}${p.trades ? " · " + Math.round(p.wins / p.trades * 100) + "%" : ""}</td>
+      <td class="${cls(p.pnl_rub)}">${rub(p.pnl_rub, true)}</td></tr>` +
+      [["всплеск", "Всплеск + EMA20"], ["15:00", "Движение дня"]].map(([k, n]) => { const x = (p.by_strat || {})[k] || { n: 0 };
+        return `<tr class="sub"><td>↳ ${n}</td><td></td><td class="${cls(x.avg_pct)}">${x.n ? pct(x.avg_pct) + " ср." : ""}</td><td>${x.n}${x.n ? " · " + Math.round(x.wins / x.n * 100) + "%" : ""}</td><td class="${cls(x.pnl_rub)}">${rub(x.pnl_rub, true)}</td></tr>`; }).join("")).join("");
+  const el = $("#resChart");
+  if (!RCH) {
+    RCH = LightweightCharts.createChart(el, { width: el.clientWidth, height: 220, layout: { background: { color: "#131722" }, textColor: "#b2b5be", fontSize: 11 },
+      grid: { vertLines: { color: "#1f2433" }, horzLines: { color: "#1f2433" } }, rightPriceScale: { borderColor: "#283048" }, timeScale: { borderColor: "#283048" } });
+    RCH.s = RCH.addAreaSeries({ lineColor: "#2f7cf6", topColor: "rgba(47,124,246,.35)", bottomColor: "rgba(47,124,246,0)", lineWidth: 2,
+      priceFormat: { type: "price", precision: 0, minMove: 1 } });
+    new ResizeObserver(() => RCH.applyOptions({ width: el.clientWidth })).observe(el);
+  }
+  RCH.s.setData(RES.series.map((x) => ({ time: x.date, value: x.value })));
+  RCH.timeScale().fitContent();
+  el.hidden = RES.series.length < 2;
+}
 $$("#trSeg button").forEach((b) => (b.onclick = () => { TRV = b.dataset.v; $$("#trSeg button").forEach((x) => x.classList.toggle("on", x === b)); loadTrades(); }));
 async function loadTrades() {
   $("#trJournalFill").hidden = TRV !== "journal";
+  $("#resBox").hidden = TRV !== "results";
+  $("#trSum").hidden = $("#trList").hidden = TRV === "results";
+  if (TRV === "results") { loadResults(); return; }
   try {
     if (TRV === "robot") {
       const d = await api("/api/trades");
-      $("#trSum").innerHTML = d.n ? `Сделок: <b>${d.n}</b>, в плюсе ${d.wins} (${Math.round(d.wins / d.n * 100)}%), сумма результатов <b class="${cls(d.sum)}">${pct(d.sum)}</b>`
+      const line = (name, x, key) => `<tr class="${TRF === key ? "sel" : ""}" data-trf="${key}"><td>${name}</td><td>${x.n}</td><td>${x.n ? Math.round(x.wins / x.n * 100) + "%" : "—"}</td>
+        <td class="${cls(x.avg_pct)}">${pct(x.avg_pct)}</td><td class="${cls(x.pnl_rub)}">${rub(x.pnl_rub, true)}</td></tr>`;
+      $("#trSum").innerHTML = d.n ? `<table class="tbl"><tr><th>Стратегия</th><th>Сделок</th><th>в плюсе</th><th>средняя</th><th>итог</th></tr>
+        ${line("Всплеск + EMA20", d.by_strat["всплеск"], "всплеск")}${line("Движение дня", d.by_strat["15:00"], "15:00")}
+        ${line("<b>Всего</b>", d.total, "")}</table><div class="muted small">Нажмите на строку — в списке останутся сделки этой стратегии.</div>`
         : "Закрытых сделок робота пока нет.";
-      $("#trList").innerHTML = d.rows.map((r) => {
+      $$("#trSum tr[data-trf]").forEach((tr) => (tr.onclick = () => { TRF = tr.dataset.trf; loadTrades(); }));
+      $("#trList").innerHTML = d.rows.filter((r) => !TRF || r.strat === TRF).map((r) => {
         const v = +r.result_pct;
         return `<div class="item tap" data-chart="${esc(r.ticker)}" data-tf="15"><div class="hd"><span><b>${esc(r.ticker)}</b> <span class="muted small">${esc(r.strat)} · ${esc(r.side)}</span></span>
           <b class="${cls(v)}">${pct(v)}</b></div><div class="meta">${esc(r.date)} · ${esc(r.lots)} лот. · ${esc(r.entry)} → ${esc(r.exit)} · ${esc(r.reason)}</div></div>`;
@@ -497,6 +549,7 @@ function start() {
   if (!KEY) { showLogin(""); return; }
   $("#login").hidden = true; $("#app").hidden = false;
   poll(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) poll(); }, 3000);
+  loadResults(); setInterval(() => { if (!document.hidden) loadResults(); }, 60000);
   setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data && CH.tf <= 60) loadChart(true); }, 30000);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && KEY) poll(); });

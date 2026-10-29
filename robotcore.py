@@ -100,3 +100,123 @@ def ema(vals, span):
         e = v if e is None else e + k * (v - e)
         out.append(e)
     return out
+
+
+# ============================================================================ результаты торговли за период
+PERIODS = [("day", "День"), ("week", "Неделя"), ("month", "Месяц"), ("quarter", "Квартал"), ("year", "Год"), ("all", "Всё время")]
+
+
+def _read(path):
+    import csv
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def _num(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+STRAT_NAMES = {"всплеск": "Всплеск + EMA20", "15:00": "Движение дня", "spike": "Всплеск + EMA20", "15": "Движение дня"}
+
+
+def strat_summary(rows):
+    """Сводка по закрытым сделкам: число, в плюсе, итог ₽ (где известен), средний %."""
+    res = [x for x in (_num(t.get("result_pct")) for t in rows) if x is not None]
+    pnl = [x for x in (_num(t.get("pnl_rub")) for t in rows) if x is not None]
+    return {"n": len(res), "wins": sum(1 for x in res if x > 0), "pnl_rub": round(sum(pnl), 2) if pnl else None,
+            "avg_pct": round(sum(res) / len(res), 3) if res else None, "sum_pct": round(sum(res), 3) if res else None}
+
+
+def positions_summary(positions):
+    """Открытые позиции по стратегиям: число и текущий результат (₽ и %), плюс общий итог."""
+    out, tot = {}, {"n": 0, "pnl_rub": 0.0, "known": 0}
+    for p in positions:
+        k = "всплеск" if p.get("strat") == "spike" else "15:00"
+        d = out.setdefault(k, {"n": 0, "pnl_rub": 0.0, "known": 0, "pct": []})
+        d["n"] += 1
+        tot["n"] += 1
+        last = p.get("last")
+        if last and p.get("entry"):
+            d["pct"].append(p["side"] * (last / p["entry"] - 1) * 100)
+        if p.get("pnl_rub") is not None:
+            d["pnl_rub"] += p["pnl_rub"]; d["known"] += 1
+            tot["pnl_rub"] += p["pnl_rub"]; tot["known"] += 1
+    for d in out.values():
+        d["avg_pct"] = round(sum(d["pct"]) / len(d["pct"]), 3) if d["pct"] else None
+        d.pop("pct")
+    return {"by_strat": out, "total": tot}
+
+
+def period_start(kind, now):
+    d = now.date()
+    if kind == "day":
+        s = d
+    elif kind == "week":
+        s = d - timedelta(days=d.weekday())
+    elif kind == "month":
+        s = d.replace(day=1)
+    elif kind == "quarter":
+        s = d.replace(month=(d.month - 1) // 3 * 3 + 1, day=1)
+    elif kind == "year":
+        s = d.replace(month=1, day=1)
+    else:
+        s = None
+    return s
+
+
+def results(balance_now=None):
+    """Баланс и результаты за день / неделю / месяц / квартал / год / всё время.
+    Изменение баланса — по стоимости портфеля (пополнения песочницы вычитаются);
+    сделки — по журналам закрытых сделок обеих стратегий."""
+    now = datetime.now(sc.MSK)
+    bal = []
+    for r in _read(at.bal_log()):
+        v = _num(r.get("value"))
+        if v is None:
+            continue
+        try:
+            t = datetime.strptime(r["time"], "%Y-%m-%d %H:%M")
+        except Exception:
+            continue
+        bal.append((t, v, _num(r.get("deposit")) or 0.0))
+    bal.sort(key=lambda x: x[0])
+    cur = balance_now if balance_now else (bal[-1][1] if bal else None)
+    trades = [dict(r, strat="всплеск") for r in _read(sc.SPIKE_LOG)] + [dict(r, strat="15:00") for r in _read(sc.SANDBOX_LOG)]
+    out = []
+    for kind, name in PERIODS:
+        start = period_start(kind, now)
+        row = {"kind": kind, "name": name, "from": start.isoformat() if start else (bal[0][0].date().isoformat() if bal else "")}
+        if bal and cur:
+            st_dt = datetime.combine(start, datetime.min.time()) if start else bal[0][0]
+            before = [b for b in bal if b[0] < st_dt]
+            if before:
+                base = before[-1][1]
+            else:
+                first = next((b for b in bal if b[0] >= st_dt), None)
+                base = (first[1] - first[2]) if first and first[2] else (first[1] if first else None)
+            dep = sum(b[2] for b in bal if b[0] >= st_dt and b[2])
+            if base is not None and base + dep > 0:
+                ch = cur - base - dep
+                row.update(start_balance=round(base if base > 0 else base + dep, 2), change=round(ch, 2), change_pct=round(ch / (base + dep) * 100, 3), deposits=dep)
+        tr = [t for t in trades if (not start) or t.get("date", "") >= start.isoformat()]
+        res = [_num(t.get("result_pct")) for t in tr]
+        res = [x for x in res if x is not None]
+        pnl = [_num(t.get("pnl_rub")) for t in tr]
+        pnl = [x for x in pnl if x is not None]
+        row.update(trades=len(res), wins=sum(1 for x in res if x > 0), avg_pct=round(sum(res) / len(res), 3) if res else None,
+                   pnl_rub=round(sum(pnl), 2) if pnl else None, pnl_known=len(pnl),
+                   by_strat={s: strat_summary([t for t in tr if t["strat"] == s]) for s in ("всплеск", "15:00")})
+        out.append(row)
+    # баланс по дням (последнее значение дня) — для графика
+    daily = {}
+    for t, v, _ in bal:
+        daily[t.date().isoformat()] = v
+    if cur:
+        daily[now.date().isoformat()] = cur
+    return {"balance": cur, "time": now.strftime("%d.%m.%Y %H:%M"), "periods": out,
+            "series": [{"date": d, "value": round(v, 2)} for d, v in sorted(daily.items())]}

@@ -101,7 +101,7 @@ class RemoteRobot:
                     else f"на сервере {self.where}: {st.get('status') or 'робот не запущен'}"
                 self.on_update({"status": status, "market": st.get("market"), "scan": st.get("scan") or [],
                                 "spikes": list(reversed(st.get("spikes") or [])), "positions": self.positions,
-                                "last_scan": ls, "threshold": st.get("threshold"), "remote": True})
+                                "last_scan": ls, "threshold": st.get("threshold"), "balance": st.get("balance"), "remote": True})
             except Exception as e:
                 if self.ok is not False:
                     self.log(f"Нет связи с сервером {self.where}: {e}. Повторяю каждые 10 секунд "
@@ -148,6 +148,9 @@ class RemoteRobot:
             raise RuntimeError("программа на сервере старая и не умеет обновляться так — обновите её с паролем")
         r.raise_for_status()
         return r.json().get("version", "")
+
+    def results(self):
+        return self.c.get("/api/results")
 
     def trades(self):
         return self.c.get("/api/trades")

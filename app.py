@@ -219,15 +219,43 @@ class App(tk.Tk):
         ttk.Label(pb, text="двойной щелчок по бумаге — график", foreground="#777").pack(side="left", padx=8)
         self.pos_tree = self._tree(rf, [("ticker", "Бумага", 60), ("strat", "Стратегия", 70), ("side", "Сторона", 55), ("lots", "Лотов", 55),
                                         ("entry", "Вход", 65), ("stop", "Стоп", 65), ("take", "Тейк", 75), ("last", "Сейчас", 65),
-                                        ("res", "Итог", 60)])
+                                        ("res", "Итог", 60), ("rub", "Итог, ₽", 80)])
+        self.pos_tree.tag_configure("hdr", background="#e8ecf3", font=("Segoe UI", 9, "bold"))
         for tv, col in ((self.scan_tree, 0), (self.spk_tree, 2), (self.pos_tree, 0)):
             tv.bind("<Double-1>", lambda e, tv=tv, col=col: self._chart_from(tv, col))
             tv.bind("<Button-3>", lambda e, tv=tv, col=col: self._row_menu(e, tv, col))
         hf = ttk.LabelFrame(vp, text="Закрытые сделки", padding=4)
         vp.add(hf, weight=2)
+        self.sb_sum = ttk.Label(hf, text="", justify="left")
+        self.sb_sum.pack(anchor="w")
         self.sb_tree = self._tree(hf, [("date", "Дата", 90), ("strat", "Стратегия", 90), ("ticker", "Бумага", 70), ("side", "Сторона", 70), ("lots", "Лотов", 60),
                                        ("entry", "Вход", 80), ("exit", "Выход", 80), ("reason", "Причина", 120), ("res", "Результат", 90)])
         nb.select(t3)
+
+        # --- Результаты: баланс и итоги за периоды
+        t7 = ttk.Frame(nb, padding=12)
+        nb.add(t7, text="Результаты")
+        top7 = ttk.Frame(t7); top7.pack(fill="x")
+        self.res_bal = ttk.Label(top7, text="Баланс: —", style="Big.TLabel")
+        self.res_bal.pack(side="left")
+        ttk.Button(top7, text="Обновить", command=self.refresh_results).pack(side="right")
+        self.res_tree = self._tree(t7, [("period", "Период", 180), ("from", "С", 90), ("start", "Баланс на начало", 130),
+                                        ("chg", "Изменение, ₽", 120), ("pct", "Изменение, %", 100), ("n", "Сделок", 70),
+                                        ("win", "В плюсе", 70), ("pnl", "Итог сделок, ₽", 120), ("avg", "Средняя сделка", 110)])
+        self.res_tree.tag_configure("sub", foreground="#5f6673")
+        self.res_tree.master.pack_configure(fill="x", expand=False)
+        self.res_tree.configure(height=12)
+        ttk.Label(t7, text="Изменение баланса", style="Big.TLabel").pack(anchor="w", pady=(10, 2))
+        self.res_cv = tk.Canvas(t7, height=260, bg="#131722", highlightthickness=0)
+        self.res_cv.pack(fill="both", expand=True)
+        self.res_cv.bind("<Configure>", lambda _: self._draw_balance())
+        ttk.Label(t7, foreground="#555", wraplength=1000, justify="left", text=(
+            "Изменение баланса — по стоимости портфеля демо-счёта (пополнения вычитаются), с учётом открытых позиций; "
+            "баланс записывается каждые несколько минут, пока работает робот. Сделки и «итог сделок, ₽» — по закрытым сделкам "
+            "обеих стратегий (₽ считаются со сделок, закрытых этой версией, без комиссий).")).pack(anchor="w", pady=4)
+        self._res = None
+        nb.bind("<<NotebookTabChanged>>", lambda _: self.refresh_results() if nb.select() == str(t7) else None)
+        self.after(5000, self._results_tick)
 
         # --- Telegram
         t5 = ttk.Frame(nb, padding=14)
@@ -579,7 +607,7 @@ class App(tk.Tk):
         tv = ttk.Treeview(fr, columns=[c[0] for c in cols], show="headings")
         for key, title, w in cols:
             tv.heading(key, text=title)
-            tv.column(key, width=w, anchor="w" if key in ("ticker", "side", "reason", "date") else "e")
+            tv.column(key, width=w, anchor="w" if key in ("ticker", "side", "reason", "date", "period", "from") else "e")
         sb = ttk.Scrollbar(fr, orient="vertical", command=tv.yview)
         tv.configure(yscrollcommand=sb.set)
         tv.pack(side="left", fill="both", expand=True)
@@ -917,7 +945,9 @@ class App(tk.Tk):
 
     def show_robot(self, snap):
         if self.robot_running():
-            self.robot_lbl.configure(text=f"Робот: {snap['status']}")
+            bal = snap.get("balance")
+            self.robot_lbl.configure(text=f"Робот: {snap['status']}"
+                                     + (f" · баланс {bal:,.0f} ₽".replace(",", " ") if bal else ""))
             self._robot_buttons()
         mk = snap.get("market")
         ls = snap.get("last_scan")
@@ -939,15 +969,30 @@ class App(tk.Tk):
             self.spk_tree.insert("", "end", tags=(("pos" if body > 0 else "neg"),),
                                  values=(tm, sig_t, tkr, tfn, f"{val / 1e6:.0f}", f"{mult:.1f}", f"{body * 100:+.2f}%", d, why))
         self.pos_tree.delete(*self.pos_tree.get_children())
-        for p in snap["positions"]:
-            last = p.get("last")
-            res = p["side"] * (last / p["entry"] - 1) if last else None
-            strat = "всплеск" + (" (б/у)" if p.get("took") else "") if p.get("strat") == "spike" else "15:00"
-            self.pos_tree.insert("", "end", tags=(("pos" if res > 0 else "neg"),) if res is not None else (), values=(
-                p["ticker"], strat, "лонг" if p["side"] > 0 else "шорт", p["lots"], f"{p['entry']:.4g}", f"{p['stop']:.4g}",
-                (f"{p['take']:.4g}" if p.get("stage", 0) == 0 else (f"т2 {p['take2']:.4g}" if p.get("stage") == 1 and p.get("take2") else "трейл"))
-                if p.get("take") else "—",
-                f"{last:.4g}" if last else "—", f"{res * 100:+.2f}%" if res is not None else "—"))
+        money = lambda v: "—" if v is None else (("+" if v > 0 else "") + f"{v:,.0f}").replace(",", " ")
+        PS = rc.positions_summary(snap["positions"])
+        groups = [("всплеск", "Всплеск + EMA20", [p for p in snap["positions"] if p.get("strat") == "spike"]),
+                  ("15:00", "Движение дня", [p for p in snap["positions"] if p.get("strat") != "spike"])]
+        for key, name, G in groups:
+            if not G:
+                continue
+            d = PS["by_strat"].get(key, {})
+            self.pos_tree.insert("", "end", tags=("hdr",), values=(
+                f"▸ {name}", f"{len(G)} поз.", "", "", "", "", "", "",
+                f"{d['avg_pct']:+.2f}%" if d.get("avg_pct") is not None else "", money(d.get("pnl_rub")) if d.get("known") else "—"))
+            for p in G:
+                last = p.get("last")
+                res = p["side"] * (last / p["entry"] - 1) if last else None
+                strat = "всплеск" + (" (б/у)" if p.get("took") else "") if p.get("strat") == "spike" else "15:00"
+                self.pos_tree.insert("", "end", tags=(("pos" if res > 0 else "neg"),) if res is not None else (), values=(
+                    p["ticker"], strat, "лонг" if p["side"] > 0 else "шорт", p["lots"], f"{p['entry']:.4g}", f"{p['stop']:.4g}",
+                    (f"{p['take']:.4g}" if p.get("stage", 0) == 0 else (f"т2 {p['take2']:.4g}" if p.get("stage") == 1 and p.get("take2") else "трейл"))
+                    if p.get("take") else "—",
+                    f"{last:.4g}" if last else "—", f"{res * 100:+.2f}%" if res is not None else "—", money(p.get("pnl_rub"))))
+        if snap["positions"]:
+            T = PS["total"]
+            self.pos_tree.insert("", "end", tags=("hdr",), values=(
+                "ИТОГО", f"{T['n']} поз.", "", "", "", "", "", "", "", money(T["pnl_rub"]) if T["known"] else "—"))
         if len(snap["positions"]) != getattr(self, "_npos", None):
             self._npos = len(snap["positions"])
             self.refresh_sandbox()
@@ -1066,6 +1111,74 @@ class App(tk.Tk):
                 self.restart_robot()                       # окно программы — пульт робота на сервере
         self.submit(f"Установка сервера на {a[0]}", job, done)
 
+    # --- результаты
+    def _results_tick(self):
+        self.refresh_results()
+        self.after(60000, self._results_tick)
+
+    def refresh_results(self):
+        rr = self.robot if self.robot_running() else None
+
+        def job():
+            try:
+                if rr is not None and hasattr(rr, "results"):
+                    data = rr.results()                       # с сервера
+                else:
+                    data = rc.results(getattr(rr, "balance", None))
+                self.q.put(("call", self._show_results, data))
+            except Exception as e:
+                self.q.put(("log", f"Результаты не получены: {e}\n"))
+        threading.Thread(target=job, daemon=True).start()
+
+    def _show_results(self, data):
+        self._res = data
+        fmt = lambda v, sign=False: "—" if v is None else ((("+" if sign and v > 0 else "") + f"{v:,.0f}").replace(",", " "))
+        bal = data.get("balance")
+        self.res_bal.configure(text=f"Баланс: {fmt(bal)} ₽ (на {data.get('time', '')} МСК)" if bal else "Баланс: появится после запуска робота")
+        self.res_tree.delete(*self.res_tree.get_children())
+        for p in data.get("periods", []):
+            ch = p.get("change")
+            bs = p.get("by_strat", {})
+            self.res_tree.insert("", "end", tags=(("pos" if ch > 0 else "neg"),) if ch else (), values=(
+                p["name"], ".".join(reversed((p.get("from") or "").split("-"))), fmt(p.get("start_balance")),
+                fmt(ch, True), f"{p['change_pct']:+.2f}%" if p.get("change_pct") is not None else "—",
+                p.get("trades", 0), f"{p['wins'] / p['trades'] * 100:.0f}%" if p.get("trades") else "—",
+                fmt(p.get("pnl_rub"), True), f"{p['avg_pct']:+.2f}%" if p.get("avg_pct") is not None else "—"))
+            for k, n in (("всплеск", "Всплеск + EMA20"), ("15:00", "Движение дня")):
+                x = bs.get(k) or {"n": 0}
+                self.res_tree.insert("", "end", tags=("sub",), values=(
+                    f"   ↳ {n}", "", "", "", "", x.get("n", 0),
+                    f"{x['wins'] / x['n'] * 100:.0f}%" if x.get("n") else "—", fmt(x.get("pnl_rub"), True),
+                    f"{x['avg_pct']:+.2f}%" if x.get("avg_pct") is not None else "—"))
+        self._draw_balance()
+
+    def _draw_balance(self):
+        cv = self.res_cv
+        cv.delete("all")
+        ser = (self._res or {}).get("series", [])
+        W, H = cv.winfo_width(), cv.winfo_height()
+        if len(ser) < 2 or W < 50:
+            cv.create_text(W / 2, H / 2, text="График появится, когда накопится баланс хотя бы за 2 дня", fill="#8b93a7")
+            return
+        vals = [x["value"] for x in ser]
+        lo, hi = min(vals), max(vals)
+        pad = (hi - lo) * 0.1 or hi * 0.01
+        lo, hi = lo - pad, hi + pad
+        L, R, T, B = 10, 90, 10, 24
+        x = lambda i: L + (W - L - R) * i / (len(vals) - 1)
+        y = lambda v: T + (H - T - B) * (hi - v) / (hi - lo)
+        for k in range(5):
+            v = lo + (hi - lo) * k / 4
+            cv.create_line(L, y(v), W - R, y(v), fill="#1f2433")
+            cv.create_text(W - R + 6, y(v), text=f"{v:,.0f}".replace(",", " "), fill="#b2b5be", anchor="w", font=("Consolas", 9))
+        step = max(1, len(vals) // 8)
+        for i in range(0, len(vals), step):
+            cv.create_text(x(i), H - 10, text=".".join(reversed(ser[i]["date"].split("-")[1:])), fill="#b2b5be", font=("Consolas", 8))
+        col = "#26a69a" if vals[-1] >= vals[0] else "#ef5350"
+        pts = [c for i, v in enumerate(vals) for c in (x(i), y(v))]
+        cv.create_polygon(*pts, x(len(vals) - 1), H - B, x(0), H - B, fill="#16303a" if col == "#26a69a" else "#3a1c22", outline="")
+        cv.create_line(*pts, fill=col, width=2)
+
     def server_update_quick(self):
         """Обновить программу на сервере по коду подключения (без пароля от VPS)."""
         if not (self.remote_mode() and self.robot_running() and hasattr(self.robot, "update_server")):
@@ -1137,7 +1250,9 @@ class App(tk.Tk):
 
     def _sel_ticker(self, tv, col=0):
         sel = tv.selection()
-        return tv.item(sel[0], "values")[col] if sel else None
+        if not sel or "hdr" in tv.item(sel[0], "tags"):
+            return None
+        return tv.item(sel[0], "values")[col]
 
     def close_selected(self):
         tkr = self._sel_ticker(self.pos_tree)
@@ -1173,7 +1288,7 @@ class App(tk.Tk):
 
     def _row_menu(self, e, tv, col):
         row = tv.identify_row(e.y)
-        if not row:
+        if not row or "hdr" in tv.item(row, "tags"):
             return
         tv.selection_set(row)
         tkr = tv.item(row, "values")[col]
@@ -1229,6 +1344,17 @@ class App(tk.Tk):
 
     def _fill_sandbox(self, rows):
         self.sb_tree.delete(*self.sb_tree.get_children())
+        money = lambda v: "—" if v is None else (("+" if v > 0 else "") + f"{v:,.0f} ₽").replace(",", " ")
+
+        def line(name, x):
+            if not x["n"]:
+                return f"{name}: сделок нет"
+            return (f"{name}: сделок {x['n']}, в плюсе {x['wins'] / x['n'] * 100:.0f}%, средняя {x['avg_pct']:+.2f}%, "
+                    f"итог {money(x['pnl_rub'])}")
+        self.sb_sum.configure(text="\n".join([
+            line("Всплеск + EMA20", rc.strat_summary([r for r in rows if r.get("strat") == "всплеск"])),
+            line("Движение дня", rc.strat_summary([r for r in rows if r.get("strat") == "15:00"])),
+            line("ВСЕГО", rc.strat_summary(rows))]))
         for r in rows:
             res = float(r["result_pct"])
             self.sb_tree.insert("", "end", tags=("pos" if res > 0 else "neg",), values=(

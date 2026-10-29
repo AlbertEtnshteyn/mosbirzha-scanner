@@ -723,6 +723,19 @@ def read_journal_dates():
 
 def append_rows(path, cols, rows):
     new = not os.path.exists(path)
+    if not new:                                   # в журнал добавились колонки — переписать старый файл с новой шапкой
+        with open(path, encoding="utf-8") as f:
+            head = f.readline().strip().split(",")
+        if head != cols and set(head) <= set(cols):
+            with open(path, encoding="utf-8") as f:
+                old_rows = list(csv.DictReader(f))
+            tmp = path + ".tmp"
+            with open(tmp, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=cols)
+                w.writeheader()
+                for r in old_rows:
+                    w.writerow({k: r.get(k, "") for k in cols})
+            os.replace(tmp, path)
     with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         if new:

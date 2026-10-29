@@ -36,6 +36,9 @@
           <div>
             <div class="label">Рынок (индекс с открытия)</div>
             <div id="market" class="big">—</div>
+            <div class="label" style="margin-top:8px">Баланс</div>
+            <div id="balance" class="mono" style="font-weight:700">—</div>
+            <div id="balDay" class="small"></div>
           </div>
           <button class="btn start" id="startBtn">Старт</button>
         </div>
@@ -86,7 +89,14 @@
     <!-- Сделки -->
     <section id="tab-trades" class="tab" hidden>
       <div class="seg wide" id="trSeg">
-        <button data-v="robot" class="on">Сделки робота</button><button data-v="journal">Журнал «движения дня»</button>
+        <button data-v="results" class="on">Результаты</button><button data-v="robot">Сделки</button><button data-v="journal">Журнал 15:00</button>
+      </div>
+      <div id="resBox">
+        <div class="card"><div class="label">Баланс демо-счёта</div><div id="resBal" class="big">—</div><div id="resTime" class="muted small"></div></div>
+        <div id="resChart" style="height:220px;border-radius:12px;overflow:hidden;border:1px solid var(--line)"></div>
+        <div style="overflow-x:auto"><table class="tbl" id="resTbl"></table></div>
+        <p class="muted small">Изменение баланса — по стоимости портфеля песочницы (пополнения счёта вычитаются), с учётом открытых позиций.
+          Сделки и «итог сделок, ₽» — по закрытым сделкам обеих стратегий (₽ считаются со сделок этой версии, без комиссий).</p>
       </div>
       <div id="trSum" class="card small"></div>
       <div id="trJournalFill" class="row" hidden>

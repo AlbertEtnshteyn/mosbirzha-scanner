@@ -280,7 +280,8 @@ class Robot:
                 "market": snap.get("market"), "last_scan": snap.get("last_scan"),
                 "positions": snap.get("positions", []) if r else [],
                 "spikes": list(reversed(snap.get("spikes", []))), "scan": snap.get("scan", [])[:60],
-                "threshold": sc.THRESHOLD, "ev_seq": self.ev_seq}
+                "threshold": sc.THRESHOLD, "ev_seq": self.ev_seq, "balance": snap.get("balance"),
+                "pos_summary": rc.positions_summary(snap.get("positions", []) if r else [])}
 
 
 ROBOT = None
@@ -300,7 +301,9 @@ def closed_trades():
     rows.sort(key=lambda r: r.get("date", ""))
     out = list(reversed(rows))
     res = [float(r.get("result_pct") or 0) for r in out]
-    return {"rows": out[:400], "n": len(res), "wins": sum(1 for x in res if x > 0), "sum": sum(res)}
+    return {"rows": out[:400], "n": len(res), "wins": sum(1 for x in res if x > 0), "sum": sum(res),
+            "by_strat": {k: rc.strat_summary([r for r in out if r["strat"] == k]) for k in ("всплеск", "15:00")},
+            "total": rc.strat_summary(out)}
 
 
 def journal():
@@ -498,6 +501,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, st)
             if u.path == "/api/trades":
                 return self._send(200, closed_trades())
+            if u.path == "/api/results":
+                return self._send(200, rc.results((ROBOT.snap or {}).get("balance")))
             if u.path == "/api/journal":
                 return self._send(200, journal())
             if u.path == "/api/settings":
