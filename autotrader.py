@@ -549,6 +549,7 @@ class AutoTrader:
         self._bal_logged = None
         self.close_on_stop = False
         self.st = self._load()
+        self._restore_found()
 
     # ------------------------------------------------------------------ состояние
     def _load(self):
@@ -565,7 +566,29 @@ class AutoTrader:
     def _fresh(day):
         return {"date": day, "entered": False, "done": False, "positions": [], "traded": [], "spike_traded": [], "results": []}
 
+    def _restore_found(self):
+        """Найденные сегодня всплески и формации переживают перезапуск программы/сервера (и не шлются в Telegram повторно)."""
+        from datetime import date as _date
+        if self.st.get("date") != self.clock().date().isoformat():
+            return
+        try:
+            self.spikes = [list(r) for r in self.st.get("found_spikes", [])]
+            self.seen_spikes = {tuple(k) for k in self.st.get("found_seen", [])}
+            for k, w in self.st.get("found_waits", []):
+                w = dict(w)
+                w["date"] = _date.fromisoformat(w["date"])
+                self.waits[tuple(k)] = w
+        except Exception:
+            self.spikes, self.seen_spikes, self.waits = [], set(), {}
+        self._saved_found = len(self.spikes), len(self.seen_spikes)
+
+    def _store_found(self):
+        self.st["found_spikes"] = self.spikes[-300:]
+        self.st["found_seen"] = [list(k) for k in self.seen_spikes]
+        self.st["found_waits"] = [[list(k), dict(w, date=w["date"].isoformat())] for k, w in self.waits.items()]
+
     def _save(self):
+        self._store_found()
         tmp = self.state_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.st, f, ensure_ascii=False, indent=1)
@@ -598,6 +621,14 @@ class AutoTrader:
         self._push()
 
     def _push(self):
+        if (len(self.spikes), len(self.seen_spikes)) != getattr(self, "_saved_found", None) or \
+                any(r[6] != getattr(self, "_last_status", {}).get(i) for i, r in enumerate(self.spikes[-50:])):
+            self._saved_found = len(self.spikes), len(self.seen_spikes)
+            self._last_status = {i: r[6] for i, r in enumerate(self.spikes[-50:])}
+            try:
+                self._save()
+            except Exception:
+                pass
         self.on_update({"status": self.status, "market": self.market, "scan": list(self.scan_rows),
                         "spikes": list(self.spikes[-50:]),
                         "positions": [self._pos_view(p) for p in self.positions],
