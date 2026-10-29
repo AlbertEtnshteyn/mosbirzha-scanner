@@ -416,6 +416,7 @@ function renderSettings(s) {
   </div>
   <div class="grp"><h3>Движение дня</h3>
     ${chk("day_on", "Торговать «движение дня» (вход в заданное время)")}
+    ${sel("day_carry", "Переносить позиции (выход в 17:00 последнего дня, стоп 3% действует всё время)", [[0, "нет — выход в 17:00"], [1, "на 1 день"], [2, "на 2 дня"], [3, "на 3 дня"]])}
     ${inp("threshold", "Порог движения, %", "number", 'step="0.1" inputmode="decimal"')}
     ${inp("entry", "Время входа (МСК)", "time")}
     ${chk("rescan", "Добирать новые сигналы до 16:30")}
@@ -469,7 +470,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };

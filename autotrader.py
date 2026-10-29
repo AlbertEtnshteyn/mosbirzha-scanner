@@ -44,7 +44,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "max_pos": 5, "share": 0.10,
+                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "max_pos": 5, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -566,6 +566,8 @@ class AutoTrader:
         return self.st["positions"]
 
     def _carry_ok(self, p):
+        if p.get("strat") == "15":                  # «движение дня»: перенос на заданное число дней (стоп 3% действует всё время)
+            return bool(p.get("carry")) and p.get("carried", 0) < p.get("carry_max", 0)
         if p.get("strat") != "spike" or not p.get("carry"):
             return False
         if self.sp.get("carry_all", True):
@@ -1164,9 +1166,12 @@ class AutoTrader:
             take1, take2 = (entry + 0.5 * (t1 - entry), t1) if t1 else (None, None)   # тейк1 — полпути до хая, тейк2 — хай
         else:
             take1, take2 = t1, None                                                # один тейк у хая импульса
+        carry_max = 0
+        if strat == "15" and int(self.sp.get("day_carry", 0) or 0) > 0:
+            carry, carry_max = True, int(self.sp["day_carry"])
         pos = {"ticker": tk, "side": side, "lots": lots, "entry": entry, "stop": stop, "take": take1, "take2": take2,
                "strat": strat, "R": abs(entry - stop), "took": False, "stage": 0, "peak": entry,
-               "exit_min": exit_min or sc.EXIT_MIN, "time": self.clock().strftime("%H:%M:%S"), "carry": carry,
+               "exit_min": exit_min or sc.EXIT_MIN, "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
                "date": self.clock().date().isoformat()}
         self.positions.append(pos)
         self._save()
@@ -1174,7 +1179,7 @@ class AutoTrader:
                  + (f", тейк1 {pos['take']:.4g} ({self.sp['half'] * 100:.0f}%, затем б/у и трейлинг)"
                     + (f", тейк2 {pos['take2']:.4g} (50% остатка)" if pos["take2"] else "")
                     if pos["take"]
-                    else f", выход {hm(pos['exit_min'])}")
+                    else f", выход {hm(pos['exit_min'])}" + (f" через {carry_max} дн. (перенос)" if carry_max else ""))
                  + (" [всплеск]" if strat == "spike" else ""))
         self.on_event("open", dict(pos))
         self._push()

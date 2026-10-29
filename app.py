@@ -324,6 +324,8 @@ class App(tk.Tk):
         self.v_rescan = tk.BooleanVar(value=self.s.get("rescan", False))
         self.v_autostart = tk.BooleanVar(value=self.s.get("autostart", False))
         self.v_day = tk.BooleanVar(value=self.s.get("day_on", True))
+        self.DAYC = {0: "нет — выход в 17:00", 1: "на 1 день", 2: "на 2 дня", 3: "на 3 дня"}
+        self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_sound = tk.BooleanVar(value=self.s.get("sound_on", True))
         self.v_trend_on = tk.BooleanVar(value=self.s.get("trend_on", True))
         self.v_trend_trade = tk.BooleanVar(value=self.s.get("trend_trade", False))
@@ -477,6 +479,11 @@ class App(tk.Tk):
         ttk.Label(g, text="2. Движение дня (отдельная стратегия)", font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
         ttk.Checkbutton(g, text="Робот торгует и по этой стратегии — вход в одно заданное время дня", variable=self.v_day).grid(row=r, column=1, sticky="w")
         r += 1
+        fdc = ttk.Frame(g); fdc.grid(row=r, column=1, sticky="w", pady=2)
+        ttk.Label(fdc, text="Переносить позиции:").pack(side="left")
+        ttk.Combobox(fdc, textvariable=self.v_dayc, width=20, state="readonly", values=list(self.DAYC.values())).pack(side="left", padx=6)
+        ttk.Label(fdc, text="выход в 17:00 последнего дня, стоп 3% действует всё время", foreground="#555").pack(side="left")
+        r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
         ttk.Label(f, text="Порог движения акции от открытия, %:").pack(side="left")
         ttk.Combobox(f, textvariable=self.v_thr, width=6, state="readonly",
@@ -616,7 +623,8 @@ class App(tk.Tk):
         self.s.update(threshold=float(self.v_thr.get()), entry=self.v_entry.get(), capital=cap,
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
-                      rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(), sound_on=self.v_sound.get(),
+                      rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(),
+                      day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0), sound_on=self.v_sound.get(),
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
                       direction={v: k for k, v in self.DIRS.items()}.get(self.v_dir.get(), "both"),
                       spike_markets=[k for k, _ in at.MARKETS if self.v_mk[k].get()] or ["imoex"], spike_half=int(self.v_spk_half.get()),
