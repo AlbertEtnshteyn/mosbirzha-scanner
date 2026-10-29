@@ -12,7 +12,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "auto_signals": True, "auto_journal": True, "remember_token": False, "token": "",
             "rescan": False, "autostart": False, "day_on": True, "sound_on": True,
             "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "leverage": "1",
-            "spike_half": 50, "spike_trail": 1.0, "spike_max": 5, "spike_share": 10, "two_takes": True,
+            "spike_half": 50, "spike_trail": 1.0, "spike_max": 0, "spike_share": 10, "two_takes": True,
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False,
             "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0}
 
@@ -24,7 +24,9 @@ def load_settings(path=SETTINGS):
     try:
         with open(path, encoding="utf-8") as f:
             s.update(json.load(f))
-        s.pop("all_hours", None)                 # старое окно 07:00–23:40 заменено выбором 9–19 / 10–18
+        s.pop("all_hours", None)
+        if not s.get("max_v2"):                  # 29.10: число позиций по формации — без ограничения (по просьбе пользователя)
+            s["spike_max"], s["max_v2"] = 0, True
     except Exception:
         pass
     return s
@@ -44,7 +46,7 @@ def spike_cfg(s):
     """Параметры стратегии «всплеск объёма + откат к EMA20» из настроек."""
     return {"on": bool(s.get("spike_on")), "tfs": list(s.get("spike_tfs", [15, 60])),
             "markets": list(s.get("spike_markets", ["all_shares"])), "half": int(s.get("spike_half", 50)) / 100,
-            "trail_r": float(s.get("spike_trail", 1.0)), "max_pos": int(s.get("spike_max", 5)),
+            "trail_r": float(s.get("spike_trail", 1.0)), "max_pos": int(s.get("spike_max", 0) or 0),
             "share": float(s.get("spike_share", 10)) / 100,
             "leverage": s.get("leverage", "1"),
             "two_takes": bool(s.get("two_takes", True)),

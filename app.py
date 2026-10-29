@@ -370,7 +370,7 @@ class App(tk.Tk):
         self.v_mk = {k: tk.BooleanVar(value=k in self.s.get("spike_markets", ["all_shares"])) for k, _ in at.MARKETS}
         self.v_spk_half = tk.StringVar(value=str(self.s.get("spike_half", 50)))
         self.v_spk_trail = tk.StringVar(value=f"{self.s.get('spike_trail', 1.0):g}")
-        self.v_spk_max = tk.StringVar(value=str(self.s.get("spike_max", 5)))
+        self.v_spk_max = tk.StringVar(value=str(self.s.get("spike_max", 0) or "без ограничения"))
         self.v_spk_share = tk.StringVar(value=f"{self.s.get('spike_share', 10):g}")
         g = ttk.Frame(t4)
         g.pack(anchor="nw", fill="x")
@@ -463,7 +463,8 @@ class App(tk.Tk):
         ttk.Label(f, text="Трейлинг, R (расстояние до стопа):").pack(side="left")
         ttk.Combobox(f, textvariable=self.v_spk_trail, width=5, state="readonly", values=["0.5", "1", "1.5", "2"]).pack(side="left", padx=(4, 12))
         ttk.Label(f, text="Макс. позиций:").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_spk_max, width=4, state="readonly", values=["1", "2", "3", "5", "8", "10"]).pack(side="left", padx=(4, 0))
+        ttk.Combobox(f, textvariable=self.v_spk_max, width=15, state="readonly",
+                     values=["без ограничения", "1", "2", "3", "5", "8", "10", "15", "20"]).pack(side="left", padx=(4, 0))
         r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(f, text="Вход в позицию, % от портфеля:").pack(side="left")
@@ -480,9 +481,15 @@ class App(tk.Tk):
         self.share_lbl.pack(side="left")
         def _upd_share(*_):
             try:
-                pct, mx = float(self.v_spk_share.get().replace(",", ".")), int(self.v_spk_max.get())
+                pct = float(self.v_spk_share.get().replace(",", "."))
                 lk = {v: k for k, v in self.LEV.items()}.get(self.v_lev.get(), "1")
                 lv = 1.0 if lk in ("1", "auto") else float(lk)
+                if not self.v_spk_max.get().isdigit():
+                    self.share_lbl.configure(foreground="#555", text=(
+                        f"одна позиция = {pct * lv:g}% портфеля; число позиций не ограничено — новые сделки открываются, пока "
+                        f"хватает денег на счёте" + (f" (без маржи — примерно до {int(100 // pct)} позиций одновременно)" if lk == "1" else "")))
+                    return
+                mx = int(self.v_spk_max.get())
                 tot = pct * mx * lv
                 txt = (f"одна позиция = {pct * lv:g}% портфеля" + (" × плечо брокера по бумаге" if lk == "auto" else "")
                        + f"; при {mx} позициях до {tot:g}%" + (" × плечо" if lk == "auto" else ""))
@@ -657,7 +664,7 @@ class App(tk.Tk):
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
                       direction={v: k for k, v in self.DIRS.items()}.get(self.v_dir.get(), "both"),
                       spike_markets=[k for k, _ in at.MARKETS if self.v_mk[k].get()] or ["imoex"], spike_half=int(self.v_spk_half.get()),
-                      spike_trail=float(self.v_spk_trail.get()), spike_max=int(self.v_spk_max.get()),
+                      spike_trail=float(self.v_spk_trail.get()), spike_max=int(self.v_spk_max.get()) if self.v_spk_max.get().isdigit() else 0,
                       spike_share=self._pct(self.v_spk_share.get()),
                       leverage={v: k for k, v in self.LEV.items()}.get(self.v_lev.get(), "1"),
                       two_takes=self.v_takes.get() == "два тейка",
@@ -1143,7 +1150,7 @@ class App(tk.Tk):
         for k, v in self.v_mk.items():
             v.set(k in s.get("spike_markets", []))
         self.v_spk_half.set(str(s.get("spike_half", 50))); self.v_spk_trail.set(f"{float(s.get('spike_trail', 1.0)):g}")
-        self.v_spk_max.set(str(s.get("spike_max", 5))); self.v_spk_share.set(f"{float(s.get('spike_share', 10)):g}")
+        self.v_spk_max.set(str(s.get("spike_max", 0) or "без ограничения")); self.v_spk_share.set(f"{float(s.get('spike_share', 10)):g}")
         self.v_dir.set(self.DIRS.get(s.get("direction", "both"), "лонг и шорт"))
         self.v_lev.set(self.LEV.get(str(s.get("leverage", "1")), "без маржи"))
         self.v_tg_chat.set(s.get("tg_chat", "")); self.v_tg_form.set(bool(s.get("tg_form", True)))

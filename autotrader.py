@@ -44,7 +44,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "max_pos": 5, "share": 0.10,
+                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -1074,7 +1074,7 @@ class AutoTrader:
             why = "сигнал (торговля по формации выключена в настройках)"
         elif tk in self.st["spike_traded"] or any(p["ticker"] == tk for p in self.positions):
             why = "по бумаге сегодня уже была сделка, пропуск"
-        elif sum(1 for p in self.positions if p.get("strat") == "spike") >= sp["max_pos"]:
+        elif sp["max_pos"] and sum(1 for p in self.positions if p.get("strat") == "spike") >= sp["max_pos"]:     # 0 — без ограничения
             why = f"уже {sp['max_pos']} позиций по формации, пропуск"
         else:
             enter, why = True, "вхожу"
