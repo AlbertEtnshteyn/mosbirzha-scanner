@@ -363,7 +363,7 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, ca
             m = b["t"].hour * 60 + b["t"].minute
             if b["t"].date() != dcur or m >= prof["exit"]:
                 pnl = s * (bars[last]["c"] / px - 1)
-                if prof["carry"] and carried < MAX_CARRY_DAYS and (carry_all or stage >= 1 or pnl > 0):
+                if prof["carry"] and (carry_all or (carried < MAX_CARRY_DAYS and (stage >= 1 or pnl > 0))):
                     carried += 1
                     exits.append((last, bars[last]["c"], 0, "перенос"))
                     nd = dcur
@@ -566,7 +566,11 @@ class AutoTrader:
         return self.st["positions"]
 
     def _carry_ok(self, p):
-        if p.get("strat") != "spike" or not p.get("carry") or p.get("carried", 0) >= MAX_CARRY_DAYS:
+        if p.get("strat") != "spike" or not p.get("carry"):
+            return False
+        if self.sp.get("carry_all", True):
+            return True                            # переносится, пока не закроют стоп, тейк или трейлинг — без ограничения дней
+        if p.get("carried", 0) >= MAX_CARRY_DAYS:
             return False
         lp = self.prices.get(p["ticker"])
         try:
@@ -575,8 +579,6 @@ class AutoTrader:
             pass
         if lp:
             self.prices[p["ticker"]] = lp
-        if self.sp.get("carry_all", True):
-            return True                            # переносятся все позиции (до MAX_CARRY_DAYS дней), их ведут стоп/тейки/трейлинг
         return p.get("stage", 0) >= 1 or (lp is not None and p["side"] * (lp / p["entry"] - 1) > 0)
 
     def _set_status(self, text):
@@ -593,7 +595,7 @@ class AutoTrader:
     def run(self):
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Мониторинг по будням {hm(DAY_START)}–{hm(DAY_END)} МСК, "
                  f"входы по формации: {trade_profile('index', 15, 'form', self.sp.get('window', '9-19'), self.sp.get('exit_late', True))['name']}; "
-                 + (f"все позиции переносятся на следующий день (до {MAX_CARRY_DAYS} дней), их ведут стоп, тейки и трейлинг. "
+                 + ("все позиции переносятся на следующий день, пока их не закроют стоп, тейк или трейлинг. "
                     if self.sp.get("carry_all", True) else
                     f"позиция в плюсе или с взятым тейком1 переносится на следующий день (до {MAX_CARRY_DAYS} дней). ")
                  + 
@@ -687,10 +689,11 @@ class AutoTrader:
                     p["carry_date"] = today
                     self._save()
                     lp = self.prices.get(p["ticker"]) or p["entry"]
-                    self.log(f"  {p['ticker']}: позиция в плюсе ({p['side'] * (lp / p['entry'] - 1) * 100:+.2f}%"
-                             + (", тейк1 взят" if p.get("stage", 0) >= 1 else "") + f") — переношу на следующий день "
-                             f"({p['carried']}/{MAX_CARRY_DAYS}), стоп {p['stop']:.4g}")
-                    self.on_event("carry", {"ticker": p["ticker"], "days": p["carried"]})
+                    res = p["side"] * (lp / p["entry"] - 1)
+                    self.log(f"  {p['ticker']}: позиция {res * 100:+.2f}%"
+                             + (", тейк1 взят" if p.get("stage", 0) >= 1 else "") + f" — переношу на следующий день "
+                             f"(перенос №{p['carried']}), стоп {p['stop']:.4g}")
+                    self.on_event("carry", {"ticker": p["ticker"], "days": p["carried"], "result": res})
                 else:
                     self._close_all(hm(p.get("exit_min", sc.EXIT_MIN)), only=[p])
             if self.positions:

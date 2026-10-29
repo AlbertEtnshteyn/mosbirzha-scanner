@@ -65,7 +65,9 @@ def formation_text(i):
 
 def trade_text(kind, i):
     if kind == "carry":
-        return f"🌙 {i['ticker']}: позиция в плюсе — переношу на следующий день ({i['days']}/2)"
+        r = i.get("result")
+        return (f"🌙 {i['ticker']}: позиция" + (f" {r * 100:+.2f}%" if isinstance(r, (int, float)) else "")
+                + f" — переношу на следующий день (перенос №{i['days']})")
     if kind == "open":
         side = "КУПЛЕНО" if i["side"] > 0 else "ПРОДАНО (шорт)"
         s = f"✅ {i['ticker']}: {side} {i['lots']} лот. по {fmt(i['entry'])}, стоп {fmt(i['stop'])}"
