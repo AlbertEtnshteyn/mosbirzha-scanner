@@ -44,7 +44,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "max_pos": 5, "share": 0.10,
+                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "max_pos": 5, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -304,7 +304,7 @@ def find_trend_pullback(bars, sp, em20):
     return None
 
 
-def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True):
+def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, carry_all=True):
     """
     Сделки на истории графика по правилам робота: формация (и трендовый откат для 2-го эшелона на 15 мин),
     правила эшелонов (5 мин и 3-й эшелон не торгуются), окно входов, выход в конце дня, перенос позиции в плюсе
@@ -363,7 +363,7 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True):
             m = b["t"].hour * 60 + b["t"].minute
             if b["t"].date() != dcur or m >= prof["exit"]:
                 pnl = s * (bars[last]["c"] / px - 1)
-                if prof["carry"] and carried < MAX_CARRY_DAYS and (stage >= 1 or pnl > 0):
+                if prof["carry"] and carried < MAX_CARRY_DAYS and (carry_all or stage >= 1 or pnl > 0):
                     carried += 1
                     exits.append((last, bars[last]["c"], 0, "перенос"))
                     nd = dcur
@@ -575,6 +575,8 @@ class AutoTrader:
             pass
         if lp:
             self.prices[p["ticker"]] = lp
+        if self.sp.get("carry_all", True):
+            return True                            # переносятся все позиции (до MAX_CARRY_DAYS дней), их ведут стоп/тейки/трейлинг
         return p.get("stage", 0) >= 1 or (lp is not None and p["side"] * (lp / p["entry"] - 1) > 0)
 
     def _set_status(self, text):
@@ -591,7 +593,10 @@ class AutoTrader:
     def run(self):
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Мониторинг по будням {hm(DAY_START)}–{hm(DAY_END)} МСК, "
                  f"входы по формации: {trade_profile('index', 15, 'form', self.sp.get('window', '9-19'), self.sp.get('exit_late', True))['name']}; "
-                 f"позиция в плюсе или с взятым тейком1 переносится на следующий день (до {MAX_CARRY_DAYS} дней). "
+                 + (f"все позиции переносятся на следующий день (до {MAX_CARRY_DAYS} дней), их ведут стоп, тейки и трейлинг. "
+                    if self.sp.get("carry_all", True) else
+                    f"позиция в плюсе или с взятым тейком1 переносится на следующий день (до {MAX_CARRY_DAYS} дней). ")
+                 + 
                  f"Направление: {self._dir_name()}.")
         if not self.day_on:
             self.log("Стратегия «движение дня» (вход в заданное время) выключена в настройках.")

@@ -184,7 +184,7 @@ class App(tk.Tk):
         self.robot_lbl.pack(anchor="w", pady=(10, 2))
         ttk.Label(t3, text="Поиск формаций идёт постоянно с открытия программы — по будням с 07:00 до 23:50. "
                            "«Старт торговли» — робот сам входит и выходит на демо-счёте (входы 09:00–19:00 или 10:00–18:00 — в настройках; "
-                           "позиция в плюсе переносится на следующий день, до 2 дней); "
+                           "позиции переносятся на следующий день, до 2 дней — см. настройки); "
                            "«Стоп торговли» — только наблюдение и уведомления. Стратегия «15:00»: каждую минуту "
                            "пересчитывает движение акций индекса, во время входа сам открывает сделки, стоп 3%, выход 16:59:50. "
                            "Всплески объёма: после каждой 5-минутки ищет импульс на объёме (одна или несколько свечей подряд) → касание EMA20 → свечу-подтверждение "
@@ -331,6 +331,7 @@ class App(tk.Tk):
         self.WIN = {"9-19": "09:00–19:00", "10-18": "10:00–18:00"}
         self.EXIT_EARLY = {"9-19": "19:25", "10-18": "18:45"}
         self.v_win = tk.StringVar(value=self.WIN.get(self.s.get("entry_window", "9-19"), self.WIN["9-19"]))
+        self.v_carry_all = tk.BooleanVar(value=bool(self.s.get("carry_all", True)))
         self.v_exit = tk.StringVar(value="23:45" if self.s.get("exit_late", True) else
                                    self.EXIT_EARLY.get(self.s.get("entry_window", "9-19"), "19:25"))
         self.v_takes = tk.StringVar(value="два тейка" if self.s.get("two_takes", True) else "один тейк у хая")
@@ -379,7 +380,7 @@ class App(tk.Tk):
         r += 1
         tk.Label(g, text="Время входа не задаётся: робот входит сразу, как только формация подтверждена "
                          "(в выбранное ниже время входов) и выходит по стопу, тейку, трейлингу "
-                         "или в конце дня; если позиция в плюсе или тейк1 взят — переносит её на следующий день (до 2 дней).",
+                         "или во время выхода; перенос позиций на следующий день (до 2 дней) — ниже.",
                  justify="left", anchor="w", font=("Segoe UI", 9, "bold"), fg="#0a5a2f", bg=bg, wraplength=740).grid(row=r, column=1, sticky="w")
         r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
@@ -400,7 +401,7 @@ class App(tk.Tk):
         ttk.Label(fw, text="Время входов:").pack(side="left")
         cw = ttk.Combobox(fw, textvariable=self.v_win, width=13, state="readonly", values=list(self.WIN.values()))
         cw.pack(side="left", padx=6)
-        ttk.Label(fw, text="выход позиции в минусе:").pack(side="left", padx=(8, 0))
+        ttk.Label(fw, text="выход:").pack(side="left", padx=(8, 0))
         ce = ttk.Combobox(fw, textvariable=self.v_exit, width=7, state="readonly")
         ce.pack(side="left", padx=6)
 
@@ -412,7 +413,9 @@ class App(tk.Tk):
                 self.v_exit.set(vals[0] if self.v_exit.get() != "23:45" else "23:45")
         cw.bind("<<ComboboxSelected>>", _exits)
         _exits()
-        ttk.Label(fw, text="позиция в плюсе (или с взятым тейком1) переносится на следующий день, до 2 дней", foreground="#555").pack(side="left")
+        ttk.Checkbutton(f, text="Переносить на следующий день ВСЕ позиции (до 2 дней; их ведут стоп, тейки и трейлинг). "
+                                "Если снять — в указанное время закрываются позиции в минусе, переносятся только в плюсе или с взятым тейком1",
+                        variable=self.v_carry_all).pack(anchor="w")
         r += 1
         ttk.Label(g, text="Чем торговать:").grid(row=r, column=0, sticky="e", padx=(0, 6))
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
@@ -625,7 +628,7 @@ class App(tk.Tk):
                       tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get(),
                       tg_trend=self.v_tg_trend.get(), trend_on=self.v_trend_on.get(), trend_trade=self.v_trend_trade.get(),
                       tier_profile=self.v_tier.get(), entry_window={v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19"),
-                      exit_late=self.v_exit.get() == "23:45")
+                      exit_late=self.v_exit.get() == "23:45", carry_all=self.v_carry_all.get())
         if self.s["token"]:
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         else:

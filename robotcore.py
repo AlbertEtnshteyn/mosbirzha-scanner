@@ -14,7 +14,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "leverage": "1",
             "spike_half": 50, "spike_trail": 1.0, "spike_max": 5, "spike_share": 10, "two_takes": True,
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False,
-            "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True}
+            "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -50,7 +50,7 @@ def spike_cfg(s):
             "two_takes": bool(s.get("two_takes", True)),
             "trend_on": bool(s.get("trend_on", True)), "trend_trade": bool(s.get("trend_trade", False)),
             "tier_profile": bool(s.get("tier_profile", True)), "window": s.get("entry_window", "9-19"),
-            "exit_late": bool(s.get("exit_late", True))}
+            "exit_late": bool(s.get("exit_late", True)), "carry_all": bool(s.get("carry_all", True))}
 
 
 def chart_sp(s):
@@ -89,7 +89,7 @@ def chart_data(token, sandbox, ticker, tf, s):
             med = at._median(list(days.values())) if days else 0
             tier = "2" if med >= at.TIER2_TURNOVER else "3"
         trades = at.history_trades(bars, at.params(chart_sp(s), tf), tf, tier, s.get("entry_window", "9-19"),
-                                   bool(s.get("exit_late", True)))
+                                   bool(s.get("exit_late", True)), bool(s.get("carry_all", True)))
     return rows, trades, tier
 
 
