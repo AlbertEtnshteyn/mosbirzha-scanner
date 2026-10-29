@@ -443,6 +443,7 @@ class App(tk.Tk):
                 self.v_exit.set(vals[0] if self.v_exit.get() != "23:45" else "23:45")
         cw.bind("<<ComboboxSelected>>", _exits)
         _exits()
+        self._exits_cb = _exits
         ttk.Checkbutton(f, text="Переносить на следующий день ВСЕ позиции — держать, пока не закроют стоп, тейк или трейлинг. "
                                 "Если снять — в указанное время закрываются позиции в минусе, переносятся только в плюсе или с взятым тейком1 (до 2 дней)",
                         variable=self.v_carry_all).pack(anchor="w")
@@ -861,6 +862,7 @@ class App(tk.Tk):
             except Exception as e:
                 log(f"Код подключения к серверу не подошёл: {e}")
                 return
+            rr.on_settings = lambda srv: self.q.put(("call", self._settings_from_server, srv))
             self.robot = rr
             self.robot_lbl.configure(text=f"Подключаюсь к роботу на сервере {rr.where}…")
 
@@ -1110,6 +1112,45 @@ class App(tk.Tk):
                 self.show_qr(code)
                 self.restart_robot()                       # окно программы — пульт робота на сервере
         self.submit(f"Установка сервера на {a[0]}", job, done)
+
+    SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
+                   "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
+                   "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
+                   "carry_all", "day_carry", "auto_journal"]
+
+    def _settings_from_server(self, srv):
+        """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
+        for k in self.SERVER_KEYS:
+            if k in srv:
+                self.s[k] = srv[k]
+        save_settings(self.s)
+        s = self.s
+        self.v_thr.set(f"{float(s['threshold']):g}"); self.v_entry.set(s["entry"]); self.v_cap.set(str(int(float(s["capital"]))))
+        self.v_sbtok.set(bool(s["sandbox_token"])); self.v_aj.set(bool(s.get("auto_journal", True)))
+        self.v_rescan.set(bool(s.get("rescan"))); self.v_day.set(bool(s.get("day_on", True)))
+        self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0]))
+        self.v_trend_on.set(bool(s.get("trend_on", True))); self.v_trend_trade.set(bool(s.get("trend_trade")))
+        self.v_tier.set(bool(s.get("tier_profile", True)))
+        self.v_win.set(self.WIN.get(s.get("entry_window", "9-19"), self.WIN["9-19"]))
+        self.v_exit.set("23:45" if s.get("exit_late", True) else self.EXIT_EARLY.get(s.get("entry_window", "9-19"), "19:25"))
+        if hasattr(self, "_exits_cb"):
+            self._exits_cb()
+        self.v_carry_all.set(bool(s.get("carry_all", True)))
+        self.v_takes.set("два тейка" if s.get("two_takes", True) else "один тейк у хая")
+        self.v_spk.set(bool(s.get("spike_on", True)))
+        for tf, v in self.v_spk_tf.items():
+            v.set(tf in s.get("spike_tfs", []))
+        for k, v in self.v_mk.items():
+            v.set(k in s.get("spike_markets", []))
+        self.v_spk_half.set(str(s.get("spike_half", 50))); self.v_spk_trail.set(f"{float(s.get('spike_trail', 1.0)):g}")
+        self.v_spk_max.set(str(s.get("spike_max", 5))); self.v_spk_share.set(f"{float(s.get('spike_share', 10)):g}")
+        self.v_dir.set(self.DIRS.get(s.get("direction", "both"), "лонг и шорт"))
+        self.v_lev.set(self.LEV.get(str(s.get("leverage", "1")), "без маржи"))
+        self.v_tg_chat.set(s.get("tg_chat", "")); self.v_tg_form.set(bool(s.get("tg_form", True)))
+        self.v_tg_trades.set(bool(s.get("tg_trades", True))); self.v_tg_imp.set(bool(s.get("tg_imp")))
+        self.v_tg_trend.set(bool(s.get("tg_trend", True)))
+        sc.configure(float(s["threshold"]), s["entry"])
+        self.log("Настройки взяты с сервера — во вкладке «Настройки» показаны те, с которыми работает робот на сервере.\n")
 
     # --- результаты
     def _results_tick(self):

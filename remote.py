@@ -67,6 +67,7 @@ class RemoteRobot:
         self.log_seq = 0
         self.ok = None
         self.server_version = ""
+        self.on_settings = None
 
     @property
     def where(self):
@@ -76,6 +77,11 @@ class RemoteRobot:
         while not self.stop_event.is_set():
             try:
                 st = self.c.get("/api/state", ev=self.ev or 0, log=self.log_seq)
+                if self.ok is not True and self.on_settings:
+                    try:
+                        self.on_settings(self.c.get("/api/settings"))     # окно программы показывает настройки сервера
+                    except Exception as e:
+                        self.log(f"Настройки сервера не получены: {e}")
                 if self.ok is not True:
                     self.log(f"Связь с сервером {self.where} есть (версия сервера {st.get('version')}). "
                              f"Робот работает на сервере — здесь его экран и кнопки.")
