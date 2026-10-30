@@ -124,9 +124,11 @@ function renderState(st) {
   const sb = $("#startBtn");
   if (st.trade) { sb.textContent = "Стоп"; sb.className = "btn stop"; }
   else { sb.textContent = "Старт"; sb.className = "btn start"; }
-  $("#robotHint").textContent = st.trade ? "Робот сам входит и выходит по стратегиям. «Стоп» — выключить новые сделки."
+  const pr = st.pair;
+  const pairTxt = pr && pr.enabled ? ` Пара серверов: торгует ${pr.active ? "этот" : "второй"} сервер (${pr.active ? "" : pr.peer_host + ", "}этот — ${pr.role === "primary" ? "основной" : "резервный"}); второй ${pr.peer_ok ? "на связи" : "не отвечает с " + pr.peer_last_ok}.` : "";
+  $("#robotHint").textContent = (st.trade ? "Робот сам входит и выходит по стратегиям. «Стоп» — выключить новые сделки."
     : st.token_set ? "Робот следит за рынком и шлёт формации, но не торгует. «Старт» — включить торговлю на демо-счёте."
-      : "Введите токен песочницы Т-Инвестиций во вкладке «Настройки».";
+      : "Введите токен песочницы Т-Инвестиций во вкладке «Настройки».") + pairTxt;
 
   // позиции
   const P = st.positions || [];

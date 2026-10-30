@@ -54,8 +54,11 @@ class Client:
 
 class RemoteRobot:
     """Подменяет AutoTrader в окне программы: позиции, статус и кнопки — с сервера."""
-    def __init__(self, code, log, on_update, on_event):
+    def __init__(self, code, log, on_update, on_event, backup=None, on_backup=None):
         self.c = Client(code)
+        self.codes = [code] + ([backup] if backup and backup != code else [])
+        self.on_backup = on_backup                   # fn(code) — запомнить код второго сервера пары
+        self.fails = 0
         self.log = log
         self.on_update = on_update
         self.on_event = on_event
@@ -82,6 +85,17 @@ class RemoteRobot:
                         self.on_settings(self.c.get("/api/settings"))     # окно программы показывает настройки сервера
                     except Exception as e:
                         self.log(f"Настройки сервера не получены: {e}")
+                if self.ok is not True and len(self.codes) < 2:
+                    try:                                    # пара серверов — запомнить второй сервер для переключения
+                        pi = self.c.get("/api/pair_info")
+                        if pi.get("enabled") and pi.get("peer_code"):
+                            self.codes.append(pi["peer_code"])
+                            if self.on_backup:
+                                self.on_backup(pi["peer_code"])
+                            self.log(f"Сервер работает в паре со вторым ({Client(pi['peer_code']).host}) — при обрыве связи переключусь на него.")
+                    except Exception:
+                        pass
+                self.fails = 0
                 if self.ok is not True:
                     self.log(f"Связь с сервером {self.where} есть (версия сервера {st.get('version')}). "
                              f"Робот работает на сервере — здесь его экран и кнопки.")
@@ -115,6 +129,14 @@ class RemoteRobot:
                     self.on_update({"status": f"нет связи с сервером {self.where}", "market": None, "scan": [], "spikes": [],
                                     "positions": self.positions, "last_scan": None, "remote": True})
                 self.ok = False
+                self.fails += 1
+                if len(self.codes) > 1 and self.fails >= 2:          # основной не отвечает — на второй сервер пары
+                    cur = next((c for c in self.codes if Client(c).host == self.c.host and Client(c).port == self.c.port), self.codes[0])
+                    nxt = self.codes[(self.codes.index(cur) + 1) % len(self.codes)]
+                    self.c = Client(nxt)
+                    self.fails = 0
+                    self.log(f"Переключаюсь на второй сервер пары: {self.c.host}.")
+                    continue
                 self.stop_event.wait(7)
             self.stop_event.wait(3)
 

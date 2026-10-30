@@ -9,7 +9,7 @@ import zipfile
 
 import scanner as sc
 
-BUNDLE_FILES = ["server.py", "scanner.py", "autotrader.py", "robotcore.py", "tgnotify.py", "history_dl.py", "version.txt"]
+BUNDLE_FILES = ["server.py", "scanner.py", "autotrader.py", "robotcore.py", "tgnotify.py", "history_dl.py", "pair.py", "remote.py", "version.txt"]
 BUNDLE_DIRS = ["web", "tools"]
 TRANSFER = ["auto_state.json", "sandbox_trades.csv", "sandbox_spikes.csv", "forward_journal.csv", "forward_days.csv"]
 REMOTE = "/tmp/moexrobot_setup"

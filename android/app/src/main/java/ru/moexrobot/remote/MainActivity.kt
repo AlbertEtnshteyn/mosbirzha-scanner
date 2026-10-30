@@ -66,6 +66,7 @@ class MainActivity : Activity() {
 
     private var web: WebView? = null
     private var conn: Conn? = null
+    private var switched = false
 
     private val prefs by lazy { getSharedPreferences("conn", Context.MODE_PRIVATE) }
 
@@ -96,6 +97,11 @@ class MainActivity : Activity() {
 
     private fun save(c: Conn) = prefs.edit().putString("host", c.host).putInt("port", c.port)
         .putString("key", c.key).putString("fp", c.fp).apply()
+
+    // второй сервер пары: приложение узнаёт его код у основного и переключается, если основной не отвечает
+    private fun saveBackup(code: String) = prefs.edit().putString("backup", code).apply()
+    private fun backup(): Conn? = prefs.getString("backup", null)?.let { parse(it) }
+    private fun primary(): Conn? = load()
 
     private fun load(): Conn? {
         val h = prefs.getString("host", null) ?: return null
@@ -202,7 +208,15 @@ class MainActivity : Activity() {
             }
 
             override fun onReceivedError(view: WebView, req: WebResourceRequest, err: WebResourceError) {
-                if (req.isForMainFrame) view.loadDataWithBaseURL(null, offlinePage(err.description.toString()), "text/html", "utf-8", null)
+                if (!req.isForMainFrame) return
+                val other = listOfNotNull(primary(), backup()).firstOrNull { it.host != c.host || it.port != c.port }
+                if (other != null && !switched) {          // этот сервер не отвечает — на второй сервер пары
+                    switched = true
+                    conn = other
+                    runOnUiThread { Toast.makeText(this@MainActivity, "Сервер ${c.host} не отвечает — подключаюсь ко второму (${other.host})", Toast.LENGTH_LONG).show(); showWeb() }
+                    return
+                }
+                view.loadDataWithBaseURL(null, offlinePage(err.description.toString()), "text/html", "utf-8", null)
             }
         }
         setContentView(w)
@@ -254,6 +268,13 @@ class MainActivity : Activity() {
     }
 
     private fun checkServerVersion(c: Conn) {
+        Thread {
+            try {                                       // пара серверов: запомнить код второго
+                val pi = JSONObject(pinned(c, "/api/pair_info").inputStream.bufferedReader().readText())
+                val code = pi.optString("peer_code", "")
+                if (pi.optBoolean("enabled") && parse(code) != null && c.host == primary()?.host) saveBackup(code)
+            } catch (_: Exception) {}
+        }.start()
         val mine = bundleVersion()
         if (mine.isEmpty()) return
         Thread {
@@ -337,7 +358,7 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
-        fun retry() = runOnUiThread { showWeb() }
+        fun retry() = runOnUiThread { switched = false; conn = primary() ?: conn; showWeb() }
 
         @JavascriptInterface
         fun bundleVersion(): String = this@MainActivity.bundleVersion()

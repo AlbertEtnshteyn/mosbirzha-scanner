@@ -138,12 +138,34 @@ class _CtxAdapter(HTTPAdapter):
 
 
 _SESSION = None
+RELAY = None          # запасной путь запросов через второй сервер (пара серверов): fn(method, url, kwargs) -> Response | None
+
+
+class _Session(requests.Session):
+    """Если запрос не прошёл (нет связи, таймаут) — повторить его через второй сервер, когда он настроен."""
+    def request(self, method, url, **kw):
+        try:
+            return super().request(method, url, **kw)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            if RELAY is None or isinstance(e, requests.exceptions.SSLError):
+                raise
+            try:
+                r = RELAY(method, url, kw)
+            except Exception:
+                r = None
+            if r is None:
+                raise
+            return r
+
+    def direct(self, method, url, **kw):
+        """Запрос только напрямую, без второго сервера (для выполнения чужих запросов)."""
+        return super().request(method, url, **kw)
 
 
 def http():
     global _SESSION
     if _SESSION is None:
-        s = requests.Session()
+        s = _Session()
         s.mount("https://", _CtxAdapter(_ssl_context()))
         _SESSION = s
     return _SESSION

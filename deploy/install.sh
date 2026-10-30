@@ -17,7 +17,7 @@ echo "== 2/6 Пользователь и папка $DST"
 id moexrobot >/dev/null 2>&1 || useradd --system --home "$DST" --shell /usr/sbin/nologin moexrobot
 mkdir -p "$DST"
 # код программы обновляется, данные (настройки, журналы, ключ и сертификат сервера) остаются
-for f in server.py scanner.py autotrader.py robotcore.py tgnotify.py history_dl.py version.txt; do
+for f in server.py scanner.py autotrader.py robotcore.py tgnotify.py history_dl.py pair.py remote.py version.txt; do
   [ -f "$SRC/$f" ] && cp "$SRC/$f" "$DST/"
 done
 rm -rf "$DST/web" "$DST/tools"; cp -r "$SRC/web" "$DST/web"; cp -r "$SRC/tools" "$DST/tools"

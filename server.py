@@ -34,6 +34,10 @@ import scanner as sc
 import autotrader as at
 import robotcore as rc
 import tgnotify as tg
+try:
+    import pair as pairmod                       # пара серверов (появляется со второго обновления — старый сервер его не копировал)
+except ImportError:
+    pairmod = None
 
 HERE = sc.HERE
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -169,6 +173,8 @@ class Robot:
         return bool(self.thread and self.thread.is_alive())
 
     def start(self, trade):
+        if PAIR and PAIR.enabled and not PAIR.active:
+            return False                                 # резервный сервер: торгует второй
         with self.lock:
             if self.running():
                 if trade and not self.robot.trade:
@@ -200,6 +206,22 @@ class Robot:
             self.s["autostart"] = bool(trade)            # после перезагрузки сервера — в том же режиме
             rc.save_settings(self.s, keep_token=True)
             return True
+
+    def pair_activate(self, peer_trade):
+        """Второй сервер замолчал — продолжаем с его позициями и настройками (они уже синхронизированы)."""
+        self.s = rc.load_settings()
+        self._apply()
+        trade = bool(peer_trade) if peer_trade is not None else bool(self.s.get("autostart"))
+        self.start(trade)
+        try:
+            tg.send(self.s.get("tg_token"), self.s.get("tg_chat"),
+                    "⚠️ Робот Мосбиржи: основной сервер не отвечает — работу продолжил резервный сервер.", lambda m: print(m))
+        except Exception:
+            pass
+
+    def pair_deactivate(self):
+        if self.running():
+            self.robot.request_stop(False)               # позиции не закрываем — их ведёт второй сервер
 
     def stop_trade(self, close):
         if not self.running():
@@ -265,6 +287,9 @@ class Robot:
         last_try = 0
         while True:
             try:
+                if PAIR and PAIR.enabled and not PAIR.active:
+                    time.sleep(20)
+                    continue
                 if not self.running() and time.time() - last_try > 60 and self.s.get("token"):
                     last_try = time.time()
                     self.start(bool(self.s.get("autostart")))
@@ -296,10 +321,12 @@ class Robot:
                 "spikes": list(reversed(snap.get("spikes", []))), "scan": snap.get("scan", [])[:60],
                 "threshold": sc.THRESHOLD, "ev_seq": self.ev_seq, "balance": snap.get("balance"),
                 "entry": self.s.get("entry", "15:00"), "day_on": bool(self.s.get("day_on", True)), "day_mode": self.s.get("day_mode", "fixed"),
-                "pos_summary": rc.positions_summary(snap.get("positions", []) if r else []), "index": self.index}
+                "pos_summary": rc.positions_summary(snap.get("positions", []) if r else []), "index": self.index,
+                "pair": PAIR.info() if PAIR else None}
 
 
 ROBOT = None
+PAIR = None
 
 
 # ============================================================================ данные для вкладок
@@ -363,7 +390,7 @@ def chart(ticker, tf):
 
 
 # ============================================================================ обновление программы с телефона/компьютера
-CODE_FILES = {"server.py", "scanner.py", "autotrader.py", "robotcore.py", "tgnotify.py", "history_dl.py", "version.txt"}
+CODE_FILES = {"server.py", "scanner.py", "autotrader.py", "robotcore.py", "tgnotify.py", "history_dl.py", "pair.py", "remote.py", "version.txt"}
 CODE_DIRS = ("web/", "tools/")
 
 
@@ -493,10 +520,28 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _body(self):
+        if getattr(self, "_raw_body", None) is not None:
+            return json.loads(self._raw_body or b"{}")
         n = int(self.headers.get("Content-Length") or 0)
         if n > 12_000_000:
             raise ValueError("слишком большой запрос")
         return json.loads(self.rfile.read(n) or b"{}")
+
+    LOCAL_API = {"/api/ping", "/api/pair_sync", "/api/relay", "/api/pair_set", "/api/pair_info", "/api/update"}
+
+    def _proxy(self, method, raw=None):
+        """Резервный сервер пересылает запросы телефона/программы активному серверу."""
+        c = PAIR.client
+        try:
+            r = c.s.request(method, c.base + self.path, data=raw, timeout=60,
+                            headers={"Content-Type": self.headers.get("Content-Type", "application/json")})
+            self._send(r.status_code, r.content, r.headers.get("Content-Type", "application/json"))
+            return True
+        except Exception:
+            return False                                  # второй не отвечает — отвечаем сами
+
+    def _passive(self, path):
+        return PAIR and PAIR.enabled and not PAIR.active and PAIR.peer_ok and path not in self.LOCAL_API
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -504,6 +549,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._static(u.path)
         if not self._auth():
             return
+        if self._passive(u.path) and self._proxy("GET"):
+            return
+        if u.path == "/api/ping":
+            r = ROBOT.robot if ROBOT.running() else None
+            return self._send(200, {"active": bool(PAIR.active) if PAIR else True, "trade": bool(r and r.trade),
+                                    "version": VERSION, "time": now_msk().strftime("%H:%M:%S")})
+        if u.path == "/api/pair_sync" and pairmod:
+            return self._send(200, pairmod.sync_payload())
+        if u.path == "/api/pair_info":
+            return self._send(200, PAIR.info() if PAIR else {"enabled": False})
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         try:
             if u.path == "/api/state":
@@ -535,8 +590,23 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if not self._auth():
             return
+        if self._passive(u.path):
+            n = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(n) if n else b""
+            if self._proxy("POST", raw):
+                return
+            self._raw_body = raw
         try:
             b = self._body()
+            if u.path in ("/api/relay", "/api/pair_set") and not pairmod:
+                return self._send(404, {"error": "на сервере нет модуля пары — обновите сервер ещё раз"})
+            if u.path == "/api/relay":
+                return self._send(200, pairmod.do_relay(b))
+            if u.path == "/api/pair_set":
+                pairmod.save_pair(b.get("peer", ""), b.get("role", "primary"))
+                log(f"Пара серверов настроена: этот сервер — {'основной' if b.get('role') == 'primary' else 'резервный'}. Перезапускаюсь.")
+                threading.Thread(target=lambda: (time.sleep(2), os._exit(3)), daemon=True).start()
+                return self._send(200, {"ok": True})
             if u.path == "/api/start":
                 ok = ROBOT.start(True)
                 return self._send(200, {"ok": ok, "msg": "" if ok else "Сначала введите токен песочницы в настройках."})
@@ -566,6 +636,11 @@ class Handler(BaseHTTPRequestHandler):
                 cid, name = tg.find_chat_id(tok)
                 return self._send(200, {"ok": bool(cid), "chat": cid, "name": name})
             if u.path == "/api/update":
+                if PAIR and PAIR.enabled and PAIR.peer_ok and not b.get("from_peer"):
+                    try:                                   # и второй сервер — той же версией
+                        PAIR.client.post("/api/update", dict(b, from_peer=True))
+                    except Exception as e:
+                        log(f"Второй сервер не обновился: {e}")
                 ver = apply_update(base64.b64decode(b.get("zip", "")))
                 return self._send(200, {"ok": True, "version": ver})
             if u.path == "/api/journal_fill":
@@ -623,11 +698,19 @@ def main():
         print(code)
         return
     Handler.key = cfg["key"]
+    global PAIR
     ROBOT = Robot()
+    PAIR = pairmod.Pair(log, ROBOT.pair_activate, ROBOT.pair_deactivate) if pairmod else None
+    if PAIR and PAIR.enabled:
+        sc.RELAY = PAIR.relay
+        log(f"Пара серверов: этот сервер — {'основной' if PAIR.role == 'primary' else 'резервный'}, второй — {PAIR.client.host}.")
+        threading.Thread(target=PAIR.loop, daemon=True, name="pair").start()
     log(f"Сервер робота, версия {VERSION}. Папка: {HERE}. Порт {a.port}.")
     log(f"Код подключения для телефона сохранён в {os.path.join(HERE, 'connect_code.txt')}")
     threading.Thread(target=ROBOT.watchdog, daemon=True, name="watchdog").start()
-    if ROBOT.s.get("token"):
+    if PAIR and PAIR.enabled:
+        pass                                              # кто торгует — решит пара после проверки второго сервера
+    elif ROBOT.s.get("token"):
         ROBOT.start(bool(ROBOT.s.get("autostart")))
     else:
         log("Токен песочницы ещё не введён — откройте приложение на телефоне → Настройки.")

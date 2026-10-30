@@ -327,6 +327,25 @@ class App(tk.Tk):
         ttk.Checkbutton(g6, text="Эта программа — пульт робота на сервере (свой робот на компьютере не запускается)",
                         variable=self.v_srv_remote, command=self._srv_remote_toggle).grid(row=5, column=1, columnspan=2, sticky="w")
         f6 = ttk.Frame(g6); f6.grid(row=4, column=1, columnspan=2, sticky="w", pady=10)
+        ttk.Separator(g6).grid(row=6, column=0, columnspan=3, sticky="ew", pady=10)
+        ttk.Label(g6, text="Резервный сервер (пара):", font=("Segoe UI", 10, "bold")).grid(row=7, column=0, columnspan=3, sticky="w")
+        ttk.Label(g6, foreground="#555", wraplength=760, justify="left", text=(
+            "Второй VPS, лучше у другого провайдера. Работают в паре: торгует основной, резервный держит копию позиций и "
+            "настроек и продолжает торговлю, если основной не отвечает 5 минут. Если запрос к Т-Инвестициям, Мосбирже или "
+            "Telegram не проходит напрямую — он идёт через второй сервер. Телефон и программа переключаются сами.")).grid(
+            row=8, column=0, columnspan=3, sticky="w")
+        self.v_srv2_ip = tk.StringVar(value=self.s.get("srv2_ip", ""))
+        self.v_srv2_user = tk.StringVar(value=self.s.get("srv2_user", "root"))
+        self.v_srv2_pass = tk.StringVar()
+        ttk.Label(g6, text="IP-адрес:").grid(row=9, column=0, sticky="w", pady=4)
+        ttk.Entry(g6, textvariable=self.v_srv2_ip, width=24).grid(row=9, column=1, sticky="w")
+        ttk.Label(g6, text="Логин:").grid(row=10, column=0, sticky="w", pady=4)
+        ttk.Entry(g6, textvariable=self.v_srv2_user, width=24).grid(row=10, column=1, sticky="w")
+        ttk.Label(g6, text="Пароль:").grid(row=11, column=0, sticky="w", pady=4)
+        ttk.Entry(g6, textvariable=self.v_srv2_pass, width=24, show="•").grid(row=11, column=1, sticky="w")
+        ttk.Button(g6, text="Вставить из буфера", command=lambda: self._paste_to(self.v_srv2_pass)).grid(row=11, column=2, padx=6)
+        ttk.Button(g6, text="Установить резервный сервер и связать в пару", command=self.server_install_backup).grid(
+            row=12, column=1, columnspan=2, sticky="w", pady=10)
         ttk.Button(f6, text="Установить / обновить сервер", style="Start.TButton", command=self.server_install).pack(side="left")
         ttk.Button(f6, text="Показать QR-код для телефона", command=self.server_qr).pack(side="left", padx=8)
         ttk.Button(f6, text="Обновить сервер без пароля", command=self.server_update_quick).pack(side="left")
@@ -897,7 +916,9 @@ class App(tk.Tk):
             try:
                 rr = remote.RemoteRobot(self.s["srv_code"], log,
                                         on_update=lambda snap: self.q.put(("call", self.show_robot, snap)),
-                                        on_event=lambda kind, info: self.q.put(("call", self.on_trade, (kind, info))))
+                                        on_event=lambda kind, info: self.q.put(("call", self.on_trade, (kind, info))),
+                                        backup=self.s.get("srv_code2"),
+                                        on_backup=lambda c: self.q.put(("call", self._save_backup_code, c)))
             except Exception as e:
                 log(f"Код подключения к серверу не подошёл: {e}")
                 return
@@ -1295,6 +1316,68 @@ class App(tk.Tk):
         rr = self.robot
         self.submit("Обновление сервера", lambda: print("Сервер обновлён до версии " + rr.update_server(si.bundle_bytes())
                                                          + " и перезапускается."))
+
+    def _save_backup_code(self, code):
+        if self.s.get("srv_code2") != code:
+            self.s["srv_code2"] = code
+            save_settings(self.s)
+
+    def server_install_backup(self):
+        """Второй (резервный) сервер: установить и связать с основным в пару."""
+        if not self.s.get("srv_code"):
+            messagebox.showinfo(APP_TITLE, "Сначала установите основной сервер.")
+            return
+        ip, user, pw = self.v_srv2_ip.get().strip(), self.v_srv2_user.get().strip() or "root", self.v_srv2_pass.get()
+        if not ip or not pw:
+            messagebox.showinfo(APP_TITLE, "Введите IP-адрес и пароль второго сервера.")
+            return
+        if ip == self.s.get("srv_ip"):
+            messagebox.showinfo(APP_TITLE, "Это адрес основного сервера — нужен другой VPS.")
+            return
+        self.s.update(srv2_ip=ip, srv2_user=user)
+        save_settings(self.s)
+        if not messagebox.askyesno(APP_TITLE, f"Установить резервный сервер на {ip} и связать его в пару с основным "
+                                              f"({self.s.get('srv_ip', '')})?\n\nЗаймёт 3–6 минут. Основной сервер при этом "
+                                              "обновится и перезапустится (на ~1 минуту), позиции сохранятся."):
+            return
+        import serverinstall as si
+        import remote
+        code_a = self.s["srv_code"]
+        settings = dict(self.s)
+
+        def wait_up(c, label):
+            import time as _t
+            for _ in range(40):
+                _t.sleep(5)
+                try:
+                    return c.get("/api/ping")
+                except Exception:
+                    pass
+            raise RuntimeError(f"{label} не поднялся после обновления")
+
+        def job():
+            code_b = si.install(ip, user, pw, settings, transfer=True, log=lambda m: print(m))
+            a, b = remote.Client(code_a), remote.Client(code_b)
+            bundle = si.bundle_bytes()
+            for i in (1, 2):                    # дважды: старый сервер при первом обновлении не копирует модуль пары
+                print(f"Обновляю основной сервер ({i}/2)…")
+                a.post("/api/update", {"zip": __import__("base64").b64encode(bundle).decode(), "from_peer": True})
+                wait_up(a, "Основной сервер")
+            print("Связываю серверы в пару…")
+            a.post("/api/pair_set", {"peer": code_b, "role": "primary"})
+            b.post("/api/pair_set", {"peer": code_a, "role": "standby"})
+            wait_up(a, "Основной сервер")
+            wait_up(b, "Резервный сервер")
+            print(f"Готово: основной {a.host} торгует, резервный {b.host} следит за ним, держит копию позиций и настроек "
+                  f"и возьмёт работу на себя, если основной не отвечает 5 минут. Запросы, которые не проходят напрямую, "
+                  f"идут через второй сервер.")
+            return code_b
+
+        def done(code_b):
+            if code_b:
+                self._save_backup_code(code_b)
+                self.restart_robot()
+        self.submit(f"Резервный сервер на {ip}", job, done)
 
     def _srv_remote_toggle(self):
         on = self.v_srv_remote.get()
