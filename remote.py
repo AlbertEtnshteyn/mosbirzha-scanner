@@ -164,7 +164,7 @@ class RemoteRobot:
     def push_settings(self, s):
         keys = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                 "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
-                "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late", "carry_all", "day_carry", "auto_journal"]
+                "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late", "carry_all", "day_carry", "day_mode", "auto_journal"]
         body = {k: s[k] for k in keys if k in s}
         if s.get("token"):
             body["token"] = s["token"]

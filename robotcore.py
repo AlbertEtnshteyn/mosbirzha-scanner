@@ -14,7 +14,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "spike_on": True, "spike_tfs": [15, 60], "spike_markets": ["all_shares"], "direction": "both", "leverage": "1",
             "spike_half": 50, "spike_trail": 1.0, "spike_max": 0, "spike_share": 10, "two_takes": True,
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False,
-            "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0}
+            "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed"}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -53,7 +53,7 @@ def spike_cfg(s):
             "trend_on": bool(s.get("trend_on", True)), "trend_trade": bool(s.get("trend_trade", False)),
             "tier_profile": bool(s.get("tier_profile", True)), "window": s.get("entry_window", "9-19"),
             "exit_late": bool(s.get("exit_late", True)), "carry_all": bool(s.get("carry_all", True)),
-            "day_carry": int(s.get("day_carry", 0) or 0)}
+            "day_carry": int(s.get("day_carry", 0) or 0), "day_mode": s.get("day_mode", "fixed")}
 
 
 def chart_sp(s):

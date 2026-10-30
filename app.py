@@ -355,6 +355,8 @@ class App(tk.Tk):
         self.v_rescan = tk.BooleanVar(value=self.s.get("rescan", False))
         self.v_autostart = tk.BooleanVar(value=self.s.get("autostart", False))
         self.v_day = tk.BooleanVar(value=self.s.get("day_on", True))
+        self.DMODE = {"fixed": "в заданное время (проверено на истории)", "signal": "сразу при сигнале 09:00–19:00 (на истории в минусе)"}
+        self.v_dmode = tk.StringVar(value=self.DMODE.get(self.s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.DAYC = {0: "нет — выход в 17:00", 1: "на 1 день", 2: "на 2 дня", 3: "на 3 дня"}
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_sound = tk.BooleanVar(value=self.s.get("sound_on", True))
@@ -518,6 +520,12 @@ class App(tk.Tk):
         ttk.Label(g, text="2. Движение дня (отдельная стратегия)", font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
         ttk.Checkbutton(g, text="Робот торгует и по этой стратегии — вход в одно заданное время дня", variable=self.v_day).grid(row=r, column=1, sticky="w")
         r += 1
+        fdm = ttk.Frame(g); fdm.grid(row=r, column=1, sticky="w", pady=2)
+        ttk.Label(fdm, text="Вход:").pack(side="left")
+        ttk.Combobox(fdm, textvariable=self.v_dmode, width=30, state="readonly", values=list(self.DMODE.values())).pack(side="left", padx=6)
+        ttk.Label(fdm, text="«сразу при сигнале» — как только бумага прошла порог от открытия в сторону рынка; "
+                            "размер позиции — «% от портфеля» из настроек формации", foreground="#555").pack(side="left")
+        r += 1
         fdc = ttk.Frame(g); fdc.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(fdc, text="Переносить позиции:").pack(side="left")
         ttk.Combobox(fdc, textvariable=self.v_dayc, width=20, state="readonly", values=list(self.DAYC.values())).pack(side="left", padx=6)
@@ -663,7 +671,8 @@ class App(tk.Tk):
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
                       rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(),
-                      day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0), sound_on=self.v_sound.get(),
+                      day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0),
+                      day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"), sound_on=self.v_sound.get(),
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
                       direction={v: k for k, v in self.DIRS.items()}.get(self.v_dir.get(), "both"),
                       spike_markets=[k for k, _ in at.MARKETS if self.v_mk[k].get()] or ["imoex"], spike_half=int(self.v_spk_half.get()),
@@ -970,7 +979,8 @@ class App(tk.Tk):
         for tk, mv, why in snap["scan"][:60]:
             tag = ("pos" if mv > 0 else "neg") if why == "СИГНАЛ" else ()
             self.scan_tree.insert("", "end", tags=tag, values=(tk, f"{mv * 100:+.2f}%",
-                                                               f"кандидат — вход в {self.s.get('entry', '15:00')}" if why == "СИГНАЛ" else why))
+                                                               (("СИГНАЛ — вход сразу" if self.s.get("day_mode", "fixed") == "signal"
+                                                                 else f"кандидат — вход в {self.s.get('entry', '15:00')}") if why == "СИГНАЛ" else why)))
         self.spk_tree.delete(*self.spk_tree.get_children())
         mk = snap.get("market")
         for row in reversed(snap.get("spikes", [])):
@@ -1127,7 +1137,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "auto_journal"]
+                   "carry_all", "day_carry", "day_mode", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1140,6 +1150,7 @@ class App(tk.Tk):
         self.v_sbtok.set(bool(s["sandbox_token"])); self.v_aj.set(bool(s.get("auto_journal", True)))
         self.v_rescan.set(bool(s.get("rescan"))); self.v_day.set(bool(s.get("day_on", True)))
         self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0]))
+        self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.v_trend_on.set(bool(s.get("trend_on", True))); self.v_trend_trade.set(bool(s.get("trend_trade")))
         self.v_tier.set(bool(s.get("tier_profile", True)))
         self.v_win.set(self.WIN.get(s.get("entry_window", "9-19"), self.WIN["9-19"]))
