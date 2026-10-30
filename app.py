@@ -119,6 +119,9 @@ class App(tk.Tk):
         self.status.pack(side="left")
         self.clock = ttk.Label(top, text="")
         self.clock.pack(side="right")
+        self.idx_lbl = tk.Label(top, text="IMOEX …", font=("Segoe UI", 11, "bold"))
+        self.idx_lbl.pack(side="right", padx=14)
+        threading.Thread(target=self._index_loop, daemon=True).start()
 
         pw = ttk.PanedWindow(self, orient="vertical")
         pw.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -1158,6 +1161,25 @@ class App(tk.Tk):
         self.v_tg_trend.set(bool(s.get("tg_trend", True)))
         sc.configure(float(s["threshold"]), s["entry"])
         self.log("Настройки взяты с сервера — во вкладке «Настройки» показаны те, с которыми работает робот на сервере.\n")
+
+    # --- индекс в реальном времени
+    def _index_loop(self):
+        import time as _t
+        while True:
+            try:
+                q = sc.index_quote()
+                if q:
+                    self.q.put(("call", self._show_index, q))
+            except Exception:
+                pass
+            n = now_msk()
+            _t.sleep(10 if n.weekday() < 5 and 6 <= n.hour < 24 else 300)
+
+    def _show_index(self, q):
+        v = f"{q['value']:,.2f}".replace(",", " ").replace(".", ",")
+        ch = f"{q['chg']:+,.2f}".replace(",", " ").replace(".", ",")
+        self.idx_lbl.configure(text=f"IMOEX {v} ({ch}; {q['pct']:+.2f}%)".replace(".", ","),
+                               fg="#0a7a2f" if q["pct"] > 0 else "#b3261e" if q["pct"] < 0 else "#333")
 
     # --- результаты
     def _results_tick(self):

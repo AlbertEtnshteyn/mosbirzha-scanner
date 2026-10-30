@@ -110,7 +110,11 @@ function onEvent(e) {
 }
 
 function renderState(st) {
-  $("#clock").textContent = "МСК " + st.time + " · v" + st.version;
+  $("#clock").textContent = "МСК " + st.time.slice(11) + " · v" + String(st.version).split(" ")[0];
+  const ix = st.index;
+  $("#idx").innerHTML = ix ? `IMOEX ${ix.value.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+    <small class="${cls(ix.pct)}">(${ix.chg > 0 ? "+" : ""}${ix.chg.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}; ${pct(ix.pct)})</small>` : "";
+  $("#idx").title = ix ? "обновлено " + ix.time + " МСК" : "";
   const b = $("#tradeBadge");
   if (!st.running) { b.textContent = st.token_set ? "робот запускается" : "нужен токен"; b.className = "badge dead"; }
   else if (st.trade) { b.textContent = "● ТОРГОВЛЯ ВКЛ"; b.className = "badge on"; }

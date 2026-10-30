@@ -118,3 +118,6 @@ textarea { resize: vertical; font-family: ui-monospace, monospace; font-size: 13
 .tbl tr.sub td { color: var(--muted); font-size: 12px; padding-top: 4px; padding-bottom: 4px; border-bottom-style: dashed; }
 .tbl tr.sel td { background: rgba(47,124,246,.12); }
 .tbl tr[data-trf] { cursor: pointer; }
+.idx { font-weight: 700; font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.idx small { font-weight: 600; }
+.top-row { gap: 8px; flex-wrap: wrap; }

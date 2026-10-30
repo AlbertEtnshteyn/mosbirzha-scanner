@@ -467,6 +467,20 @@ def index_members(code, fallback=None, min_n=10):
     return fallback
 
 
+def index_quote(code="IMOEX"):
+    """Индекс Мосбиржи сейчас: значение, изменение к закрытию прошлого дня (пункты и %), время обновления."""
+    js = iss_get(f"/engines/stock/markets/index/boards/SNDX/securities/{code}.json", {"iss.only": "marketdata"}, retries=1)
+    md = js["marketdata"]
+    if not md["data"]:
+        return None
+    x = dict(zip(md["columns"], md["data"][0]))
+    val = x.get("CURRENTVALUE") or x.get("LASTVALUE")
+    if not val:
+        return None
+    return {"code": code, "value": float(val), "chg": float(x.get("LASTCHANGE") or 0),
+            "pct": float(x.get("LASTCHANGEPRC") or 0), "time": str(x.get("UPDATETIME") or x.get("TIME") or "")[:5]}
+
+
 def imoex_tickers():
     try:
         js = iss_get("/statistics/engines/stock/markets/index/analytics/IMOEX.json", {"limit": 100})

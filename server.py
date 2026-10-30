@@ -118,7 +118,21 @@ class Robot:
         self.lock = threading.Lock()
         self.done = {}
         self.busy = None
+        self.index = None
         self._apply()
+        threading.Thread(target=self._index_loop, daemon=True, name="index").start()
+
+    def _index_loop(self):
+        """IMOEX в реальном времени для телефона: раз в 10 секунд днём, реже ночью и в выходные."""
+        while True:
+            try:
+                q = sc.index_quote()
+                if q:
+                    self.index = q
+            except Exception:
+                pass
+            n = now_msk()
+            time.sleep(10 if n.weekday() < 5 and 6 <= n.hour < 24 else 300)
 
     # --- настройки
     def _apply(self):
@@ -281,7 +295,7 @@ class Robot:
                 "positions": snap.get("positions", []) if r else [],
                 "spikes": list(reversed(snap.get("spikes", []))), "scan": snap.get("scan", [])[:60],
                 "threshold": sc.THRESHOLD, "ev_seq": self.ev_seq, "balance": snap.get("balance"),
-                "pos_summary": rc.positions_summary(snap.get("positions", []) if r else [])}
+                "pos_summary": rc.positions_summary(snap.get("positions", []) if r else []), "index": self.index}
 
 
 ROBOT = None
