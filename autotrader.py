@@ -1285,6 +1285,10 @@ class AutoTrader:
             take1, take2 = (entry + 0.5 * (t1 - entry), t1) if t1 else (None, None)   # тейк1 — полпути до хая, тейк2 — хай
         else:
             take1, take2 = t1, None                                                # один тейк у хая импульса
+        day_ex = {}
+        if strat == "15":
+            day_ex = {"dtp": float(self.sp.get("day_tp", 0) or 0), "dhalf": float(self.sp.get("day_tp_half", 1.0) or 1.0),
+                      "dact": float(self.sp.get("day_act", 0) or 0), "dtrail": float(self.sp.get("day_trail", 0) or 0)}
         carry_max = 0
         if strat == "15" and int(self.sp.get("day_carry", 0) or 0) > 0:
             carry, carry_max = True, int(self.sp["day_carry"])
@@ -1292,6 +1296,7 @@ class AutoTrader:
                "strat": strat, "R": abs(entry - stop), "took": False, "per_lot": per_lot, "stage": 0, "peak": entry,
                "exit_min": exit_min or sc.EXIT_MIN, "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
                "date": self.clock().date().isoformat()}
+        pos.update(day_ex)
         now_t = self.clock()
         if strat == "15" and now_t.hour * 60 + now_t.minute >= pos["exit_min"]:
             pos["carry_date"] = now_t.date().isoformat()     # вошли после 17:00 — выход завтра в 17:00
@@ -1320,6 +1325,9 @@ class AutoTrader:
             if not px:
                 continue
             s = p["side"]
+            if p.get("strat") == "15" and (p.get("dtp") or p.get("dtrail")):
+                self._day_exits(p, px, s)
+                continue
             stage = p.get("stage", 1 if p.get("took") else 0)
             if stage >= 1:
                 if (px - p["peak"]) * s > 0:
@@ -1352,6 +1360,39 @@ class AutoTrader:
                     self._save()
                     self.log(f"  {p['ticker']}: тейк2 взят, остаток {p['lots']} лот. ведёт трейлинг-стоп")
         self._push()
+
+    def _day_exits(self, p, px, s):
+        """«Движение дня»: тейк (весь или часть + стоп в б/у) и трейлинг-стоп в % от цены; стоп 3% — как раньше."""
+        e = p["entry"]
+        if (px - p.get("best", e)) * s > 0:
+            p["best"] = px
+        best = p.get("best", e)
+        tp, half, act, trail = p.get("dtp") or 0, p.get("dhalf", 1.0), p.get("dact") or 0, p.get("dtrail") or 0
+        if tp and not p.get("dtook") and (px - e * (1 + s * tp)) * s >= 0:
+            part = int(p["lots"] * half) if half < 1 else p["lots"]
+            if part >= p["lots"] or part < 1:
+                self._close(p, px, f"тейк {tp * 100:g}%")
+                return
+            if self._close(p, px, f"тейк {tp * 100:g}% ({half * 100:.0f}%)", lots=part):
+                p["dtook"] = p["armed"] = True
+                if (e - p["stop"]) * s > 0:
+                    p["stop"] = e
+                self.log(f"  {p['ticker']}: стоп в безубыток {e:.4g}" + (f", трейлинг {trail * 100:g}%" if trail else ""))
+                self._save()
+        if act and not p.get("armed") and (px - e * (1 + s * act)) * s >= 0:
+            p["armed"] = True
+            if (e - p["stop"]) * s > 0:
+                p["stop"] = e
+            self.log(f"  {p['ticker']}: +{act * 100:g}% — стоп в безубыток, включён трейлинг {trail * 100:g}%")
+            self._save()
+        if p.get("armed") and trail:
+            ts = best * (1 - s * trail)
+            if (ts - p["stop"]) * s > 0:
+                p["stop"] = ts
+                self._save()
+        if (px - p["stop"]) * s <= 0:
+            why = "стоп" if not p.get("armed") else ("б/у" if abs(p["stop"] - e) < 1e-9 else "трейлинг-стоп")
+            self._close(p, px, why)
 
     def _close_all(self, why, only=None):
         targets = list(only if only is not None else self.positions)
