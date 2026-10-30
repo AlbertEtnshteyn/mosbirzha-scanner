@@ -166,7 +166,9 @@ function renderState(st) {
   $("#scanInfo").textContent = st.last_scan ? `порог ${(st.threshold * 100).toFixed(1)}%` : "";
   $("#scan").innerHTML = S.length ? S.map(([tk, mv, why]) =>
     `<div class="item tap" data-chart="${esc(tk)}" data-tf="5"><div class="hd"><span class="tk" style="font-size:14px">${esc(tk)}</span>
-      <span class="${why === "СИГНАЛ" ? cls(mv) : "muted"}">${pct(mv * 100)}</span></div><div class="meta">${esc(why)}</div></div>`).join("")
+      <span class="${why === "СИГНАЛ" ? cls(mv) : "muted"}">${pct(mv * 100)}</span></div><div class="meta">${why === "СИГНАЛ"
+      ? (st.day_on === false ? "проходит порог, но «движение дня» выключено" : `кандидат — робот войдёт в ${esc(st.entry || "15:00")}, если движение сохранится`)
+      : esc(why)}</div></div>`).join("")
     : `<div class="empty">Данные появятся после 10:01</div>`;
 
   // формации

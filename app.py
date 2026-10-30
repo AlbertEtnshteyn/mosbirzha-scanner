@@ -969,7 +969,8 @@ class App(tk.Tk):
         self.scan_tree.delete(*self.scan_tree.get_children())
         for tk, mv, why in snap["scan"][:60]:
             tag = ("pos" if mv > 0 else "neg") if why == "СИГНАЛ" else ()
-            self.scan_tree.insert("", "end", tags=tag, values=(tk, f"{mv * 100:+.2f}%", why))
+            self.scan_tree.insert("", "end", tags=tag, values=(tk, f"{mv * 100:+.2f}%",
+                                                               f"кандидат — вход в {self.s.get('entry', '15:00')}" if why == "СИГНАЛ" else why))
         self.spk_tree.delete(*self.spk_tree.get_children())
         mk = snap.get("market")
         for row in reversed(snap.get("spikes", [])):
