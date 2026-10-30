@@ -476,6 +476,10 @@ function renderSettings(s) {
   <div class="grp"><h3>Движение дня</h3>
     ${chk("day_on", "Торговать «движение дня» (вход в заданное время)")}
     ${sel("day_mode", "Вход", [["fixed", "в заданное время (ниже) — проверено на истории"], ["signal", "сразу при сигнале 09:00–19:00 — на истории в минусе"]])}
+    ${sel("day_tp", "Тейк, % (лучше по истории — 8%)", [[0, "без тейка"], [3, "3%"], [5, "5%"], [8, "8%"], [10, "10%"]])}
+    ${sel("day_tp_half", "Закрыть на тейке", [[50, "50% (остаток — б/у и трейлинг)"], [100, "всю позицию"]])}
+    ${sel("day_trail", "Трейлинг-стоп, %", [[0, "нет"], [1, "1%"], [2, "2%"], [3, "3%"]])}
+    ${sel("day_act", "Трейлинг включается", [[0, "после тейка"], [1, "с +1%"], [2, "с +2%"], [3, "с +3%"]])}
     ${sel("day_carry", "Переносить позиции (выход в 17:00 последнего дня, стоп 3% действует всё время)", [[0, "нет — выход в 17:00"], [1, "на 1 день"], [2, "на 2 дня"], [3, "на 3 дня"]])}
     ${inp("threshold", "Порог движения, %", "number", 'step="0.1" inputmode="decimal"')}
     ${inp("entry", "Время входа (МСК)", "time")}
@@ -530,7 +534,8 @@ $("#setForm").addEventListener("submit", async (e) => {
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_mode: v("day_mode") || "fixed", threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_mode: v("day_mode") || "fixed", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
+    day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };

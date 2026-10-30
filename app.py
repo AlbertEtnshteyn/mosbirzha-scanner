@@ -359,6 +359,10 @@ class App(tk.Tk):
         self.v_dmode = tk.StringVar(value=self.DMODE.get(self.s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.DAYC = {0: "нет — выход в 17:00", 1: "на 1 день", 2: "на 2 дня", 3: "на 3 дня"}
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
+        self.v_dtp = tk.StringVar(value=str(self.s.get("day_tp", 8)))
+        self.v_dhalf = tk.StringVar(value=str(self.s.get("day_tp_half", 50)))
+        self.v_dtrail = tk.StringVar(value=str(self.s.get("day_trail", 2)))
+        self.v_dact = tk.StringVar(value=str(self.s.get("day_act", 0)))
         self.v_sound = tk.BooleanVar(value=self.s.get("sound_on", True))
         self.v_trend_on = tk.BooleanVar(value=self.s.get("trend_on", True))
         self.v_trend_trade = tk.BooleanVar(value=self.s.get("trend_trade", False))
@@ -531,6 +535,20 @@ class App(tk.Tk):
         ttk.Combobox(fdc, textvariable=self.v_dayc, width=20, state="readonly", values=list(self.DAYC.values())).pack(side="left", padx=6)
         ttk.Label(fdc, text="выход в 17:00 последнего дня, стоп 3% действует всё время", foreground="#555").pack(side="left")
         r += 1
+        fdt = ttk.Frame(g); fdt.grid(row=r, column=1, sticky="w", pady=2)
+        ttk.Label(fdt, text="Тейк, %:").pack(side="left")
+        ttk.Combobox(fdt, textvariable=self.v_dtp, width=4, state="readonly", values=["0", "3", "5", "8", "10"]).pack(side="left", padx=4)
+        ttk.Label(fdt, text="закрыть на тейке, %:").pack(side="left")
+        ttk.Combobox(fdt, textvariable=self.v_dhalf, width=4, state="readonly", values=["50", "100"]).pack(side="left", padx=4)
+        ttk.Label(fdt, text="трейлинг-стоп, %:").pack(side="left")
+        ttk.Combobox(fdt, textvariable=self.v_dtrail, width=4, state="readonly", values=["0", "1", "2", "3"]).pack(side="left", padx=4)
+        ttk.Label(fdt, text="трейлинг с +%:").pack(side="left")
+        ttk.Combobox(fdt, textvariable=self.v_dact, width=4, state="readonly", values=["0", "1", "2", "3"]).pack(side="left", padx=4)
+        r += 1
+        ttk.Label(g, foreground="#555", wraplength=760, justify="left", text=(
+            "По истории лучше всего: тейк 8%, закрыть 50%, остаток — стоп в безубыток и трейлинг 2% (0 в «трейлинг с +%» — после тейка). "
+            "Тейк 0 — без тейка; стоп 3% действует всегда.")).grid(row=r, column=1, sticky="w")
+        r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
         ttk.Label(f, text="Порог движения акции от открытия, %:").pack(side="left")
         ttk.Combobox(f, textvariable=self.v_thr, width=6, state="readonly",
@@ -672,7 +690,9 @@ class App(tk.Tk):
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
                       rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(),
                       day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0),
-                      day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"), sound_on=self.v_sound.get(),
+                      day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"),
+                      day_tp=float(self.v_dtp.get()), day_tp_half=float(self.v_dhalf.get()),
+                      day_trail=float(self.v_dtrail.get()), day_act=float(self.v_dact.get()), sound_on=self.v_sound.get(),
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
                       direction={v: k for k, v in self.DIRS.items()}.get(self.v_dir.get(), "both"),
                       spike_markets=[k for k, _ in at.MARKETS if self.v_mk[k].get()] or ["imoex"], spike_half=int(self.v_spk_half.get()),
@@ -1137,7 +1157,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_mode", "auto_journal"]
+                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1151,6 +1171,8 @@ class App(tk.Tk):
         self.v_rescan.set(bool(s.get("rescan"))); self.v_day.set(bool(s.get("day_on", True)))
         self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))
+        self.v_dtp.set(f"{float(s.get('day_tp', 8)):g}"); self.v_dhalf.set(f"{float(s.get('day_tp_half', 50)):g}")
+        self.v_dtrail.set(f"{float(s.get('day_trail', 2)):g}"); self.v_dact.set(f"{float(s.get('day_act', 0)):g}")
         self.v_trend_on.set(bool(s.get("trend_on", True))); self.v_trend_trade.set(bool(s.get("trend_trade")))
         self.v_tier.set(bool(s.get("tier_profile", True)))
         self.v_win.set(self.WIN.get(s.get("entry_window", "9-19"), self.WIN["9-19"]))
