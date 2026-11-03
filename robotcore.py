@@ -350,3 +350,35 @@ def market_overview(tier_map=None, live_prices=None):
                "live": any(r.get("live") for r in rows)}
     return {"time": datetime.now(sc.MSK).strftime("%d.%m.%Y %H:%M:%S"), "rows": rows, "summary": summary,
             "types": MARKET_TYPES, "errors": errors}
+
+
+def _form_short(why):
+    w = str(why or "")
+    if w.startswith("ВХОД"):
+        return "вход"
+    if w.startswith("ТРЕНД"):
+        return "тренд"
+    if w.startswith("жду"):
+        return "жду отката"
+    if w.startswith("коснулся"):
+        return "касание EMA20"
+    if "ПОДТВЕРЖД" in w:
+        return "подтверждена"
+    if "против" in w:
+        return "против индекса"
+    if w.startswith("отмен") or w.startswith("время вышло"):
+        return "отменена"
+    return w.split(" — ")[0][:24] or "формация"
+
+
+def attach_formations(data, spikes):
+    """Отметить в «Рынках» бумаги, где сегодня есть всплеск/формация EMA20: ТФ, направление, статус (последний по ТФ)."""
+    by = {}
+    for row in spikes or []:
+        tm, tk, tfn, _v, _m, body, why = row[:7]
+        by.setdefault(tk, {})[tfn] = {"tf": tfn, "side": 1 if body > 0 else -1, "status": _form_short(why), "time": tm,
+                                      "full": str(why)}
+    out = dict(data)
+    out["rows"] = [dict(r, forms=list(by[r["ticker"]].values())) if r.get("ticker") in by else r for r in data.get("rows", [])]
+    out["forms_n"] = len(by)
+    return out

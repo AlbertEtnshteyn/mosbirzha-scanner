@@ -595,7 +595,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/journal":
                 return self._send(200, journal())
             if u.path == "/api/market":
-                return self._send(200, market())
+                return self._send(200, rc.attach_formations(market(), (ROBOT.snap or {}).get("spikes", [])))
             if u.path == "/api/settings":
                 return self._send(200, ROBOT.public_settings())
             if u.path == "/api/chart":

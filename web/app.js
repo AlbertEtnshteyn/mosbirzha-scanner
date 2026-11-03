@@ -359,7 +359,7 @@ function hover(p) {
 }
 
 // ---------------------------------------------------------------- рынки
-const MK = { type: "share", tier: "", sort: "pct_desc", q: "", data: null };
+const MK = { type: "share", tier: "", sort: "pct_desc", q: "", data: null, formOnly: false };
 function bigRub(v) {
   if (!v) return "—";
   return v >= 1e9 ? (v / 1e9).toFixed(1).replace(".", ",") + " млрд" : v >= 1e6 ? (v / 1e6).toFixed(0) + " млн" : (v / 1e3).toFixed(0) + " тыс";
@@ -368,6 +368,8 @@ $$("#mkType button").forEach((b) => (b.onclick = () => { MK.type = b.dataset.v; 
 $$("#mkTier button").forEach((b) => (b.onclick = () => { MK.tier = b.dataset.v; $$("#mkTier button").forEach((x) => x.classList.toggle("on", x === b)); renderMarket(); }));
 $("#mkSearch").addEventListener("input", (e) => { MK.q = e.target.value.trim().toUpperCase(); renderMarket(); });
 $("#mkSort").onchange = (e) => { MK.sort = e.target.value; renderMarket(); };
+$("#mkForm").onchange = (e) => { MK.formOnly = e.target.checked; renderMarket(); };
+const formBadge = (f) => `<span class="fb ${f.status === "вход" ? "in" : f.side > 0 ? "l" : "s"}" title="${esc(f.full)}">EMA20 ${esc(f.tf)} ${f.side > 0 ? "▲" : "▼"} ${esc(f.status)}</span>`;
 async function loadMarket() {
   try { MK.data = await api("/api/market"); renderMarket(); }
   catch (e) { if (e.message !== "401") $("#mkSum").textContent = "Ошибка: " + e.message; }
@@ -377,20 +379,22 @@ function renderMarket() {
   $("#mkTier").hidden = MK.type !== "share";
   let R = d.rows.filter((r) => r.type === MK.type && r.price != null);
   if (MK.type === "share" && MK.tier) R = R.filter((r) => MK.tier === "blue" ? r.blue : r.tier === MK.tier);
+  if (MK.formOnly) R = R.filter((r) => r.forms && r.forms.length);
   if (MK.q) R = R.filter((r) => r.ticker.toUpperCase().includes(MK.q) || String(r.name).toUpperCase().includes(MK.q));
   const k = MK.sort, pv = (r) => r.pct == null ? -1e9 : r.pct;
   R.sort((a, b) => k === "pct_desc" ? pv(b) - pv(a) : k === "pct_asc" ? (a.pct ?? 1e9) - (b.pct ?? 1e9)
     : k === "abs" ? Math.abs(b.pct || 0) - Math.abs(a.pct || 0) : k === "value" ? (b.value || 0) - (a.value || 0) : String(a.name).localeCompare(String(b.name), "ru"));
   const s = d.summary || {};
   $("#mkSum").innerHTML = `Акции: растут <b class="up">${s.up || 0}</b>, падают <b class="down">${s.down || 0}</b>, оборот ${bigRub(s.value)} ₽ ·
-    ${s.live ? "цены акций — в реальном времени (Т-Инвестиции)" : "данные Мосбиржи (могут быть с задержкой)"} · обновлено ${esc(d.time.slice(11))} · показано ${R.length}`
+    ${s.live ? "цены акций — в реальном времени (Т-Инвестиции)" : "данные Мосбиржи (могут быть с задержкой)"} · обновлено ${esc(d.time.slice(11))} · показано ${R.length} · с формацией EMA20 сегодня: ${d.forms_n || 0}`
     + (d.errors && d.errors.length ? `<br><span class="down">${esc(d.errors.join("; "))}</span>` : "");
   const tierName = { index: "индекс", 2: "2-й эш.", 3: "3-й эш." };
   $("#mkList").innerHTML = R.length ? R.slice(0, 400).map((r) => `<div class="item tap" ${r.type === "share" ? `data-chart="${esc(r.ticker)}" data-tf="15"` : ""}>
     <div class="hd"><span><b>${esc(r.ticker)}</b> <span class="muted small">${esc(r.name)}</span></span>
       <b class="${cls(r.pct)}">${pct(r.pct)}</b></div>
     <div class="meta">${fmt(r.price)}${r.live ? " ●" : ""} · оборот ${bigRub(r.value)} · ${esc(r.time || "—")}
-      ${r.type === "share" ? " · " + (r.blue ? "голубая фишка · " : "") + (tierName[r.tier] || "") : ""}</div></div>`).join("")
+      ${r.type === "share" ? " · " + (r.blue ? "голубая фишка · " : "") + (tierName[r.tier] || "") : ""}</div>
+    ${r.forms && r.forms.length ? `<div class="fbs">${r.forms.map(formBadge).join("")}</div>` : ""}</div>`).join("")
     : `<div class="empty">Ничего не найдено</div>`;
 }
 setInterval(() => { if (!document.hidden && TAB === "market") loadMarket(); }, 30000);

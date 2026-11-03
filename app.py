@@ -250,13 +250,16 @@ class App(tk.Tk):
                      values=["Все", "Индекс МосБиржи", "Голубые фишки", "2-й эшелон", "3-й эшелон"]).pack(side="left", padx=(4, 12))
         ttk.Label(top8, text="Поиск:").pack(side="left")
         ttk.Entry(top8, textvariable=self.mk_q, width=16).pack(side="left", padx=(4, 12))
+        self.mk_form = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top8, text="только с формацией", variable=self.mk_form, command=self._render_market).pack(side="left", padx=(0, 12))
         ttk.Button(top8, text="Обновить", command=self.refresh_market).pack(side="left")
         self.mk_sum = ttk.Label(t8, text="", foreground="#555")
         self.mk_sum.pack(anchor="w", pady=4)
         self.mk_tree = self._tree(t8, [("ticker", "Тикер", 90), ("name", "Название", 200), ("price", "Цена", 90), ("pct", "Изм. за день", 100),
-                                       ("value", "Оборот, млн ₽", 110), ("time", "Время", 70), ("tier", "Эшелон", 110)])
+                                       ("value", "Оборот, млн ₽", 110), ("time", "Время", 70), ("tier", "Эшелон", 110),
+                                       ("form", "Формация EMA20 (сегодня)", 260)])
         self.mk_sort = ("pct", True)
-        for col in ("ticker", "name", "price", "pct", "value", "time", "tier"):
+        for col in ("ticker", "name", "price", "pct", "value", "time", "tier", "form"):
             self.mk_tree.heading(col, command=lambda c=col: self._mk_sort_by(c))
         for v in (self.mk_type, self.mk_tier, self.mk_q):
             v.trace_add("write", lambda *_: self._render_market())
@@ -1293,6 +1296,7 @@ class App(tk.Tk):
                     ti = getattr(getattr(rr, "b", None), "ti", None)
                     live = (lambda tks: ti.last_prices([t for t in tks if t in ti._shares])) if ti is not None else None
                     data = rc.market_overview(tier_map=dict(getattr(rr, "tier", {}) or {}) if rr else None, live_prices=live)
+                    data = rc.attach_formations(data, list(getattr(rr, "spikes", []) or []))
                 self.q.put(("call", self._show_market, data))
             except Exception as e:
                 self.q.put(("log", f"Рынки: данные не получены: {e}\n"))
@@ -1304,7 +1308,7 @@ class App(tk.Tk):
 
     def _mk_sort_by(self, col):
         key, rev = self.mk_sort
-        self.mk_sort = (col, not rev if key == col else col in ("pct", "value", "price"))
+        self.mk_sort = (col, not rev if key == col else col in ("pct", "value", "price", "form"))
         self._render_market()
 
     def _render_market(self):
@@ -1318,13 +1322,16 @@ class App(tk.Tk):
         if typ == "share" and tier != "Все":
             R = [r for r in R if (r.get("blue") if tier == "Голубые фишки" else
                                   r.get("tier") == {"Индекс МосБиржи": "index", "2-й эшелон": "2", "3-й эшелон": "3"}[tier])]
+        if self.mk_form.get():
+            R = [r for r in R if r.get("forms")]
         q = self.mk_q.get().strip().upper()
         if q:
             R = [r for r in R if q in r["ticker"].upper() or q in str(r["name"]).upper()]
         col, rev = self.mk_sort
         keyf = {"pct": lambda r: r.get("pct") if r.get("pct") is not None else -1e9, "value": lambda r: r.get("value") or 0,
                 "price": lambda r: r.get("price") or 0, "time": lambda r: r.get("time") or "",
-                "tier": lambda r: str(r.get("tier") or ""), "ticker": lambda r: r["ticker"], "name": lambda r: str(r["name"])}[col]
+                "tier": lambda r: str(r.get("tier") or ""), "ticker": lambda r: r["ticker"], "name": lambda r: str(r["name"]),
+                "form": lambda r: len(r.get("forms") or [])}[col]
         R.sort(key=keyf, reverse=rev)
         self.mk_tree.delete(*self.mk_tree.get_children())
         tn = {"index": "индекс", "2": "2-й", "3": "3-й"}
@@ -1333,11 +1340,12 @@ class App(tk.Tk):
             self.mk_tree.insert("", "end", tags=(("pos" if p > 0 else "neg"),) if p else (), values=(
                 r["ticker"], r["name"], f"{r['price']:.6g}" + (" ●" if r.get("live") else ""),
                 f"{p:+.2f}%" if p is not None else "—", f"{(r.get('value') or 0) / 1e6:,.0f}".replace(",", " "),
-                r.get("time") or "—", ("голубая · " if r.get("blue") else "") + tn.get(r.get("tier"), "") if typ == "share" else ""))
+                r.get("time") or "—", ("голубая · " if r.get("blue") else "") + tn.get(r.get("tier"), "") if typ == "share" else "",
+                "; ".join(f"{f['tf']} {'▲' if f['side'] > 0 else '▼'} {f['status']}" for f in r.get("forms") or [])))
         s = d.get("summary", {})
         self.mk_sum.configure(text=(f"Акции: растут {s.get('up', 0)}, падают {s.get('down', 0)}, оборот {s.get('value', 0) / 1e9:.1f} млрд ₽ · "
                                     + ("цены акций в реальном времени (● — Т-Инвестиции)" if s.get("live") else "данные Мосбиржи (могут быть с задержкой)")
-                                    + f" · обновлено {d.get('time', '')[11:]} · показано {len(R)} · щелчок по заголовку — сортировка, двойной по строке — график"
+                                    + f" · обновлено {d.get('time', '')[11:]} · показано {len(R)} · с формацией EMA20: {d.get('forms_n', 0)} · щелчок по заголовку — сортировка, двойной по строке — график"
                                     + (f" · ошибки: {'; '.join(d['errors'])}" if d.get("errors") else "")))
 
     # --- результаты

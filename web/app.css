@@ -123,3 +123,7 @@ textarea { resize: vertical; font-family: ui-monospace, monospace; font-size: 13
 .top-row { gap: 8px; flex-wrap: wrap; }
 nav.bottom button { font-size: 10.5px; }
 #mkTier .seg button { padding: 6px 8px; font-size: 13px; }
+.fbs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.fb { font-size: 11.5px; font-weight: 600; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); background: var(--card2); }
+.fb.l { color: var(--up); border-color: rgba(38,166,154,.45); } .fb.s { color: var(--down); border-color: rgba(239,83,80,.45); }
+.fb.in { color: #fff; background: var(--accent); border-color: var(--accent); }
