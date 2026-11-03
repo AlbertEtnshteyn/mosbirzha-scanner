@@ -409,6 +409,8 @@ class App(tk.Tk):
         self.v_dmode = tk.StringVar(value=self.DMODE.get(self.s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.DAYC = {0: "нет — выход в 17:00", 1: "на 1 день", 2: "на 2 дня", 3: "на 3 дня"}
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
+        self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
+        self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
         self.v_dtp = tk.StringVar(value=str(self.s.get("day_tp", 8)))
         self.v_dhalf = tk.StringVar(value=str(self.s.get("day_tp_half", 50)))
         self.v_dtrail = tk.StringVar(value=str(self.s.get("day_trail", 2)))
@@ -486,6 +488,8 @@ class App(tk.Tk):
         ttk.Checkbutton(f, text="Профиль по эшелонам (по проверке на 152 акциях): индекс — формация 15 мин и 1 час; "
                                 "2-й эшелон — формация 1 час и трендовый откат 15 мин после роста ≥5% на объёме ×10; "
                                 "3-й эшелон и 5 мин — никогда не торгуются, только уведомления", variable=self.v_tier).pack(anchor="w")
+        ttk.Checkbutton(f, text="Только по направлению индекса (лонг — когда индекс растёт, шорт — когда падает). "
+                                "Если снять — входит в обе стороны", variable=self.v_idx_form).pack(anchor="w")
         fw = ttk.Frame(f); fw.pack(anchor="w", pady=(4, 0))
         ttk.Label(fw, text="Время входов:").pack(side="left")
         cw = ttk.Combobox(fw, textvariable=self.v_win, width=13, state="readonly", values=list(self.WIN.values()))
@@ -573,6 +577,9 @@ class App(tk.Tk):
         r += 1
         ttk.Label(g, text="2. Движение дня (отдельная стратегия)", font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
         ttk.Checkbutton(g, text="Робот торгует и по этой стратегии — вход в одно заданное время дня", variable=self.v_day).grid(row=r, column=1, sticky="w")
+        r += 1
+        ttk.Checkbutton(g, text="Только по направлению рынка (акция идёт туда же, куда рынок). Если снять — в обе стороны",
+                        variable=self.v_idx_day).grid(row=r, column=1, sticky="w")
         r += 1
         fdm = ttk.Frame(g); fdm.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(fdm, text="Вход:").pack(side="left")
@@ -741,6 +748,7 @@ class App(tk.Tk):
                       rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(),
                       day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0),
                       day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"),
+                      idx_form=self.v_idx_form.get(), idx_day=self.v_idx_day.get(),
                       day_tp=float(self.v_dtp.get()), day_tp_half=float(self.v_dhalf.get()),
                       day_trail=float(self.v_dtrail.get()), day_act=float(self.v_dact.get()), sound_on=self.v_sound.get(),
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
@@ -1209,7 +1217,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "auto_journal"]
+                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1223,6 +1231,7 @@ class App(tk.Tk):
         self.v_rescan.set(bool(s.get("rescan"))); self.v_day.set(bool(s.get("day_on", True)))
         self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))
+        self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
         self.v_dtp.set(f"{float(s.get('day_tp', 8)):g}"); self.v_dhalf.set(f"{float(s.get('day_tp_half', 50)):g}")
         self.v_dtrail.set(f"{float(s.get('day_trail', 2)):g}"); self.v_dact.set(f"{float(s.get('day_act', 0)):g}")
         self.v_trend_on.set(bool(s.get("trend_on", True))); self.v_trend_trade.set(bool(s.get("trend_trade")))

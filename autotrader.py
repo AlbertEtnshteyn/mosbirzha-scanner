@@ -44,7 +44,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -879,7 +879,7 @@ class AutoTrader:
         for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1])):
             if abs(mv) < sc.THRESHOLD:
                 why = "меньше порога"
-            elif self.market == 0 or (mv > 0) != (self.market > 0):
+            elif self.sp.get("idx_day", True) and (self.market == 0 or (mv > 0) != (self.market > 0)):
                 why = "против рынка"
             else:
                 why = "СИГНАЛ"

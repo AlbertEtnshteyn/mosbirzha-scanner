@@ -499,6 +499,7 @@ function renderSettings(s) {
     ${chk("trend_on", "Искать трендовые откаты", "Импульс на объёме был в последние дни, EMA10 над EMA20, касание EMA20 + подтверждение.")}
     ${chk("trend_trade", "…и торговать все трендовые откаты", "На истории в целом в минусе; по умолчанию только по профилю ниже.")}
     ${chk("tier_profile", "Профиль по эшелонам", "Индекс — формация 15 мин и 1 час; 2-й эшелон — формация 1 час и трендовый откат 15 мин; 3-й эшелон не торгуется.")}
+    ${chk("idx_form", "Только по направлению индекса", "Лонг — когда индекс растёт, шорт — когда падает. Если снять — входит в обе стороны.")}
     ${sel("entry_window", "Время входов", [["9-19", "09:00–19:00"], ["10-18", "10:00–18:00"]])}
     <label class="f"><span>Время выхода</span>
       <select name="exit_late" id="exitSel"></select></label>
@@ -515,6 +516,7 @@ function renderSettings(s) {
   </div>
   <div class="grp"><h3>Движение дня</h3>
     ${chk("day_on", "Торговать «движение дня» (вход в заданное время)")}
+    ${chk("idx_day", "Только по направлению рынка", "Акция идёт туда же, куда рынок. Если снять — в обе стороны.")}
     ${sel("day_mode", "Вход", [["fixed", "в заданное время (ниже) — проверено на истории"], ["signal", "сразу при сигнале 09:00–19:00 — на истории в минусе"]])}
     ${sel("day_tp", "Тейк, % (лучше по истории — 8%)", [[0, "без тейка"], [3, "3%"], [5, "5%"], [8, "8%"], [10, "10%"]])}
     ${sel("day_tp_half", "Закрыть на тейке", [[50, "50% (остаток — б/у и трейлинг)"], [100, "всю позицию"]])}
@@ -574,7 +576,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_mode: v("day_mode") || "fixed", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
     day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
