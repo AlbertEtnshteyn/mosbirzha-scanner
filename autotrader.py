@@ -1297,6 +1297,8 @@ class AutoTrader:
                "exit_min": exit_min or sc.EXIT_MIN, "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
                "date": self.clock().date().isoformat()}
         pos.update(day_ex)
+        if day_ex.get("dtp"):                         # уровень тейка «движения дня» — для таблиц и графика
+            pos["take"] = entry * (1 + side * day_ex["dtp"])
         now_t = self.clock()
         if strat == "15" and now_t.hour * 60 + now_t.minute >= pos["exit_min"]:
             pos["carry_date"] = now_t.date().isoformat()     # вошли после 17:00 — выход завтра в 17:00
@@ -1375,6 +1377,7 @@ class AutoTrader:
                 return
             if self._close(p, px, f"тейк {tp * 100:g}% ({half * 100:.0f}%)", lots=part):
                 p["dtook"] = p["armed"] = True
+                p["stage"] = 2                             # на экране вместо тейка — «трейл»
                 if (e - p["stop"]) * s > 0:
                     p["stop"] = e
                 self.log(f"  {p['ticker']}: стоп в безубыток {e:.4g}" + (f", трейлинг {trail * 100:g}%" if trail else ""))
