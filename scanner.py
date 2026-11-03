@@ -731,6 +731,27 @@ class TInvest:
         self.call("SandboxService", "SandboxPayIn",
                   {"accountId": acc, "amount": {"currency": "rub", "units": str(int(rub)), "nano": 0}})
 
+    def sandbox_live_value(self, acc):
+        """Стоимость счёта по текущим ценам: деньги + позиции × последняя цена (в песочнице цены в портфеле
+        обновляются редко, поэтому акции переоцениваем по GetLastPrices). Шорт — отрицательное количество."""
+        js = self.call("SandboxService", "GetSandboxPortfolio", {"accountId": acc, "currency": "RUB"})
+        total = self.q(js.get("totalAmountCurrencies"))
+        pos = [p for p in js.get("positions", []) if p.get("instrumentType") != "currency"]
+        uids = [p.get("instrumentUid") for p in pos if p.get("instrumentUid")]
+        last = {}
+        if uids:
+            try:
+                lp = self.call("MarketDataService", "GetLastPrices", {"instrumentId": uids})
+                last = {x.get("instrumentUid"): self.q(x.get("price")) for x in lp.get("lastPrices", [])}
+            except Exception:
+                pass
+        for p in pos:
+            qty = self.q(p.get("quantity"))
+            px = last.get(p.get("instrumentUid")) if p.get("instrumentType") == "share" else None
+            px = px or self.q(p.get("currentPrice"))
+            total += qty * px
+        return total or self.q(js.get("totalAmountPortfolio"))
+
     def sandbox_portfolio_value(self, acc):
         js = self.call("SandboxService", "GetSandboxPortfolio", {"accountId": acc, "currency": "RUB"})
         return self.q(js.get("totalAmountPortfolio"))

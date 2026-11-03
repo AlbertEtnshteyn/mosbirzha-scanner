@@ -458,6 +458,10 @@ class SandboxBroker:
         """Текущая стоимость портфеля песочницы, ₽."""
         return self.ti.sandbox_portfolio_value(self.acc)
 
+    def live_value(self):
+        """Стоимость счёта с открытыми позициями по текущим ценам, ₽."""
+        return self.ti.sandbox_live_value(self.acc)
+
     def universe(self, markets, index_list, log=print):
         """Список инструментов по выбранным в настройках группам."""
         out, shares = set(), None
@@ -643,14 +647,14 @@ class AutoTrader:
         return dict(p, last=last, pnl_rub=round(pnl, 2) if pnl is not None else None)
 
     def _balance(self, now):
-        """Стоимость портфеля раз в 5 минут; в файл — при изменении или раз в 30 минут."""
+        """Стоимость счёта по текущим ценам (с открытыми позициями) раз в минуту; в файл — при изменении (не чаще 10 мин) или раз в 30 минут."""
         if not hasattr(self.b, "portfolio_value"):
             return
-        if self._bal_t and (now - self._bal_t).total_seconds() < 300:
+        if self._bal_t and (now - self._bal_t).total_seconds() < 60:
             return
         self._bal_t = now
         try:
-            v = float(self.b.portfolio_value() or 0)
+            v = float((self.b.live_value() if hasattr(self.b, "live_value") else self.b.portfolio_value()) or 0)
         except sc.CertError:
             raise
         except Exception:
