@@ -87,6 +87,28 @@
       <div id="chTrades" class="list compact"></div>
     </section>
 
+    <!-- Рынки -->
+    <section id="tab-market" class="tab" hidden>
+      <div class="seg wide" id="mkType">
+        <button data-v="share" class="on">Акции</button><button data-v="index">Индексы</button><button data-v="currency">Валюта</button><button data-v="future">Фьючерсы</button>
+      </div>
+      <div id="mkSum" class="small muted" style="margin:8px 2px"></div>
+      <div class="row" id="mkTier" style="margin:6px 0">
+        <div class="seg" style="flex-wrap:wrap">
+          <button data-v="" class="on">Все</button><button data-v="index">Индекс МосБиржи</button><button data-v="blue">Голубые фишки</button><button data-v="2">2-й эшелон</button><button data-v="3">3-й эшелон</button>
+        </div>
+      </div>
+      <div class="row" style="margin:6px 0 10px">
+        <input id="mkSearch" placeholder="Поиск: тикер или название" autocomplete="off" spellcheck="false"
+          style="flex:1;min-width:140px;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit">
+        <select id="mkSort" style="padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit">
+          <option value="pct_desc">Рост ↓</option><option value="pct_asc">Падение ↓</option><option value="abs">Сильнее всего ±</option>
+          <option value="value">Оборот ↓</option><option value="name">По названию</option>
+        </select>
+      </div>
+      <div id="mkList" class="list compact"></div>
+    </section>
+
     <!-- Сделки -->
     <section id="tab-trades" class="tab" hidden>
       <div class="seg wide" id="trSeg">
@@ -116,6 +138,7 @@
   <nav class="bottom">
     <button data-tab="robot" class="on"><span class="ic">◉</span>Робот</button>
     <button data-tab="spikes"><span class="ic">⚡</span>Формации</button>
+    <button data-tab="market"><span class="ic">%</span>Рынки</button>
     <button data-tab="chart"><span class="ic">▥</span>График</button>
     <button data-tab="trades"><span class="ic">≡</span>Сделки</button>
     <button data-tab="settings"><span class="ic">⚙</span>Настройки</button>

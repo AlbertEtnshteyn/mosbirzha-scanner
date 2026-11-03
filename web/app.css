@@ -121,3 +121,5 @@ textarea { resize: vertical; font-family: ui-monospace, monospace; font-size: 13
 .idx { font-weight: 700; font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .idx small { font-weight: 600; }
 .top-row { gap: 8px; flex-wrap: wrap; }
+nav.bottom button { font-size: 10.5px; }
+#mkTier .seg button { padding: 6px 8px; font-size: 13px; }

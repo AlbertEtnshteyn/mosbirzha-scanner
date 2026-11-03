@@ -225,3 +225,126 @@ def results(balance_now=None):
         daily[now.date().isoformat()] = cur
     return {"balance": cur, "time": now.strftime("%d.%m.%Y %H:%M"), "periods": out,
             "series": [{"date": d, "value": round(v, 2)} for d, v in sorted(daily.items())]}
+
+
+# ============================================================================ вкладка «Рынки»
+MAJOR_INDEXES = ["IMOEX", "IMOEX2", "RTSI", "MOEXBC", "MOEXBMI", "MCXSM", "MOEXOG", "MOEXFN", "MOEXMM", "MOEXEU",
+                 "MOEXTL", "MOEXCN", "MOEXCH", "MOEXIT", "MOEXRE", "MOEXTN", "RGBI", "RUCBTRNS"]
+MARKET_TYPES = [("share", "Акции"), ("index", "Индексы"), ("currency", "Валюта"), ("future", "Фьючерсы")]
+
+
+def _iss_rows(path, params):
+    js = sc.iss_get(path, params, retries=2)
+    out = {}
+    for block in ("securities", "marketdata"):
+        b = js.get(block) or {}
+        cols = b.get("columns") or []
+        for row in b.get("data") or []:
+            x = dict(zip(cols, row))
+            key = (x.get("SECID"), x.get("BOARDID"))
+            out.setdefault(key, {}).update({f"{block}.{k}": v for k, v in x.items()})
+    return list(out.values())
+
+
+def _f(x):
+    try:
+        v = float(x)
+        return v if v == v else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _hhmm(*vals):
+    for v in vals:
+        if v and str(v) not in ("0", "None", "00:00:00"):
+            s = str(v)
+            return s[-8:-3] if len(s) >= 8 and s[-3] == ":" else s[:5]
+    return ""
+
+
+def market_overview(tier_map=None, live_prices=None):
+    """Состояние рынка по данным Мосбиржи: цена, изменение за день, оборот, время. Акции, индексы, валюта, фьючерсы.
+    live_prices(tickers) -> {тикер: цена} — цены акций в реальном времени из Т-Инвестиций (если есть токен)."""
+    rows, errors = [], []
+    try:
+        for x in _iss_rows("/engines/stock/markets/shares/boards/TQBR/securities.json", {"iss.only": "securities,marketdata"}):
+            tk = x.get("securities.SECID") or x.get("marketdata.SECID")
+            prev = _f(x.get("securities.PREVPRICE"))
+            last = _f(x.get("marketdata.LAST")) or _f(x.get("marketdata.LCURRENTPRICE")) or _f(x.get("marketdata.MARKETPRICE"))
+            pct = _f(x.get("marketdata.LASTTOPREVPRICE"))
+            if pct is None and last and prev:
+                pct = (last / prev - 1) * 100
+            val0 = _f(x.get("marketdata.VALTODAY")) or 0
+            tier = (tier_map or {}).get(tk) or ("index" if tk in sc.FALLBACK_TICKERS else ("2" if val0 >= at.TIER2_TURNOVER else "3"))
+            rows.append({"type": "share", "ticker": tk, "name": x.get("securities.SHORTNAME") or tk, "price": last, "prev": prev,
+                         "pct": pct, "value": _f(x.get("marketdata.VALTODAY")) or 0, "volume": _f(x.get("marketdata.VOLTODAY")) or 0,
+                         "time": _hhmm(x.get("marketdata.UPDATETIME"), x.get("marketdata.TIME")),
+                         "tier": tier, "blue": tk in sc.BLUE_CHIPS})
+    except Exception as e:
+        errors.append(f"акции: {e}")
+    if live_prices:                                       # цены в реальном времени (данные Мосбиржи без подписки — с задержкой)
+        try:
+            lp = live_prices([r["ticker"] for r in rows if r["price"]])
+            for r in rows:
+                p = lp.get(r["ticker"])
+                if p:
+                    r["price"], r["live"] = p, True
+                    r["time"] = datetime.now(sc.MSK).strftime("%H:%M")
+                    if r["prev"]:
+                        r["pct"] = (p / r["prev"] - 1) * 100
+        except Exception as e:
+            errors.append(f"цены Т-Инвестиций: {e}")
+    try:
+        for x in _iss_rows("/engines/stock/markets/index/boards/SNDX/securities.json", {"iss.only": "securities,marketdata"}):
+            tk = x.get("securities.SECID") or x.get("marketdata.SECID")
+            if tk not in MAJOR_INDEXES:
+                continue
+            last = _f(x.get("marketdata.CURRENTVALUE")) or _f(x.get("marketdata.LASTVALUE"))
+            rows.append({"type": "index", "ticker": tk, "name": x.get("securities.SHORTNAME") or x.get("securities.NAME") or tk,
+                         "price": last, "pct": _f(x.get("marketdata.LASTCHANGEPRC")), "value": _f(x.get("marketdata.VALTODAY")) or 0,
+                         "volume": 0, "time": _hhmm(x.get("marketdata.UPDATETIME"), x.get("marketdata.TIME"))})
+    except Exception as e:
+        errors.append(f"индексы: {e}")
+    try:
+        for x in _iss_rows("/engines/currency/markets/selt/boards/CETS/securities.json", {"iss.only": "securities,marketdata"}):
+            tk = x.get("securities.SECID") or x.get("marketdata.SECID")
+            if not tk or not tk.endswith("TOM"):
+                continue
+            prev = _f(x.get("securities.PREVPRICE")) or _f(x.get("securities.PREVWAPRICE"))
+            last = _f(x.get("marketdata.LAST")) or _f(x.get("marketdata.MARKETPRICE"))
+            pct = _f(x.get("marketdata.LASTTOPREVPRICE"))
+            if pct is None and last and prev:
+                pct = (last / prev - 1) * 100
+            val = _f(x.get("marketdata.VALTODAY_RUR")) or _f(x.get("marketdata.VALTODAY")) or 0
+            if not last:
+                continue
+            rows.append({"type": "currency", "ticker": tk, "name": x.get("securities.SHORTNAME") or tk, "price": last, "pct": pct,
+                         "value": val, "volume": _f(x.get("marketdata.VOLTODAY")) or 0,
+                         "time": _hhmm(x.get("marketdata.UPDATETIME"), x.get("marketdata.TIME"))})
+    except Exception as e:
+        errors.append(f"валюта: {e}")
+    try:
+        fut = []
+        for x in _iss_rows("/engines/futures/markets/forts/boards/RFUD/securities.json", {"iss.only": "securities,marketdata"}):
+            tk = x.get("securities.SECID") or x.get("marketdata.SECID")
+            prev = _f(x.get("securities.PREVSETTLEPRICE")) or _f(x.get("securities.PREVPRICE"))
+            last = _f(x.get("marketdata.LAST"))
+            val = _f(x.get("marketdata.VALTODAY")) or 0
+            if not last or not val:
+                continue
+            pct = _f(x.get("marketdata.LASTTOPREVPRICE"))
+            if pct is None and prev:
+                pct = (last / prev - 1) * 100
+            fut.append({"type": "future", "ticker": tk, "name": x.get("securities.SHORTNAME") or tk, "price": last, "pct": pct,
+                        "value": val, "volume": _f(x.get("marketdata.VOLTODAY")) or 0,
+                        "time": _hhmm(x.get("marketdata.UPDATETIME"), x.get("marketdata.TIME")),
+                        "asset": x.get("securities.ASSETCODE") or ""})
+        rows += fut
+    except Exception as e:
+        errors.append(f"фьючерсы: {e}")
+    sh = [r for r in rows if r["type"] == "share" and r.get("pct") is not None and r.get("value")]
+    summary = {"up": sum(1 for r in sh if r["pct"] > 0), "down": sum(1 for r in sh if r["pct"] < 0),
+               "flat": sum(1 for r in sh if r["pct"] == 0), "value": sum(r["value"] for r in sh),
+               "live": any(r.get("live") for r in rows)}
+    return {"time": datetime.now(sc.MSK).strftime("%d.%m.%Y %H:%M:%S"), "rows": rows, "summary": summary,
+            "types": MARKET_TYPES, "errors": errors}

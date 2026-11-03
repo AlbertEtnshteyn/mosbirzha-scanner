@@ -235,6 +235,37 @@ class App(tk.Tk):
                                        ("entry", "Вход", 80), ("exit", "Выход", 80), ("reason", "Причина", 120), ("res", "Результат", 90)])
         nb.select(t3)
 
+        # --- Рынки: состояние рынка, фильтры и сортировка
+        t8 = ttk.Frame(nb, padding=10)
+        nb.add(t8, text="Рынки")
+        top8 = ttk.Frame(t8); top8.pack(fill="x")
+        self.mk_type = tk.StringVar(value="Акции")
+        self.mk_tier = tk.StringVar(value="Все")
+        self.mk_q = tk.StringVar()
+        ttk.Label(top8, text="Тип:").pack(side="left")
+        ttk.Combobox(top8, textvariable=self.mk_type, width=10, state="readonly",
+                     values=[n for _, n in rc.MARKET_TYPES]).pack(side="left", padx=(4, 12))
+        ttk.Label(top8, text="Акции:").pack(side="left")
+        ttk.Combobox(top8, textvariable=self.mk_tier, width=16, state="readonly",
+                     values=["Все", "Индекс МосБиржи", "Голубые фишки", "2-й эшелон", "3-й эшелон"]).pack(side="left", padx=(4, 12))
+        ttk.Label(top8, text="Поиск:").pack(side="left")
+        ttk.Entry(top8, textvariable=self.mk_q, width=16).pack(side="left", padx=(4, 12))
+        ttk.Button(top8, text="Обновить", command=self.refresh_market).pack(side="left")
+        self.mk_sum = ttk.Label(t8, text="", foreground="#555")
+        self.mk_sum.pack(anchor="w", pady=4)
+        self.mk_tree = self._tree(t8, [("ticker", "Тикер", 90), ("name", "Название", 200), ("price", "Цена", 90), ("pct", "Изм. за день", 100),
+                                       ("value", "Оборот, млн ₽", 110), ("time", "Время", 70), ("tier", "Эшелон", 110)])
+        self.mk_sort = ("pct", True)
+        for col in ("ticker", "name", "price", "pct", "value", "time", "tier"):
+            self.mk_tree.heading(col, command=lambda c=col: self._mk_sort_by(c))
+        for v in (self.mk_type, self.mk_tier, self.mk_q):
+            v.trace_add("write", lambda *_: self._render_market())
+        self.mk_tree.bind("<Double-1>", lambda e: (lambda tkr: self.open_chart(tkr, 15) if tkr else None)(self._sel_ticker(self.mk_tree)))
+        self._mk = None
+        self._mk_tab = t8
+        nb.bind("<<NotebookTabChanged>>", lambda _: self.refresh_market() if nb.select() == str(t8) else None, add="+")
+        self.after(30000, self._market_tick)
+
         # --- Результаты: баланс и итоги за периоды
         t7 = ttk.Frame(nb, padding=12)
         nb.add(t7, text="Результаты")
@@ -257,7 +288,7 @@ class App(tk.Tk):
             "баланс записывается каждые несколько минут, пока работает робот. Сделки и «итог сделок, ₽» — по закрытым сделкам "
             "обеих стратегий (₽ считаются со сделок, закрытых этой версией, без комиссий).")).pack(anchor="w", pady=4)
         self._res = None
-        nb.bind("<<NotebookTabChanged>>", lambda _: self.refresh_results() if nb.select() == str(t7) else None)
+        nb.bind("<<NotebookTabChanged>>", lambda _: self.refresh_results() if nb.select() == str(t7) else None, add="+")
         self.after(5000, self._results_tick)
 
         # --- Telegram
@@ -663,7 +694,7 @@ class App(tk.Tk):
         tv = ttk.Treeview(fr, columns=[c[0] for c in cols], show="headings")
         for key, title, w in cols:
             tv.heading(key, text=title)
-            tv.column(key, width=w, anchor="w" if key in ("ticker", "side", "reason", "date", "period", "from") else "e")
+            tv.column(key, width=w, anchor="w" if key in ("ticker", "side", "reason", "date", "period", "from", "name", "tier") else "e")
         sb = ttk.Scrollbar(fr, orient="vertical", command=tv.yview)
         tv.configure(yscrollcommand=sb.set)
         tv.pack(side="left", fill="both", expand=True)
@@ -1235,6 +1266,70 @@ class App(tk.Tk):
         ch = f"{q['chg']:+,.2f}".replace(",", " ").replace(".", ",")
         self.idx_lbl.configure(text=f"IMOEX {v} ({ch}; {q['pct']:+.2f}%)".replace(".", ","),
                                fg="#0a7a2f" if q["pct"] > 0 else "#b3261e" if q["pct"] < 0 else "#333")
+
+    # --- рынки
+    def _market_tick(self):
+        if self.nb.select() == str(self._mk_tab):
+            self.refresh_market()
+        self.after(30000, self._market_tick)
+
+    def refresh_market(self):
+        rr = self.robot if self.robot_running() else None
+
+        def job():
+            try:
+                if rr is not None and hasattr(rr, "c"):
+                    data = rr.c.get("/api/market")            # с сервера
+                else:
+                    ti = getattr(getattr(rr, "b", None), "ti", None)
+                    live = (lambda tks: ti.last_prices([t for t in tks if t in ti._shares])) if ti is not None else None
+                    data = rc.market_overview(tier_map=dict(getattr(rr, "tier", {}) or {}) if rr else None, live_prices=live)
+                self.q.put(("call", self._show_market, data))
+            except Exception as e:
+                self.q.put(("log", f"Рынки: данные не получены: {e}\n"))
+        threading.Thread(target=job, daemon=True).start()
+
+    def _show_market(self, data):
+        self._mk = data
+        self._render_market()
+
+    def _mk_sort_by(self, col):
+        key, rev = self.mk_sort
+        self.mk_sort = (col, not rev if key == col else col in ("pct", "value", "price"))
+        self._render_market()
+
+    def _render_market(self):
+        d = self._mk
+        if not d:
+            self.mk_sum.configure(text="Загружаю…")
+            return
+        typ = {n: k for k, n in rc.MARKET_TYPES}.get(self.mk_type.get(), "share")
+        R = [r for r in d["rows"] if r["type"] == typ and r.get("price") is not None]
+        tier = self.mk_tier.get()
+        if typ == "share" and tier != "Все":
+            R = [r for r in R if (r.get("blue") if tier == "Голубые фишки" else
+                                  r.get("tier") == {"Индекс МосБиржи": "index", "2-й эшелон": "2", "3-й эшелон": "3"}[tier])]
+        q = self.mk_q.get().strip().upper()
+        if q:
+            R = [r for r in R if q in r["ticker"].upper() or q in str(r["name"]).upper()]
+        col, rev = self.mk_sort
+        keyf = {"pct": lambda r: r.get("pct") if r.get("pct") is not None else -1e9, "value": lambda r: r.get("value") or 0,
+                "price": lambda r: r.get("price") or 0, "time": lambda r: r.get("time") or "",
+                "tier": lambda r: str(r.get("tier") or ""), "ticker": lambda r: r["ticker"], "name": lambda r: str(r["name"])}[col]
+        R.sort(key=keyf, reverse=rev)
+        self.mk_tree.delete(*self.mk_tree.get_children())
+        tn = {"index": "индекс", "2": "2-й", "3": "3-й"}
+        for r in R[:600]:
+            p = r.get("pct")
+            self.mk_tree.insert("", "end", tags=(("pos" if p > 0 else "neg"),) if p else (), values=(
+                r["ticker"], r["name"], f"{r['price']:.6g}" + (" ●" if r.get("live") else ""),
+                f"{p:+.2f}%" if p is not None else "—", f"{(r.get('value') or 0) / 1e6:,.0f}".replace(",", " "),
+                r.get("time") or "—", ("голубая · " if r.get("blue") else "") + tn.get(r.get("tier"), "") if typ == "share" else ""))
+        s = d.get("summary", {})
+        self.mk_sum.configure(text=(f"Акции: растут {s.get('up', 0)}, падают {s.get('down', 0)}, оборот {s.get('value', 0) / 1e9:.1f} млрд ₽ · "
+                                    + ("цены акций в реальном времени (● — Т-Инвестиции)" if s.get("live") else "данные Мосбиржи (могут быть с задержкой)")
+                                    + f" · обновлено {d.get('time', '')[11:]} · показано {len(R)} · щелчок по заголовку — сортировка, двойной по строке — график"
+                                    + (f" · ошибки: {'; '.join(d['errors'])}" if d.get("errors") else "")))
 
     # --- результаты
     def _results_tick(self):

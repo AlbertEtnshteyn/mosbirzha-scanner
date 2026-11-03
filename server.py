@@ -363,6 +363,25 @@ def journal():
             "period": f"{days[0]['date']} — {days[-1]['date']}" if days else ""}
 
 
+_MARKET = {"t": 0, "data": None}
+_MARKET_LOCK = threading.Lock()
+
+
+def market():
+    """Вкладка «Рынки»: данные Мосбиржи + цены акций в реальном времени из Т-Инвестиций; кэш 20 секунд."""
+    with _MARKET_LOCK:
+        if _MARKET["data"] and time.time() - _MARKET["t"] < 20:
+            return _MARKET["data"]
+        r = ROBOT.robot if ROBOT and ROBOT.running() else None
+        live = None
+        ti = getattr(getattr(r, "b", None), "ti", None)
+        if ti is not None:                                # только бумаги, уже известные роботу (без лишних запросов)
+            live = lambda tks: ti.last_prices([t for t in tks if t in ti._shares]) if any(t in ti._shares for t in tks) else {}
+        data = rc.market_overview(tier_map=dict(getattr(r, "tier", {}) or {}) if r else None, live_prices=live)
+        _MARKET.update(t=time.time(), data=data)
+        return data
+
+
 def _ts(t):
     return calendar.timegm(t.replace(tzinfo=None).timetuple())   # время МСК «как есть» (график подписывает его без сдвига)
 
@@ -575,6 +594,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, rc.results((ROBOT.snap or {}).get("balance")))
             if u.path == "/api/journal":
                 return self._send(200, journal())
+            if u.path == "/api/market":
+                return self._send(200, market())
             if u.path == "/api/settings":
                 return self._send(200, ROBOT.public_settings())
             if u.path == "/api/chart":
