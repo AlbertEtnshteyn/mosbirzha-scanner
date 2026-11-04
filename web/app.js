@@ -561,7 +561,8 @@ function renderSettings(s) {
     ${sel("day_tp_half", "Закрыть на тейке", [[50, "50% (остаток — б/у и трейлинг)"], [100, "всю позицию"]])}
     ${sel("day_trail", "Трейлинг-стоп, %", [[0, "нет"], [1, "1%"], [2, "2%"], [3, "3%"]])}
     ${sel("day_act", "Трейлинг включается", [[0, "после тейка"], [1, "с +1%"], [2, "с +2%"], [3, "с +3%"]])}
-    ${sel("day_carry", "Переносить позиции (выход в 18:45 последнего дня, стоп 3% действует всё время)", [[0, "нет — выход в 18:45"], [1, "на 1 день"], [2, "на 2 дня"], [3, "на 3 дня"]])}
+    ${sel("day_exit", "Время выхода (на истории 17:00 лучше)", [["17:00", "17:00"], ["18:45", "18:45"]])}
+    ${sel("day_carry", "Переносить позиции (выход в выбранное время последнего дня, стоп 3% действует всё время)", [[0, "нет"], [1, "на 1 день"], [2, "на 2 дня"], [3, "на 3 дня"]])}
     ${inp("threshold", "Порог движения, %", "number", 'step="0.1" inputmode="decimal"')}
     ${sel("entry", "Время входа (МСК)", [...new Set([...Array(10).keys()].map((i) => String(9 + i).padStart(2, "0") + ":00").concat(["14:30", SET.entry || "15:00"]))].sort().map((t) => [t, t]))}
     <div class="hint" style="margin-left:0">При входе в 09:00 и 10:00 движение считается от открытия утренней сессии (09:00); в 09:00 бумаги ещё почти не сдвинулись — сигналов будет мало.</div>
@@ -624,7 +625,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
     day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),

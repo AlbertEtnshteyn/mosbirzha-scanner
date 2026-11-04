@@ -415,7 +415,8 @@ class App(tk.Tk):
         self.v_day = tk.BooleanVar(value=self.s.get("day_on", True))
         self.DMODE = {"fixed": "в заданное время (проверено на истории)", "signal": "сразу при сигнале 09:00–19:00 (на истории в минусе)"}
         self.v_dmode = tk.StringVar(value=self.DMODE.get(self.s.get("day_mode", "fixed"), self.DMODE["fixed"]))
-        self.DAYC = {0: "нет — выход в 18:45", 1: "на 1 день", 2: "на 2 дня", 3: "на 3 дня"}
+        self.DAYC = {0: "нет", 1: "на 1 день", 2: "на 2 дня", 3: "на 3 дня"}
+        self.v_dexit = tk.StringVar(value=self.s.get("day_exit", "18:45"))
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
@@ -633,7 +634,9 @@ class App(tk.Tk):
         fdc = ttk.Frame(g); fdc.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(fdc, text="Переносить позиции:").pack(side="left")
         ttk.Combobox(fdc, textvariable=self.v_dayc, width=20, state="readonly", values=list(self.DAYC.values())).pack(side="left", padx=6)
-        ttk.Label(fdc, text="выход в 18:45 последнего дня, стоп 3% действует всё время", foreground="#555").pack(side="left")
+        ttk.Label(fdc, text="выход в").pack(side="left")
+        ttk.Combobox(fdc, textvariable=self.v_dexit, width=6, state="readonly", values=["17:00", "18:45"]).pack(side="left", padx=4)
+        ttk.Label(fdc, text="(последнего дня; на истории 17:00 лучше), стоп 3% действует всё время", foreground="#555").pack(side="left")
         r += 1
         fdt = ttk.Frame(g); fdt.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(fdt, text="Тейк, %:").pack(side="left")
@@ -822,7 +825,7 @@ class App(tk.Tk):
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
                       rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(),
-                      day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0),
+                      day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0), day_exit=self.v_dexit.get(),
                       day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"),
                       idx_form=self.v_idx_form.get(), idx_day=self.v_idx_day.get(),
                       idx_flip="all" if self.v_flip_all.get() else "profit" if self.v_flip_profit.get() else "off",
@@ -1342,7 +1345,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "broker", "finam_account", "real_account", "auto_journal"]
+                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "broker", "finam_account", "real_account", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1359,7 +1362,7 @@ class App(tk.Tk):
         if srv.get("finam_set"):
             self.fsec_lbl.configure(text="  сохранён на сервере — оставьте пустым, чтобы не менять")
         self.v_rescan.set(bool(s.get("rescan"))); self.v_day.set(bool(s.get("day_on", True)))
-        self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0]))
+        self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0])); self.v_dexit.set(s.get("day_exit", "18:45"))
         self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
         self.v_flip_all.set(s.get("idx_flip") == "all"); self.v_flip_profit.set(s.get("idx_flip") == "profit")

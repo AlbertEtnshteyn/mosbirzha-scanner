@@ -227,7 +227,7 @@ WINDOWS = {
 }
 LATE_EXIT = 23 * 60 + 45
 EXIT_CHOICES = [f"{h:02d}:00" for h in range(10, 24)] + ["18:45", "19:25", "23:45"]   # время выхода формации на выбор
-DAY_EXIT = 18 * 60 + 45        # «Движение дня»: выход в 18:45 (было 17:00)
+DAY_EXIT = 18 * 60 + 45        # «Движение дня»: выход по умолчанию (выбор в настройках: 17:00 или 18:45)
 
 
 def trade_profile(tier, tf, kind, window="9-19", late=True):
@@ -778,7 +778,7 @@ class AutoTrader:
         if not self.day_on:
             self.log("Стратегия «движение дня» (вход в заданное время) выключена в настройках.")
         else:
-            self.log(f"Стратегия «{hm(sc.ENTRY_MIN)}»: порог {sc.THRESHOLD * 100:g}%, стоп {sc.STOP * 100:g}%, выход {hm(DAY_EXIT)}"
+            self.log(f"Стратегия «{hm(sc.ENTRY_MIN)}»: порог {sc.THRESHOLD * 100:g}%, стоп {sc.STOP * 100:g}%, выход {hm(self._day_exit())}"
                  + (", добор новых сигналов до 16:30" if self.rescan else "") + ".")
         sp = self.sp
         tfs = ", ".join(("1 час" if tf == 60 else f"{tf} мин") for tf in sp["tfs"]) or "нет"
@@ -875,7 +875,7 @@ class AutoTrader:
                     self._close_all(hm(p.get("exit_min", sc.EXIT_MIN)), only=[p])
             if self.positions:
                 self._check_stops()
-        if self.st["entered"] and secs >= DAY_EXIT * 60 - 10 and not self.st["done"] \
+        if self.st["entered"] and secs >= self._day_exit() * 60 - 10 and not self.st["done"] \
                 and not any(p.get("strat") == "15" for p in self.positions):
             self.st["done"] = True
             self._save()
@@ -1297,6 +1297,14 @@ class AutoTrader:
             self.st["traded"].append(tk)
             self._open(tk, side, alloc)
 
+    def _day_exit(self):
+        v = str(self.sp.get("day_exit", "18:45"))
+        try:
+            hh, mm = (int(x) for x in v.split(":"))
+            return hh * 60 + mm
+        except ValueError:
+            return DAY_EXIT
+
     def _day_early(self):
         return sc.ENTRY_MIN < 11 * 60
 
@@ -1406,7 +1414,7 @@ class AutoTrader:
             carry, carry_max = True, int(self.sp["day_carry"])
         pos = {"ticker": tk, "side": side, "lots": lots, "entry": entry, "stop": stop, "take": take1, "take2": take2,
                "strat": strat, "R": abs(entry - stop), "took": False, "per_lot": per_lot, "stage": 0, "peak": entry,
-               "exit_min": exit_min or (DAY_EXIT if strat == "15" else sc.EXIT_MIN), "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
+               "exit_min": exit_min or (self._day_exit() if strat == "15" else sc.EXIT_MIN), "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
                "date": self.clock().date().isoformat()}
         pos.update(day_ex)
         if day_ex.get("dtp"):                         # уровень тейка «движения дня» — для таблиц и графика
