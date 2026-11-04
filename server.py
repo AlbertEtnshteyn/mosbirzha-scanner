@@ -166,6 +166,9 @@ class Robot:
         tgt = d.get("tg_token", "")
         d["tg_token"] = ""
         d["tg_token_set"] = bool(tgt)
+        fs = d.pop("finam_secret", "")
+        d["finam_set"] = bool(fs)
+        d["finam_hint"] = (fs[:4] + "…" + fs[-4:]) if len(fs) > 12 else ""
         d["markets_all"] = at.MARKETS
         return d
 
@@ -188,7 +191,7 @@ class Robot:
                 return False
             self._apply()
             rlog = lambda m: print(f"[робот {now_msk():%H:%M:%S}] {m}", flush=True)
-            broker = at.SandboxBroker(tok, float(self.s["capital"]), log=rlog)
+            broker = at.make_broker(self.s, log=rlog)
             self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=rlog, rescan=bool(self.s.get("rescan")),
                                        spike=rc.spike_cfg(self.s), day_on=bool(self.s.get("day_on", True)),
                                        direction=self.s.get("direction", "both"), trade=trade,
@@ -250,7 +253,9 @@ class Robot:
     def reset(self):
         """Сброс: новый демо-счёт на сумму капитала, история сделок и баланса — с нуля. Робот перезапускается в том же режиме."""
         if self.resetting:
-            return False
+            return "Сброс уже идёт."
+        if self.s.get("broker") == "finam" and self.running() and self.robot.positions:
+            return "Финам: счёт не пересоздаётся — сначала закройте открытые позиции, потом сбрасывайте историю."
         self.resetting = True
 
         def job():
@@ -265,9 +270,11 @@ class Robot:
                             break
                         time.sleep(0.5)
                 self.snap = None
-                rc.reset_trading(self.s.get("token"), float(self.s["capital"]), log=log)
-                if was:
-                    self.start(trade)
+                try:
+                    rc.reset_trading(self.s.get("token"), float(self.s["capital"]), log=log, broker=self.s.get("broker", "tinvest"))
+                finally:
+                    if was:
+                        self.start(trade)
                 tg.send(self.s.get("tg_token"), self.s.get("tg_chat"),
                         f"🔄 Робот Мосбиржи: торговля сброшена, новый демо-счёт {float(self.s['capital']):,.0f} ₽.".replace(",", " "),
                         lambda m: print(m))
@@ -276,7 +283,7 @@ class Robot:
             finally:
                 self.resetting = False
         threading.Thread(target=job, daemon=True).start()
-        return True
+        return None
 
     def on_update(self, snap):
         self.snap = snap
@@ -354,7 +361,8 @@ class Robot:
                 "threshold": sc.THRESHOLD, "ev_seq": self.ev_seq, "balance": snap.get("balance"),
                 "entry": self.s.get("entry", "15:00"), "day_on": bool(self.s.get("day_on", True)), "day_mode": self.s.get("day_mode", "fixed"),
                 "pos_summary": rc.positions_summary(snap.get("positions", []) if r else []), "index": self.index,
-                "pair": PAIR.info() if PAIR else None, "resetting": self.resetting}
+                "pair": PAIR.info() if PAIR else None, "resetting": self.resetting,
+                "broker": self.s.get("broker", "tinvest")}
 
 
 ROBOT = None
@@ -666,9 +674,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/reset":
                 if b.get("confirm") != "СБРОС":
                     return self._send(400, {"error": "нужно подтверждение"})
-                ok = ROBOT.reset()
-                return self._send(200, {"ok": ok, "msg": "Сброс начат: новый демо-счёт и чистая история, это займёт до минуты."
-                                        if ok else "Сброс уже идёт."})
+                err = ROBOT.reset()
+                return self._send(200, {"ok": not err, "msg": err or "Сброс начат: новый демо-счёт и чистая история, это займёт до минуты."})
             if u.path == "/api/stop":
                 ROBOT.stop_trade(bool(b.get("close")))
                 return self._send(200, {"ok": True})
@@ -684,6 +691,10 @@ class Handler(BaseHTTPRequestHandler):
                     new.pop("token", None)                   # пустое поле — токен не менять
                 if not new.get("tg_token"):
                     new.pop("tg_token", None)
+                if not new.get("finam_secret"):
+                    new.pop("finam_secret", None)
+                if new.get("broker") and new["broker"] != ROBOT.s.get("broker", "tinvest") and ROBOT.running() and ROBOT.robot.positions:
+                    return self._send(200, {"ok": False, "msg": "Сначала закройте открытые позиции — потом меняйте брокера."})
                 ROBOT.save(new)
                 return self._send(200, {"ok": True})
             if u.path == "/api/tg_test":

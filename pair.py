@@ -26,7 +26,7 @@ PAIR_FILE = os.path.join(sc.HERE, "pair.json")
 TAKEOVER_SEC = int(os.environ.get("MOEX_TAKEOVER", 300))                      # сколько ждать молчания активного сервера, прежде чем взять торговлю на себя
 SYNC_FILES = ["auto_state.json", "settings.json", "sandbox_trades.csv", "sandbox_spikes.csv", "balance.csv",
               "forward_journal.csv", "forward_days.csv"]
-RELAY_HOSTS = ("tinkoff.ru", "tbank.ru", "moex.com", "telegram.org")
+RELAY_HOSTS = ("tinkoff.ru", "tbank.ru", "moex.com", "telegram.org", "finam.ru")
 
 
 def relay_allowed(url):

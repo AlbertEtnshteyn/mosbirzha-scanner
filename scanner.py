@@ -801,6 +801,136 @@ class TInvest:
         return js
 
 
+# ============================================================================ Финам (Trade API, REST)
+class Finam:
+    """Торговый счёт Финама через Trade API: https://api.finam.ru/v1. Секретный токен из личного кабинета
+    обменивается на сессионный JWT (живёт ~15 минут, обновляем заранее). Количество в заявках — в штуках."""
+    BASE = "https://api.finam.ru/v1"
+    MIC = "MISX"                                         # акции Мосбиржи: SBER@MISX
+
+    def __init__(self, secret, account_id=""):
+        self.secret = (secret or "").strip()
+        self.account = str(account_id or "").strip()
+        self.jwt, self.jwt_t = None, 0.0
+
+    @staticmethod
+    def dec(x):
+        if isinstance(x, dict):
+            x = x.get("value", x.get("units"))
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _req(self, method, path, body=None, params=None, auth=True):
+        url = self.BASE + path
+        for attempt in range(3):
+            h = {"Content-Type": "application/json", "Accept": "application/json"}
+            if auth:
+                h["Authorization"] = self.token()
+            try:
+                r = with_ru_certs(lambda: http().request(method, url, headers=h, params=params,
+                                                         data=json.dumps(body) if body is not None else None, timeout=30))
+            except requests.exceptions.SSLError as e:
+                if _is_cert_error(e):
+                    raise CertError("api.finam.ru", 443) from None
+                raise RuntimeError(f"Ошибка защищённого соединения с Финамом: {e}") from None
+            except requests.exceptions.ConnectionError as e:
+                raise RuntimeError(f"Нет соединения с Финамом (api.finam.ru): {e}") from None
+            if r.status_code == 429:
+                time.sleep(5)
+                continue
+            if r.status_code == 401 and auth and attempt == 0:
+                self.jwt = None                         # сессия истекла — получить новую
+                continue
+            break
+        if r.status_code != 200:
+            try:
+                msg = r.json().get("message") or r.text[:300]
+            except Exception:
+                msg = r.text[:300]
+            raise RuntimeError(f"Финам {method} {path}: HTTP {r.status_code} {msg}")
+        return r.json() if r.content else {}
+
+    def token(self):
+        if not self.secret:
+            raise RuntimeError("не введён секретный токен Финама (Trade API)")
+        if not self.jwt or time.time() - self.jwt_t > 600:
+            js = self._req("POST", "/sessions", {"secret": self.secret}, auth=False)
+            self.jwt, self.jwt_t = js.get("token"), time.time()
+            if not self.jwt:
+                raise RuntimeError("Финам не выдал сессию — проверьте секретный токен")
+        return self.jwt
+
+    def details(self):
+        return self._req("POST", "/sessions/details", {"token": self.token()}, auth=False)
+
+    def accounts(self):
+        return [str(a) for a in self.details().get("accountIds", [])]
+
+    def ensure_account(self):
+        accs = self.accounts()
+        if not accs:
+            raise RuntimeError("у токена Финама нет доступа ни к одному счёту")
+        if self.account and self.account not in accs:
+            raise RuntimeError(f"счёт {self.account} не найден у этого токена (доступны: {', '.join(accs)})")
+        if not self.account:
+            self.account = accs[0]
+        return self.account
+
+    def account_info(self):
+        return self._req("GET", f"/accounts/{self.account}")
+
+    def equity(self):
+        js = self.account_info()
+        eq = self.dec(js.get("equity"))
+        if eq:
+            return eq
+        cash = sum(self.dec(c) + (c.get("nanos", 0) or 0) / 1e9 for c in js.get("cash", []) if isinstance(c, dict))
+        return cash + sum(self.dec(p.get("quantity")) * self.dec(p.get("currentPrice")) for p in js.get("positions", []))
+
+    def symbol(self, tk):
+        return tk if "@" in tk else f"{tk}@{self.MIC}"
+
+    def market_order(self, tk, qty, side):
+        """Рыночная заявка на qty штук. Возвращает цену исполнения (средняя по сделкам) или None."""
+        cid = uuid.uuid4().hex[:20]
+        js = self._req("POST", f"/accounts/{self.account}/orders", {
+            "symbol": self.symbol(tk), "quantity": {"value": str(int(qty))},
+            "side": "SIDE_BUY" if side > 0 else "SIDE_SELL", "type": "ORDER_TYPE_MARKET",
+            "timeInForce": "TIME_IN_FORCE_DAY", "clientOrderId": cid})
+        oid = js.get("orderId")
+        st = js.get("status", "")
+        for _ in range(10):                              # дождаться исполнения (рыночная — обычно сразу)
+            if st in ("ORDER_STATUS_FILLED",) or not oid:
+                break
+            if st in ("ORDER_STATUS_REJECTED", "ORDER_STATUS_CANCELED", "ORDER_STATUS_FAILED", "ORDER_STATUS_EXPIRED"):
+                raise RuntimeError(f"Финам отклонил заявку: {js.get('statusDescription') or st}")
+            time.sleep(0.5)
+            try:
+                js = self._req("GET", f"/accounts/{self.account}/orders/{oid}")
+                st = js.get("status", "")
+            except Exception:
+                break
+        return self._fill_price(oid)
+
+    def _fill_price(self, oid):
+        if not oid:
+            return None
+        try:
+            now = datetime.now(timezone.utc)
+            js = self._req("GET", f"/accounts/{self.account}/trades", params={
+                "interval.start_time": (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
+                "interval.end_time": (now + timedelta(minutes=1)).isoformat().replace("+00:00", "Z"), "limit": 100})
+            fills = [t for t in js.get("trades", []) if str(t.get("orderId")) == str(oid)]
+            q = sum(self.dec(t.get("size")) for t in fills)
+            if q:
+                return sum(self.dec(t.get("price")) * self.dec(t.get("size")) for t in fills) / q
+        except Exception:
+            pass
+        return None
+
+
 # ============================================================================ журнал
 JOURNAL_COLS = ["date", "ticker", "side", "move_pct", "market_pct", "entry", "stop_price", "exit", "reason",
                 "gross_pct", "net_pct"]

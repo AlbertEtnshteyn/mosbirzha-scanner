@@ -16,7 +16,8 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False,
             "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed",
             "day_tp": 8, "day_tp_half": 50, "day_trail": 2, "day_act": 0,
-            "idx_form": True, "idx_day": True, "idx_flip": "off"}
+            "idx_form": True, "idx_day": True, "idx_flip": "off",
+            "broker": "tinvest", "finam_secret": "", "finam_account": ""}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -386,22 +387,32 @@ def attach_formations(data, spikes):
 
 
 # ============================================================================ сброс: новый демо-счёт и чистая история торговли
-def reset_trading(token, capital, log=print):
+def reset_trading(token, capital, log=print, broker="tinvest"):
     """Закрыть все счета песочницы, открыть новый и пополнить его на сумму капитала; историю сделок и баланса
     убрать в архивную папку reset_ГГГГММДД_ЧЧММ (на всякий случай). Найденные сегодня формации сохраняются.
     Робот перед этим должен быть остановлен."""
     import glob
     import shutil
-    if not token:
-        raise ValueError("нет токена песочницы Т-Инвестиций")
-    ti = sc.TInvest(token, "sandbox")
-    accs = ti.call("SandboxService", "GetSandboxAccounts", {}).get("accounts", [])
-    for a in accs:
-        ti.call("SandboxService", "CloseSandboxAccount", {"accountId": a["id"]})
-    log(f"Счета песочницы закрыты: {len(accs)} (вместе с позициями).")
-    acc = ti.call("SandboxService", "OpenSandboxAccount", {})["accountId"]
-    ti.sandbox_pay_in(acc, capital)
-    log("Открыт новый демо-счёт, пополнен на " + f"{capital:,.0f}".replace(",", " ") + " ₽.")
+    if broker == "finam":
+        # счёт Финама не пересоздать: позиции робот закрыл заранее, здесь — только чистая история
+        try:
+            with open(at.STATE_FILE, encoding="utf-8") as f:
+                if json.load(f).get("positions"):
+                    raise RuntimeError("у робота есть открытые позиции в Финаме — сначала закройте их")
+        except (OSError, ValueError):
+            pass
+        log("Финам: счёт не меняется, очищаю историю сделок и баланса.")
+    else:
+        if not token:
+            raise ValueError("нет токена песочницы Т-Инвестиций")
+        ti = sc.TInvest(token, "sandbox")
+        accs = ti.call("SandboxService", "GetSandboxAccounts", {}).get("accounts", [])
+        for a in accs:
+            ti.call("SandboxService", "CloseSandboxAccount", {"accountId": a["id"]})
+        log(f"Счета песочницы закрыты: {len(accs)} (вместе с позициями).")
+        acc = ti.call("SandboxService", "OpenSandboxAccount", {})["accountId"]
+        ti.sandbox_pay_in(acc, capital)
+        log("Открыт новый демо-счёт, пополнен на " + f"{capital:,.0f}".replace(",", " ") + " ₽.")
 
     now = datetime.now(sc.MSK)
     arch = os.path.join(sc.HERE, "reset_" + now.strftime("%Y%m%d_%H%M%S"))
@@ -427,7 +438,8 @@ def reset_trading(token, capital, log=print):
     for p in files[:-1]:
         if os.path.exists(p):
             os.remove(p)
-    sc.append_rows(at.bal_log(), at.BAL_COLS, [{"time": now.strftime("%Y-%m-%d %H:%M"), "value": round(capital, 2),
-                                                "deposit": capital}])
+    if broker != "finam":
+        sc.append_rows(at.bal_log(), at.BAL_COLS, [{"time": now.strftime("%Y-%m-%d %H:%M"), "value": round(capital, 2),
+                                                    "deposit": capital}])
     log(f"История сделок и баланса очищена (копия: {os.path.basename(arch)}). Начинаем с {capital:,.0f} ₽.".replace(",", " "))
     return {"capital": capital, "archive": os.path.basename(arch)}

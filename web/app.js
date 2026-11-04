@@ -128,8 +128,9 @@ function renderState(st) {
   const pr = st.pair;
   const pairTxt = pr && pr.enabled ? ` Пара серверов: торгует ${pr.active ? "этот" : "второй"} сервер (${pr.active ? "" : pr.peer_host + ", "}этот — ${pr.role === "primary" ? "основной" : "резервный"}); второй ${pr.peer_ok ? "на связи" : "не отвечает с " + pr.peer_last_ok}.` : "";
   $("#robotHint").textContent = (st.trade ? "Робот сам входит и выходит по стратегиям. «Стоп» — выключить новые сделки."
-    : st.token_set ? "Робот следит за рынком и шлёт формации, но не торгует. «Старт» — включить торговлю на демо-счёте."
-      : "Введите токен песочницы Т-Инвестиций во вкладке «Настройки».") + pairTxt;
+    : st.token_set ? "Робот следит за рынком и шлёт формации, но не торгует. «Старт» — включить торговлю."
+      : "Введите токен песочницы Т-Инвестиций во вкладке «Настройки».") + pairTxt +
+    (st.broker === "finam" ? " Брокер: Финам." : " Брокер: песочница Т-Инвестиций.");
 
   // позиции
   const P = st.positions || [];
@@ -509,6 +510,14 @@ function renderSettings(s) {
     ${chk("sandbox_token", "Это токен песочницы (демо-счёт)", "Робот торгует только на демо-счёте песочницы.")}
     ${inp("capital", "Капитал песочницы, ₽", "number", 'inputmode="numeric"')}
   </div>
+  <div class="grp"><h3>Брокер для торговли</h3>
+    ${sel("broker", "Через кого робот торгует", [["tinvest", "Т-Инвестиции — песочница (демо-счёт)"], ["finam", "Финам — Trade API"]])}
+    <div class="hint" style="margin-left:0">Свечи и цены робот в любом случае берёт из Т-Инвестиций (нужен токен песочницы выше). Через Финам торгуются только акции.
+      <b>Если в Финаме указан реальный счёт — сделки идут на реальные деньги.</b> Для проверки используйте демо-счёт Финама.</div>
+    <label class="f"><span>Секретный токен Финама ${s.finam_set ? `(сохранён: ${esc(s.finam_hint)}; оставьте пустым, чтобы не менять)` : "(не введён)"}</span>
+      <input type="password" name="finam_secret" placeholder="${s.finam_set ? "••••••••" : "из личного кабинета Trade API → Токены"}" autocomplete="off"></label>
+    ${inp("finam_account", "Номер счёта Финама (пусто — первый доступный токену)")}
+  </div>
   <div class="grp"><h3>Всплеск объёма + откат к EMA20</h3>
     ${chk("spike_on", "Робот торгует по этой формации")}
     <div class="f"><span>Таймфреймы</span>
@@ -597,7 +606,8 @@ $("#setForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target, v = (n) => f[n] ? f[n].value : undefined, c = (n) => !!(f[n] && f[n].checked);
   const out = {
-    sandbox_token: c("sandbox_token"), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
+    sandbox_token: c("sandbox_token"), broker: v("broker") || "tinvest", finam_account: (v("finam_account") || "").trim(),
+    finam_secret: (v("finam_secret") || "").trim(), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
     spike_on: c("spike_on"), spike_tfs: [5, 15, 60].filter((t) => c("tf" + t)),
     trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") !== "early", carry_all: c("carry_all"),
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
@@ -611,7 +621,14 @@ $("#setForm").addEventListener("submit", async (e) => {
   if (!out.spike_markets.length) out.spike_markets = ["imoex"];
   const tok = (v("token") || "").trim(); if (tok) out.token = tok;
   const tgt = (v("tg_token") || "").trim(); if (tgt) out.tg_token = tgt;
-  try { await api("/api/settings", out); toast("Сохранено. Робот перезапускается с новыми настройками."); loadSettings(); }
+  if (out.broker === "finam" && SET.broker !== "finam" &&
+      !(await ask("Робот будет торговать через Финам. Если указан реальный счёт — сделки пойдут на реальные деньги. Продолжить?",
+        [["Да, через Финам", true, "danger"], ["Отмена", false]]))) return;
+  try {
+    const r = await api("/api/settings", out);
+    if (r.ok === false) { toast(r.msg, 6000); return; }
+    toast("Сохранено. Робот перезапускается с новыми настройками."); loadSettings();
+  }
   catch (err) { toast("Ошибка: " + err.message); }
 });
 

@@ -460,6 +460,24 @@ class App(tk.Tk):
         ttk.Checkbutton(f, text="Это токен песочницы", variable=self.v_sbtok).pack(side="left")
         ttk.Checkbutton(f, text="Запомнить токен (открытым текстом в settings.json)", variable=self.v_rem).pack(side="left", padx=(16, 0))
         r += 1
+        self.BROKERS = {"tinvest": "Т-Инвестиции — песочница (демо-счёт)", "finam": "Финам — Trade API"}
+        self.v_broker = tk.StringVar(value=self.BROKERS.get(self.s.get("broker", "tinvest"), self.BROKERS["tinvest"]))
+        self.v_fsec = tk.StringVar(value="")
+        self.v_facc = tk.StringVar(value=self.s.get("finam_account", ""))
+        ttk.Label(g, text="Брокер для торговли:").grid(row=r, column=0, sticky="w", pady=4)
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
+        ttk.Combobox(f, textvariable=self.v_broker, width=36, state="readonly", values=list(self.BROKERS.values())).pack(side="left")
+        ttk.Label(f, foreground="#a33", text="  Финам: реальный счёт = реальные деньги; только акции; цены — из Т-Инвестиций").pack(side="left")
+        r += 1
+        ttk.Label(g, text="Секретный токен Финама:").grid(row=r, column=0, sticky="w", pady=4)
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
+        ttk.Entry(f, textvariable=self.v_fsec, width=40, show="•").pack(side="left")
+        self.fsec_lbl = ttk.Label(f, foreground="#555", text="  сохранён — оставьте пустым, чтобы не менять" if self.s.get("finam_secret") else "  не введён")
+        self.fsec_lbl.pack(side="left")
+        ttk.Label(f, text="   Счёт:").pack(side="left")
+        ttk.Entry(f, textvariable=self.v_facc, width=14).pack(side="left")
+        ttk.Label(f, foreground="#555", text=" (пусто — первый доступный)").pack(side="left")
+        r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
         ttk.Checkbutton(f, text="Включать торговлю сразу при открытии программы (поиск формаций включается всегда)", variable=self.v_autostart).pack(side="left")
         ttk.Checkbutton(f, text="Звук при входе и выходе из позиции", variable=self.v_sound).pack(side="left", padx=(16, 0))
@@ -757,6 +775,19 @@ class App(tk.Tk):
         except ValueError:
             messagebox.showerror(APP_TITLE, "Капитал должен быть числом, например 1000000.")
             return
+        broker = {v: k for k, v in self.BROKERS.items()}.get(self.v_broker.get(), "tinvest")
+        if broker != self.s.get("broker", "tinvest"):
+            if self.robot_running() and self.robot.positions:
+                messagebox.showerror(APP_TITLE, "Сначала закройте открытые позиции — потом меняйте брокера.")
+                return
+            if broker == "finam" and not messagebox.askyesno(APP_TITLE, "Робот будет торговать через Финам. Если указан реальный "
+                                                                        "счёт — сделки пойдут на реальные деньги. Продолжить?", icon="warning"):
+                return
+        if self.v_fsec.get().strip():
+            self.s["finam_secret"] = self.v_fsec.get().strip()
+            self.v_fsec.set("")
+            self.fsec_lbl.configure(text="  сохранён — оставьте пустым, чтобы не менять")
+        self.s.update(broker=broker, finam_account=self.v_facc.get().strip())
         self.s.update(threshold=float(self.v_thr.get()), entry=self.v_entry.get(), capital=cap,
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
@@ -1040,7 +1071,7 @@ class App(tk.Tk):
             return
         self._apply_settings()
         log = lambda m: self.q.put(("log", f"[робот {now_msk():%H:%M:%S}] {m}\n"))
-        broker = at.SandboxBroker(tok, float(self.s["capital"]), log=log)
+        broker = at.make_broker(self.s, log=log)
         spike = rc.spike_cfg(self.s)
         self.robot = at.AutoTrader(broker, float(self.s["capital"]), log=log, rescan=bool(self.s.get("rescan")), spike=spike,
                                    day_on=bool(self.s.get("day_on", True)), direction=self.s.get("direction", "both"), trade=trade,
@@ -1275,7 +1306,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "auto_journal"]
+                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "broker", "finam_account", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1286,6 +1317,9 @@ class App(tk.Tk):
         s = self.s
         self.v_thr.set(f"{float(s['threshold']):g}"); self.v_entry.set(s["entry"]); self.v_cap.set(str(int(float(s["capital"]))))
         self.v_sbtok.set(bool(s["sandbox_token"])); self.v_aj.set(bool(s.get("auto_journal", True)))
+        self.v_broker.set(self.BROKERS.get(s.get("broker", "tinvest"), self.BROKERS["tinvest"])); self.v_facc.set(s.get("finam_account", ""))
+        if srv.get("finam_set"):
+            self.fsec_lbl.configure(text="  сохранён на сервере — оставьте пустым, чтобы не менять")
         self.v_rescan.set(bool(s.get("rescan"))); self.v_day.set(bool(s.get("day_on", True)))
         self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))

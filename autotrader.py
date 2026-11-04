@@ -510,6 +510,49 @@ class SandboxBroker:
         return px or None
 
 
+class FinamBroker(SandboxBroker):
+    """Торговля через Финам (Trade API): заявки и счёт — у Финама; свечи, цены и список бумаг — из Т-Инвестиций
+    (на них робот проверен; токен песочницы Т-Инвестиций подходит для данных). Через Финам торгуются только акции Мосбиржи.
+    ВНИМАНИЕ: если в Финаме выбран реальный (не демо) счёт — сделки идут на реальные деньги."""
+    name = "Финам"
+
+    def __init__(self, token, capital, finam_secret, finam_account="", log=print):
+        super().__init__(token, capital, log)
+        self.fn = sc.Finam(finam_secret, finam_account)
+
+    def prepare(self):
+        acc = self.fn.ensure_account()
+        v = self.fn.equity()
+        self.acc = acc
+        self.log(f"Финам: счёт {acc}, стоимость {v:,.0f} ₽. Данные рынка — из Т-Инвестиций.".replace(",", " "))
+
+    def portfolio_value(self):
+        return self.fn.equity()
+
+    def live_value(self):
+        return self.fn.equity()
+
+    def universe(self, markets, index_list, log=print):
+        only = [m for m in markets if m in ("all_shares", "imoex", "blue", "third")]
+        if len(only) < len(markets):
+            log("Финам: валюта и фьючерсы через этого брокера роботом не торгуются — только акции.")
+        return super().universe(only or ["all_shares"], index_list, log)
+
+    def order(self, tk, lots, side):
+        kind, _, _ = self.terms(tk)
+        if kind != "share":
+            raise RuntimeError("через Финам робот торгует только акциями")
+        qty = int(lots) * int(self.ti.share(tk)["lot"])
+        return self.fn.market_order(tk, qty, side)
+
+
+def make_broker(s, log=print):
+    """Брокер по настройкам: песочница Т-Инвестиций (по умолчанию) или Финам."""
+    if s.get("broker") == "finam":
+        return FinamBroker(s.get("token"), float(s["capital"]), s.get("finam_secret"), s.get("finam_account", ""), log=log)
+    return SandboxBroker(s.get("token"), float(s["capital"]), log=log)
+
+
 class AutoTrader:
     def __init__(self, broker, capital, log=print, on_update=None, clock=None, sleep=None,
                  stop_event=None, rescan=False, state_path=None, spike=None, day_on=True, on_event=None,
