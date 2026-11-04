@@ -151,9 +151,13 @@ class Pair:
         """Забрать у активного сервера позиции, настройки и журналы (пассивный держит их наготове)."""
         js = self.client.get("/api/pair_sync")
         for name, b64 in (js.get("files") or {}).items():
-            if name not in SYNC_FILES or b64 is None:
+            if name not in SYNC_FILES:
                 continue
             path = os.path.join(sc.HERE, name)
+            if b64 is None:                      # у активного файла нет (например, после сброса) — убрать и здесь
+                if name not in ("settings.json",) and os.path.exists(path):
+                    os.remove(path)
+                continue
             tmp = path + ".sync"
             with open(tmp, "wb") as f:
                 f.write(base64.b64decode(b64))
@@ -165,7 +169,9 @@ def sync_payload():
     files = {}
     for name in SYNC_FILES:
         p = os.path.join(sc.HERE, name)
-        if os.path.exists(p) and os.path.getsize(p) < 5_000_000:
+        if not os.path.exists(p):
+            files[name] = None
+        elif os.path.getsize(p) < 5_000_000:
             files[name] = base64.b64encode(open(p, "rb").read()).decode()
     return {"files": files}
 

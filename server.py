@@ -116,6 +116,7 @@ class Robot:
         self.s = rc.load_settings()
         self.robot = None
         self.thread = None
+        self.resetting = False
         self.snap = {}
         self.events = collections.deque(maxlen=200)       # для звука/уведомлений на телефоне
         self.ev_seq = 0
@@ -246,6 +247,37 @@ class Robot:
             self.start(trade)
         threading.Thread(target=job, daemon=True).start()
 
+    def reset(self):
+        """Сброс: новый демо-счёт на сумму капитала, история сделок и баланса — с нуля. Робот перезапускается в том же режиме."""
+        if self.resetting:
+            return False
+        self.resetting = True
+
+        def job():
+            try:
+                was = self.running()
+                trade = bool(self.robot.trade) if was else bool(self.s.get("autostart"))
+                if was:
+                    log("Сброс: останавливаю робота…")
+                    self.robot.request_stop(False)
+                    for _ in range(240):
+                        if not self.running():
+                            break
+                        time.sleep(0.5)
+                self.snap = None
+                rc.reset_trading(self.s.get("token"), float(self.s["capital"]), log=log)
+                if was:
+                    self.start(trade)
+                tg.send(self.s.get("tg_token"), self.s.get("tg_chat"),
+                        f"🔄 Робот Мосбиржи: торговля сброшена, новый демо-счёт {float(self.s['capital']):,.0f} ₽.".replace(",", " "),
+                        lambda m: print(m))
+            except Exception as e:
+                log(f"Сброс не удался: {e}")
+            finally:
+                self.resetting = False
+        threading.Thread(target=job, daemon=True).start()
+        return True
+
     def on_update(self, snap):
         self.snap = snap
 
@@ -322,7 +354,7 @@ class Robot:
                 "threshold": sc.THRESHOLD, "ev_seq": self.ev_seq, "balance": snap.get("balance"),
                 "entry": self.s.get("entry", "15:00"), "day_on": bool(self.s.get("day_on", True)), "day_mode": self.s.get("day_mode", "fixed"),
                 "pos_summary": rc.positions_summary(snap.get("positions", []) if r else []), "index": self.index,
-                "pair": PAIR.info() if PAIR else None}
+                "pair": PAIR.info() if PAIR else None, "resetting": self.resetting}
 
 
 ROBOT = None
@@ -631,6 +663,12 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/start":
                 ok = ROBOT.start(True)
                 return self._send(200, {"ok": ok, "msg": "" if ok else "Сначала введите токен песочницы в настройках."})
+            if u.path == "/api/reset":
+                if b.get("confirm") != "СБРОС":
+                    return self._send(400, {"error": "нужно подтверждение"})
+                ok = ROBOT.reset()
+                return self._send(200, {"ok": ok, "msg": "Сброс начат: новый демо-счёт и чистая история, это займёт до минуты."
+                                        if ok else "Сброс уже идёт."})
             if u.path == "/api/stop":
                 ROBOT.stop_trade(bool(b.get("close")))
                 return self._send(200, {"ok": True})

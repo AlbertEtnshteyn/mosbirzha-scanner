@@ -279,6 +279,7 @@ class App(tk.Tk):
         self.res_bal = ttk.Label(top7, text="Баланс: —", style="Big.TLabel")
         self.res_bal.pack(side="left")
         ttk.Button(top7, text="Обновить", command=self.refresh_results).pack(side="right")
+        ttk.Button(top7, text="Сбросить баланс и начать сначала", command=self.reset_trading).pack(side="right", padx=8)
         self.res_tree = self._tree(t7, [("period", "Период", 180), ("from", "С", 90), ("start", "Баланс на начало", 130),
                                         ("chg", "Изменение, ₽", 120), ("pct", "Изменение, %", 100), ("n", "Сделок", 70),
                                         ("win", "В плюсе", 70), ("pnl", "Итог сделок, ₽", 120), ("avg", "Средняя сделка", 110)])
@@ -1398,6 +1399,42 @@ class App(tk.Tk):
     def _results_tick(self):
         self.refresh_results()
         self.after(60000, self._results_tick)
+
+    def reset_trading(self):
+        cap = f"{float(self.s.get('capital', 0)):,.0f}".replace(",", " ")
+        if not messagebox.askyesno(APP_TITLE, f"Сбросить торговлю и начать сначала?\n\nВсе открытые позиции закроются, демо-счёт "
+                                              f"откроется заново на {cap} ₽ (капитал из настроек), история сделок и баланса очистится.\n"
+                                              "Журнал 15:00 и найденные сегодня формации останутся.", icon="warning"):
+            return
+        if not messagebox.askyesno(APP_TITLE, "Точно? Это нельзя отменить.", icon="warning"):
+            return
+        srv = self._server()
+        if srv:
+            def job():
+                r = srv.post("/api/reset", {"confirm": "СБРОС"})
+                print(r.get("msg", "Сброс начат на сервере."))
+            self.submit("Сброс торговли на сервере", job, lambda _: self.after(20000, self.refresh_results))
+            return
+        tok = self.s.get("token")
+        if not tok or not self.s.get("sandbox_token"):
+            messagebox.showerror(APP_TITLE, "Нужен токен песочницы Т-Инвестиций (вкладка «Настройки»).")
+            return
+        was = self.robot_running()
+        trade = bool(getattr(self.robot, "trade", False)) if was else False
+
+        def job():
+            if was:
+                print("Останавливаю робота…")
+                self.robot.request_stop(False)
+                if self.robot_thread:
+                    self.robot_thread.join(120)
+            rc.reset_trading(tok, float(self.s["capital"]), log=print)
+
+        def done(_):
+            if was:
+                self.robot_start(trade=trade, quiet=True)
+            self.refresh_results()
+        self.submit("Сброс торговли", job, done)
 
     def refresh_results(self):
         rr = self.robot if self.robot_running() else None

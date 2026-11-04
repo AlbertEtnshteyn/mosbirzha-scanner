@@ -382,3 +382,51 @@ def attach_formations(data, spikes):
     out["rows"] = [dict(r, forms=list(by[r["ticker"]].values())) if r.get("ticker") in by else r for r in data.get("rows", [])]
     out["forms_n"] = len(by)
     return out
+
+
+# ============================================================================ сброс: новый демо-счёт и чистая история торговли
+def reset_trading(token, capital, log=print):
+    """Закрыть все счета песочницы, открыть новый и пополнить его на сумму капитала; историю сделок и баланса
+    убрать в архивную папку reset_ГГГГММДД_ЧЧММ (на всякий случай). Найденные сегодня формации сохраняются.
+    Робот перед этим должен быть остановлен."""
+    import glob
+    import shutil
+    if not token:
+        raise ValueError("нет токена песочницы Т-Инвестиций")
+    ti = sc.TInvest(token, "sandbox")
+    accs = ti.call("SandboxService", "GetSandboxAccounts", {}).get("accounts", [])
+    for a in accs:
+        ti.call("SandboxService", "CloseSandboxAccount", {"accountId": a["id"]})
+    log(f"Счета песочницы закрыты: {len(accs)} (вместе с позициями).")
+    acc = ti.call("SandboxService", "OpenSandboxAccount", {})["accountId"]
+    ti.sandbox_pay_in(acc, capital)
+    log("Открыт новый демо-счёт, пополнен на " + f"{capital:,.0f}".replace(",", " ") + " ₽.")
+
+    now = datetime.now(sc.MSK)
+    arch = os.path.join(sc.HERE, "reset_" + now.strftime("%Y%m%d_%H%M%S"))
+    os.makedirs(arch, exist_ok=True)
+    files = glob.glob(os.path.join(sc.HERE, "sandbox_trades*.csv")) + [sc.SPIKE_LOG, at.bal_log(), at.STATE_FILE]
+    for p in files:
+        if os.path.exists(p):
+            shutil.copy2(p, arch)
+    # состояние робота: позиции и сделки — с нуля, найденные сегодня всплески/формации — оставить
+    try:
+        with open(at.STATE_FILE, encoding="utf-8") as f:
+            old = json.load(f)
+    except Exception:
+        old = {}
+    st = at.AutoTrader._fresh(now.date().isoformat())
+    if old.get("date") == st["date"]:
+        for k in ("found_spikes", "found_seen", "found_waits", "entered", "done"):   # вход «Движения дня» сегодня не повторять
+            if k in old:
+                st[k] = old[k]
+    with open(at.STATE_FILE + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(st, f, ensure_ascii=False, indent=1)
+    os.replace(at.STATE_FILE + ".tmp", at.STATE_FILE)
+    for p in files[:-1]:
+        if os.path.exists(p):
+            os.remove(p)
+    sc.append_rows(at.bal_log(), at.BAL_COLS, [{"time": now.strftime("%Y-%m-%d %H:%M"), "value": round(capital, 2),
+                                                "deposit": capital}])
+    log(f"История сделок и баланса очищена (копия: {os.path.basename(arch)}). Начинаем с {capital:,.0f} ₽.".replace(",", " "))
+    return {"capital": capital, "archive": os.path.basename(arch)}

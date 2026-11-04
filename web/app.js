@@ -403,6 +403,14 @@ setInterval(() => { if (!document.hidden && TAB === "market") loadMarket(); }, 3
 let TRV = "results", TRF = "";
 const rub = (v, sign) => v == null || isNaN(v) ? "—" : (sign && v > 0 ? "+" : "") + Math.round(v).toLocaleString("ru-RU").replace(/,/g, " ") + " ₽";
 let RES = null, RCH = null;
+$("#resetBtn").onclick = async () => {
+  const cap = SET && SET.capital ? rub(+SET.capital) : "сумму капитала из настроек";
+  if (!(await ask(`Сбросить торговлю? Все открытые позиции закроются, демо-счёт откроется заново на ${cap}, история сделок и баланса очистится.`,
+    [["Сбросить", true, "danger"], ["Отмена", false]]))) return;
+  if (!(await ask("Точно? Это нельзя отменить.", [["Да, начать сначала", true, "danger"], ["Отмена", false]]))) return;
+  try { const r = await api("/api/reset", { confirm: "СБРОС" }); toast(r.msg || "Сброс начат.", 6000); setTimeout(loadResults, 15000); setTimeout(loadResults, 40000); }
+  catch (e) { toast("Не получилось: " + e.message); }
+};
 async function loadResults() {
   try { RES = await api("/api/results"); } catch (e) { return; }
   const d = RES.periods.find((p) => p.kind === "day");
