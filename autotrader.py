@@ -886,6 +886,9 @@ class AutoTrader:
                 self._scan(now)                           # рынок от открытия утренней сессии — для фильтра индекса и входов с 9:00
             if self._day_signal_mode():
                 self._enter_signal(now)
+            elif self.trade and self.day_on and self._day_early() and not self.st["entered"] and sc.ENTRY_MIN <= t:
+                self._scan(now)
+                self._enter(now)                          # «Движение дня» с входом в 09:00
             mk = f"рынок {self.market * 100:+.2f}% · " if self.market is not None else ""
             self._set_status(f"{'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}: {mk}утренняя сессия, ищу формации")
             self._scan_pullbacks(now)
@@ -955,7 +958,7 @@ class AutoTrader:
                 self.opens[tk] = first[0]["o"]
             elif t > sc.OPEN_MIN + 5:
                 self.opens[tk] = None      # не торговалась в начале сессии — как в бэктесте, пропускаем
-        if self._day_signal_mode():
+        if self._day_signal_mode() or self._day_early():   # ранний вход (до 11:00) — движение от открытия утренней сессии
             ref = {tk: o for tk, o in self.pre_opens.items() if o}
         else:
             ref = {tk: o for tk, o in self.opens.items() if o}
@@ -1293,6 +1296,9 @@ class AutoTrader:
         for tk, side, mv in sigs:
             self.st["traded"].append(tk)
             self._open(tk, side, alloc)
+
+    def _day_early(self):
+        return sc.ENTRY_MIN < 11 * 60
 
     def _day_signal_mode(self):
         return self.day_on and self.sp.get("day_mode", "fixed") == "signal"

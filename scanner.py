@@ -347,6 +347,8 @@ def configure(threshold_pct=2.0, entry="15:00"):
     THRESHOLD = threshold_pct / 100
     hh, mm = (int(x) for x in str(entry).split(":"))
     ENTRY_MIN = hh * 60 + mm
+    global LATE_CUTOFF_MIN
+    LATE_CUTOFF_MIN = min(max(16 * 60 + 30, ENTRY_MIN + 60), 18 * 60 + 30)   # опоздавший вход — не позже чем через час
     sfx = (f"_{hh:02d}{mm:02d}" if ENTRY_MIN != 15 * 60 else "") + (f"_t{threshold_pct:g}".replace(".", "_") if threshold_pct != 2.0 else "")
     JOURNAL = os.path.join(HERE, f"forward_journal{sfx}.csv")
     DAYS_LOG = os.path.join(HERE, f"forward_days{sfx}.csv")
@@ -361,7 +363,8 @@ def minute_of(ts):
 
 
 LAST_MOVES = {}
-ENTRY_CHOICES = ["12:00", "13:00", "14:00", "14:30", "15:00"]
+ENTRY_CHOICES = [f"{h:02d}:00" for h in range(9, 19)] + ["14:30"]   # 09:00–18:00 по часам (+14:30 — проверенный вариант)
+ENTRY_CHOICES.sort()
 THRESHOLD_CHOICES = [1.0, 1.5, 2.0, 2.5]
 BACKTEST = {  # (вход, порог %) -> (средняя сделка %, итог %, макс. просадка %, сделок) за 10.2025–10.2026, затраты 0,16%
     ("12:00", 1): (-0.2, -33.7, -37.4, 2061),
