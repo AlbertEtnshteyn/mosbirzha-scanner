@@ -211,6 +211,13 @@ class App(tk.Tk):
         self.spk_tree = self._tree(sf, [("time", "Импульс", 55), ("sig", "Сигнал", 55), ("ticker", "Бумага", 60), ("tf", "ТФ", 35), ("val", "Оборот, млн", 75),
                                         ("mult", "×", 40), ("move", "Импульс", 65), ("dir", "Ожидание", 75),
                                         ("reason", "Статус", 125)])
+        cf = ttk.Frame(lnb, padding=4)
+        lnb.add(cf, text="Календарь")
+        self.cal_lbl = ttk.Label(cf, text="—", foreground="#555")
+        self.cal_lbl.pack(anchor="w")
+        self.cal_tree = self._tree(cf, [("date", "Дата", 70), ("dow", "День", 40), ("kind", "Биржа", 170), ("time", "Время", 90), ("robot", "Робот", 170)])
+        self.cal_tree.tag_configure("off", foreground="#b33")
+        self.after(4000, self._cal_tick)
         self.scan_lbl = ttk.Label(lf, text="—")
         self.scan_lbl.pack(anchor="w")
         self.scan_tree = self._tree(lf, [("ticker", "Бумага", 70), ("move", "Движение", 80), ("reason", "Статус", 110)])
@@ -420,6 +427,7 @@ class App(tk.Tk):
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
+        self.v_wkend = tk.BooleanVar(value=bool(self.s.get("trade_weekends", False)))
         self.v_flip_all = tk.BooleanVar(value=self.s.get("idx_flip") == "all")
         self.v_flip_profit = tk.BooleanVar(value=self.s.get("idx_flip") == "profit")
         self.v_dtp = tk.StringVar(value=str(self.s.get("day_tp", 8)))
@@ -532,6 +540,8 @@ class App(tk.Tk):
                                 "3-й эшелон и 5 мин — никогда не торгуются, только уведомления", variable=self.v_tier).pack(anchor="w")
         ttk.Checkbutton(f, text="Только по направлению индекса (лонг — когда индекс растёт, шорт — когда падает). "
                                 "Если снять — входит в обе стороны", variable=self.v_idx_form).pack(anchor="w")
+        ttk.Checkbutton(f, text="Торговать в выходные и праздничные дни (сессии выходного дня Мосбиржи; обе стратегии). Без галочки — только "
+                                "в торговые дни по календарю (вкладка «Автоторговля» → «Календарь»)", variable=self.v_wkend).pack(anchor="w")
         ttk.Checkbutton(f, text="При смене направления индекса закрыть все сделки (обе стратегии)", variable=self.v_flip_all,
                         command=lambda: self.v_flip_all.get() and self.v_flip_profit.set(False)).pack(anchor="w")
         ttk.Checkbutton(f, text="При смене направления индекса закрыть все сделки в плюсе (обе стратегии). Разворот — индекс "
@@ -831,6 +841,7 @@ class App(tk.Tk):
                       day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0), day_exit=self.v_dexit.get(),
                       day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"),
                       idx_form=self.v_idx_form.get(), idx_day=self.v_idx_day.get(),
+                      trade_weekends=self.v_wkend.get(),
                       idx_flip="all" if self.v_flip_all.get() else "profit" if self.v_flip_profit.get() else "off",
                       day_tp=float(self.v_dtp.get()), day_tp_half=float(self.v_dhalf.get()),
                       day_trail=float(self.v_dtrail.get()), day_act=float(self.v_dact.get()), sound_on=self.v_sound.get(),
@@ -1348,7 +1359,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "broker", "finam_account", "real_account", "auto_journal"]
+                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1368,6 +1379,7 @@ class App(tk.Tk):
         self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0])); self.v_dexit.set(s.get("day_exit", "18:45"))
         self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
+        self.v_wkend.set(bool(s.get("trade_weekends", False)))
         self.v_flip_all.set(s.get("idx_flip") == "all"); self.v_flip_profit.set(s.get("idx_flip") == "profit")
         self.v_dtp.set(f"{float(s.get('day_tp', 8)):g}"); self.v_dhalf.set(f"{float(s.get('day_tp_half', 50)):g}")
         self.v_dtrail.set(f"{float(s.get('day_trail', 2)):g}"); self.v_dact.set(f"{float(s.get('day_act', 0)):g}")
@@ -1523,6 +1535,34 @@ class App(tk.Tk):
                 self.robot_start(trade=trade, quiet=True)
             self.refresh_results()
         self.submit("Сброс торговли", job, done)
+
+    def _cal_tick(self):
+        srv = self._server()
+        tok = self.s.get("token")
+
+        def job():
+            try:
+                if srv:
+                    c = srv.get("/api/calendar")
+                else:
+                    if getattr(self, "_cal", None) is None:
+                        self._cal = sc.TradingCalendar(sc.TInvest(tok, "sandbox" if self.s.get("sandbox_token", True) else "prod") if tok else None)
+                    c = self._cal.listing(14)
+                    c["trade_weekends"] = bool(self.s.get("trade_weekends"))
+                self.q.put(("call", self._show_cal, c))
+            except Exception as e:
+                self.q.put(("log", f"Календарь не получен: {e}\n"))
+        threading.Thread(target=job, daemon=True).start()
+        self.after(30 * 60000, self._cal_tick)
+
+    def _show_cal(self, c):
+        self.cal_tree.delete(*self.cal_tree.get_children())
+        for d in c.get("days", []):
+            on = d["kind"] == "trading" or (d["kind"] == "weekend_session" and c.get("trade_weekends"))
+            rb = "работает" if on else ("не торгует (выходные выключены)" if d["kind"] == "weekend_session" else "отдыхает")
+            self.cal_tree.insert("", "end", tags=(() if on else ("off",)), values=(
+                ".".join(reversed(d["date"].split("-")))[:5], d["dow"], d["name"], f"{d['start']}–{d['end']}" if d["start"] else "", rb))
+        self.cal_lbl.configure(text=f"Источник: {c.get('source', '')}. Торговля в выходные: {'включена' if c.get('trade_weekends') else 'выключена'} (Настройки).")
 
     def refresh_results(self):
         rr = self.robot if self.robot_running() else None

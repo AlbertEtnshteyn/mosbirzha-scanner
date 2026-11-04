@@ -400,6 +400,22 @@ def closed_trades():
             "total": rc.strat_summary(out)}
 
 
+_CAL = {"cal": None}
+
+
+def calendar():
+    """Календарь торгов на 2 недели (с отметкой, торгует ли робот в сессии выходного дня)."""
+    r = ROBOT.robot if ROBOT.running() else None
+    cal = getattr(r, "cal", None)
+    if cal is None:
+        if _CAL["cal"] is None and ROBOT.s.get("token"):
+            _CAL["cal"] = sc.TradingCalendar(sc.TInvest(ROBOT.s["token"], "sandbox"))
+        cal = _CAL["cal"] or sc.TradingCalendar(None)
+    out = cal.listing(14)
+    out["trade_weekends"] = bool(ROBOT.s.get("trade_weekends"))
+    return out
+
+
 def journal():
     rows = read_csv(sc.JOURNAL)
     days = read_csv(sc.DAYS_LOG)
@@ -644,6 +660,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, closed_trades())
             if u.path == "/api/results":
                 return self._send(200, rc.results((ROBOT.snap or {}).get("balance")))
+            if u.path == "/api/calendar":
+                return self._send(200, calendar())
             if u.path == "/api/journal":
                 return self._send(200, journal())
             if u.path == "/api/market":

@@ -410,6 +410,19 @@ setInterval(() => { if (!document.hidden && TAB === "market") loadMarket(); }, 3
 // ---------------------------------------------------------------- сделки и журнал
 let TRV = "results", TRF = "";
 const rub = (v, sign) => v == null || isNaN(v) ? "—" : (sign && v > 0 ? "+" : "") + Math.round(v).toLocaleString("ru-RU").replace(/,/g, " ") + " ₽";
+async function loadCalendar() {
+  let c; try { c = await api("/api/calendar"); } catch (e) { return; }
+  const today = c.days[0];
+  $("#calInfo").textContent = today ? "· сегодня: " + today.name : "";
+  $("#cal").innerHTML = c.days.map((d) => {
+    const on = d.kind === "trading" || (d.kind === "weekend_session" && c.trade_weekends);
+    const col = d.kind === "trading" ? "up" : d.kind === "weekend_session" ? "" : "down";
+    return `<div class="item"><div class="hd"><span><b>${d.date.split("-").reverse().slice(0, 2).join(".")}</b> <span class="muted">${d.dow}</span></span>
+      <span class="${col}">${esc(d.name)}${d.start ? ` ${d.start}–${d.end}` : ""}</span></div>
+      <div class="meta">${on ? "робот работает" : d.kind === "weekend_session" ? "робот не торгует (торговля в выходные выключена)" : "робот отдыхает"}</div></div>`;
+  }).join("") + `<p class="muted small">Источник: ${esc(c.source)}.</p>`;
+}
+
 let RES = null, RCH = null;
 $("#resetBtn").onclick = async () => {
   const cap = SET && SET.capital ? rub(+SET.capital) : "сумму капитала из настроек";
@@ -551,6 +564,9 @@ function renderSettings(s) {
     ${sel("leverage", "Маржа", Object.entries(LEV))}
     ${sel("direction", "Направление", [["both", "лонг и шорт"], ["long", "только лонг"], ["short", "только шорт"]])}
   </div>
+  <div class="grp"><h3>Календарь</h3>
+    ${chk("trade_weekends", "Торговать в выходные и праздничные дни (сессии выходного дня Мосбиржи)", "Робот смотрит календарь Мосбиржи: в праздники и выходные без торгов он не работает. Если галочка снята — в сессии выходного дня тоже не торгует (оборот там маленький, на истории не проверено).")}
+  </div>
   <div class="grp"><h3>Разворот индекса (обе стратегии)</h3>
     <label class="c"><input type="checkbox" name="flip_all" ${SET.idx_flip === "all" ? "checked" : ""}><span>При смене направления индекса закрыть все сделки</span></label>
     <label class="c"><input type="checkbox" name="flip_profit" ${SET.idx_flip === "profit" ? "checked" : ""}><span>При смене направления индекса закрыть все сделки в плюсе</span></label>
@@ -628,7 +644,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
     day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
@@ -667,6 +683,7 @@ function start() {
   $("#login").hidden = true; $("#app").hidden = false;
   poll(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) poll(); }, 3000);
   loadResults(); setInterval(() => { if (!document.hidden) loadResults(); }, 60000);
+  loadCalendar(); setInterval(() => { if (!document.hidden) loadCalendar(); }, 30 * 60000);
   setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data && CH.tf <= 60) loadChart(true); }, 30000);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && KEY) poll(); });

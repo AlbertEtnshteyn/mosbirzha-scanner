@@ -837,6 +837,102 @@ class TInvest:
         return js
 
 
+# ============================================================================ календарь торгов
+DAY_KINDS = {"trading": "торговый день", "weekend_session": "сессия выходного дня", "holiday": "праздник — биржа закрыта",
+             "weekend": "выходной — биржа закрыта"}
+
+
+class TradingCalendar:
+    """Календарь Мосбиржи на ближайшие 2 недели по расписанию торгов из Т-Инвестиций (TradingSchedules):
+    торговый день, праздник, выходной или торговая сессия выходного дня. Если расписание не получено —
+    будни считаются торговыми, суббота и воскресенье — выходными."""
+    def __init__(self, ti=None):
+        self.ti = ti
+        self.days = {}            # date -> {"kind", "start", "end"}
+        self.loaded = None        # дата последней загрузки
+        self.source = "по дням недели"
+
+    @staticmethod
+    def _fallback(d):
+        return {"kind": "trading" if d.weekday() < 5 else "weekend", "start": "", "end": ""}
+
+    def _load(self, today):
+        if self.loaded == today:
+            return
+        self.loaded = today
+        if self.ti is None:
+            return
+        try:
+            frm = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+            js = self.ti.call("InstrumentsService", "TradingSchedules",
+                              {"from": frm.isoformat().replace("+00:00", "Z"),
+                               "to": (frm + timedelta(days=13)).isoformat().replace("+00:00", "Z")})
+        except Exception:
+            return
+        main, wk = {}, {}
+        for ex in js.get("exchanges", []):
+            name = str(ex.get("exchange", "")).upper()
+            for d in ex.get("days", []):
+                try:
+                    day = date.fromisoformat(str(d.get("date", ""))[:10])
+                except ValueError:
+                    continue
+                if not d.get("isTradingDay"):
+                    continue
+                times = ("", "")
+                try:
+                    st = datetime.fromisoformat(d["startTime"].replace("Z", "+00:00")).astimezone(MSK)
+                    en = datetime.fromisoformat(d["endTime"].replace("Z", "+00:00")).astimezone(MSK)
+                    times = (st.strftime("%H:%M"), en.strftime("%H:%M"))
+                except Exception:
+                    pass
+                if name == "MOEX":
+                    main[day] = times
+                elif "MOEX" in name and "WEEKEND" in name:
+                    wk.setdefault(day, times)
+        if not main and not wk:
+            return
+        out = {}
+        for i in range(14):
+            d = today + timedelta(days=i)
+            if d in main and d.weekday() < 5:
+                out[d] = {"kind": "trading", "start": main[d][0], "end": main[d][1]}
+            elif d in main or d in wk:
+                t = main.get(d) or wk.get(d)
+                out[d] = {"kind": "weekend_session", "start": t[0], "end": t[1]}
+            else:
+                out[d] = {"kind": "holiday" if d.weekday() < 5 else "weekend", "start": "", "end": ""}
+        self.days = out
+        self.source = "расписание Мосбиржи"
+
+    def day(self, d):
+        self._load(datetime.now(MSK).date())
+        return self.days.get(d) or self._fallback(d)
+
+    def kind(self, d):
+        return self.day(d)["kind"]
+
+    def next_trading(self, d, weekends=False):
+        for i in range(1, 15):
+            x = d + timedelta(days=i)
+            k = self.kind(x)
+            if k == "trading" or (weekends and k == "weekend_session"):
+                return x
+        return None
+
+    def listing(self, n=14):
+        today = datetime.now(MSK).date()
+        self._load(today)
+        names = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+        out = []
+        for i in range(n):
+            d = today + timedelta(days=i)
+            x = self.day(d)
+            out.append({"date": d.isoformat(), "dow": names[d.weekday()], "kind": x["kind"], "name": DAY_KINDS[x["kind"]],
+                        "start": x["start"], "end": x["end"]})
+        return {"days": out, "source": self.source}
+
+
 # ============================================================================ Финам (Trade API, REST)
 class Finam:
     """Торговый счёт Финама через Trade API: https://api.finam.ru/v1. Секретный токен из личного кабинета

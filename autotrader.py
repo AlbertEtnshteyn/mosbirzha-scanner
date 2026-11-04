@@ -44,7 +44,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "trade_weekends": False, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -770,7 +770,7 @@ class AutoTrader:
 
     # ------------------------------------------------------------------ главный цикл
     def run(self):
-        self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Мониторинг по будням {hm(DAY_START)}–{hm(DAY_END)} МСК, "
+        self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Мониторинг в торговые дни по календарю Мосбиржи{' (и в сессии выходного дня)' if self.sp.get('trade_weekends') else ''} {hm(DAY_START)}–{hm(DAY_END)} МСК, "
                  f"входы по формации: {trade_profile('index', 15, 'form', self.sp.get('window', '9-19'), self.sp.get('exit_late', True))['name']}; "
                  + ("во время выхода закрываются все позиции. " if self.sp.get("carry_all", True) == "none" else
                     "все позиции переносятся на следующий день, пока их не закроют стоп, тейк или трейлинг. "
@@ -793,14 +793,19 @@ class AutoTrader:
         if self.positions:
             self.log(f"Открытые позиции с прошлого запуска: {', '.join(p['ticker'] for p in self.positions)} — продолжаю сопровождать.")
         prepared_for = None
+        self.cal = sc.TradingCalendar(getattr(self.b, "ti", None))
         while not self.stop_event.is_set():
             now = self.clock()
             t = now.hour * 60 + now.minute
             try:
                 if self.manual:
                     self._process_manual()
-                if now.weekday() >= 5:
-                    self._set_status("выходной — жду понедельника")
+                kind = self.cal.kind(now.date())
+                wk = bool(self.sp.get("trade_weekends"))
+                if kind in ("holiday", "weekend") or (kind == "weekend_session" and not wk):
+                    nxt = self.cal.next_trading(now.date(), wk)
+                    why = sc.DAY_KINDS[kind] + (" (торговля в выходные выключена)" if kind == "weekend_session" else "")
+                    self._set_status(f"{why} — жду " + (f"{nxt:%d.%m}" if nxt else "следующего торгового дня"))
                     self._sleep(300)
                     continue
                 if t < DAY_START or t >= DAY_END:
@@ -1009,7 +1014,9 @@ class AutoTrader:
         out = []
         for d in range(HIST_DAYS, -1, -1):
             day = (now - timedelta(days=d)).date()
-            if day.weekday() >= 5:
+            if day.weekday() >= 5 and not self.sp.get("trade_weekends"):
+                continue
+            if hasattr(self, "cal") and self.cal.kind(day) in ("holiday", "weekend"):
                 continue
             frm = datetime(day.year, day.month, day.day, 6, 50, tzinfo=sc.MSK)
             to = min(now, datetime(day.year, day.month, day.day, 23, 59, tzinfo=sc.MSK))
