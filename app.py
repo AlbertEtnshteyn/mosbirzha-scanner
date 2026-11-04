@@ -638,7 +638,7 @@ class App(tk.Tk):
         ttk.Label(fdc, text="Переносить позиции:").pack(side="left")
         ttk.Combobox(fdc, textvariable=self.v_dayc, width=20, state="readonly", values=list(self.DAYC.values())).pack(side="left", padx=6)
         ttk.Label(fdc, text="выход в").pack(side="left")
-        ttk.Combobox(fdc, textvariable=self.v_dexit, width=6, state="readonly", values=["17:00", "18:45"]).pack(side="left", padx=4)
+        ttk.Combobox(fdc, textvariable=self.v_dexit, width=6, state="readonly", values=sorted(set(at.EXIT_CHOICES))).pack(side="left", padx=4)
         ttk.Label(fdc, text="(последнего дня; на истории 17:00 лучше), стоп 3% действует всё время", foreground="#555").pack(side="left")
         r += 1
         fdt = ttk.Frame(g); fdt.grid(row=r, column=1, sticky="w", pady=2)
