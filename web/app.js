@@ -585,11 +585,13 @@ function renderSettings(s) {
   </div>
   <button type="submit" class="btn primary wide save">Сохранить настройки</button>`;
   const fillExit = () => {
-    const f = $("#setForm"), w9 = f.entry_window.value !== "10-18", early = w9 ? "19:25" : "18:45";
-    let cur = f.exit_late.value || (typeof SET.exit_late === "string" ? "s1845" : SET.exit_late === false ? "early" : "late");
-    if (!w9 && cur === "s1845") cur = "early";
-    f.exit_late.innerHTML = `<option value="early">${early}</option>` + (w9 ? `<option value="s1845">18:45</option>` : "") + `<option value="late">23:45</option>`;
-    f.exit_late.value = cur;
+    const f = $("#setForm"), early = f.entry_window.value === "10-18" ? "18:45" : "19:25";
+    const times = [...new Set([...Array(14).keys()].map((i) => String(10 + i).padStart(2, "0") + ":00").concat(["18:45", "19:25", "23:45", early]))].sort();
+    let cur = f.exit_late.value || (typeof SET.exit_late === "string" ? SET.exit_late : SET.exit_late === false ? early : "23:45");
+    if (cur === "19:25" || cur === "18:45") cur = times.includes(cur) ? cur : early;
+    f.exit_late.innerHTML = times.map((t) => `<option value="${t}">${t}</option>`).join("");
+    f.exit_late.value = times.includes(cur) ? cur : early;
+    f.exit_late.dataset.early = early;
   };
   fillExit(); $("#setForm").entry_window.onchange = fillExit;
   const fA = $("#setForm").flip_all, fP = $("#setForm").flip_profit;     // только один из двух вариантов
@@ -617,7 +619,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     real_account: (v("real_account") || "").trim(), real_token: (v("real_token") || "").trim(),
     finam_secret: (v("finam_secret") || "").trim(), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
     spike_on: c("spike_on"), spike_tfs: [5, 15, 60].filter((t) => c("tf" + t)),
-    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") === "s1845" ? "18:45" : v("exit_late") !== "early", carry_all: c("carry_all"),
+    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") === "23:45" ? true : v("exit_late") === f.exit_late.dataset.early ? false : v("exit_late"), carry_all: c("carry_all"),
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),

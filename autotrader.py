@@ -226,6 +226,7 @@ WINDOWS = {
     "10-18": {"from": 10 * 60, "to": 18 * 60, "exit_early": 18 * 60 + 45, "carry": True, "name": "10:00–18:00"},
 }
 LATE_EXIT = 23 * 60 + 45
+EXIT_CHOICES = [f"{h:02d}:00" for h in range(10, 24)] + ["18:45", "19:25", "23:45"]   # время выхода формации на выбор
 DAY_EXIT = 18 * 60 + 45        # «Движение дня»: выход в 18:45 (было 17:00)
 
 
@@ -367,7 +368,8 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, ca
         while q < len(bars):
             b = bars[q]
             m = b["t"].hour * 60 + b["t"].minute
-            if b["t"].date() != dcur or m >= prof["exit"]:
+            late_in = dcur == bars[e]["t"].date() and te >= prof["exit"]     # вход позже времени выхода — выход завтра
+            if b["t"].date() != dcur or (m >= prof["exit"] and not late_in):
                 pnl = s * (bars[last]["c"] / px - 1)
                 if prof["carry"] and (carry_all or (carried < MAX_CARRY_DAYS and (stage >= 1 or pnl > 0))):
                     carried += 1
@@ -1404,7 +1406,7 @@ class AutoTrader:
         if day_ex.get("dtp"):                         # уровень тейка «движения дня» — для таблиц и графика
             pos["take"] = entry * (1 + side * day_ex["dtp"])
         now_t = self.clock()
-        if strat == "15" and now_t.hour * 60 + now_t.minute >= pos["exit_min"]:
+        if now_t.hour * 60 + now_t.minute >= pos["exit_min"]:
             pos["carry_date"] = now_t.date().isoformat()     # вошли после времени выхода — выход завтра
             pos["overnight"] = True
         self.positions.append(pos)

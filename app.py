@@ -543,10 +543,10 @@ class App(tk.Tk):
 
         def _exits(*_):
             k = {v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19")
-            vals = [self.EXIT_EARLY[k], "18:45", "23:45"] if k == "9-19" else [self.EXIT_EARLY[k], "23:45"]
+            vals = sorted(set(at.EXIT_CHOICES) | {self.EXIT_EARLY[k]})
             ce.configure(values=vals)
             if self.v_exit.get() not in vals:
-                self.v_exit.set(vals[0] if self.v_exit.get() != "23:45" else "23:45")
+                self.v_exit.set(self.EXIT_EARLY[k])
         cw.bind("<<ComboboxSelected>>", _exits)
         _exits()
         self._exits_cb = _exits
