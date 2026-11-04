@@ -371,7 +371,7 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, ca
             late_in = dcur == bars[e]["t"].date() and te >= prof["exit"]     # вход позже времени выхода — выход завтра
             if b["t"].date() != dcur or (m >= prof["exit"] and not late_in):
                 pnl = s * (bars[last]["c"] / px - 1)
-                if prof["carry"] and (carry_all or (carried < MAX_CARRY_DAYS and (stage >= 1 or pnl > 0))):
+                if prof["carry"] and carry_all != "none" and (carry_all or (carried < MAX_CARRY_DAYS and (stage >= 1 or pnl > 0))):
                     carried += 1
                     exits.append((last, bars[last]["c"], 0, "перенос"))
                     nd = dcur
@@ -707,6 +707,8 @@ class AutoTrader:
             return bool(p.get("carry")) and p.get("carried", 0) < p.get("carry_max", 0)
         if p.get("strat") != "spike" or not p.get("carry"):
             return False
+        if self.sp.get("carry_all", True) == "none":
+            return False                           # «закрыть все» во время выхода
         if self.sp.get("carry_all", True):
             return True                            # переносится, пока не закроют стоп, тейк или трейлинг — без ограничения дней
         if p.get("carried", 0) >= MAX_CARRY_DAYS:
@@ -770,7 +772,8 @@ class AutoTrader:
     def run(self):
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Мониторинг по будням {hm(DAY_START)}–{hm(DAY_END)} МСК, "
                  f"входы по формации: {trade_profile('index', 15, 'form', self.sp.get('window', '9-19'), self.sp.get('exit_late', True))['name']}; "
-                 + ("все позиции переносятся на следующий день, пока их не закроют стоп, тейк или трейлинг. "
+                 + ("во время выхода закрываются все позиции. " if self.sp.get("carry_all", True) == "none" else
+                    "все позиции переносятся на следующий день, пока их не закроют стоп, тейк или трейлинг. "
                     if self.sp.get("carry_all", True) else
                     f"позиция в плюсе или с взятым тейком1 переносится на следующий день (до {MAX_CARRY_DAYS} дней). ")
                  + 

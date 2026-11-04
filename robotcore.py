@@ -51,6 +51,12 @@ def exit_choice(s):
     return v if isinstance(v, str) and ":" in v else bool(v)
 
 
+def carry_choice(s):
+    """Перенос формации во время выхода: True — все позиции, False — закрыть только в минусе, "none" — закрыть все."""
+    v = s.get("carry_all", True)
+    return "none" if v == "none" else bool(v)
+
+
 def spike_cfg(s):
     """Параметры стратегии «всплеск объёма + откат к EMA20» из настроек."""
     return {"on": bool(s.get("spike_on")), "tfs": list(s.get("spike_tfs", [15, 60])),
@@ -61,7 +67,7 @@ def spike_cfg(s):
             "two_takes": bool(s.get("two_takes", True)),
             "trend_on": bool(s.get("trend_on", True)), "trend_trade": bool(s.get("trend_trade", False)),
             "tier_profile": bool(s.get("tier_profile", True)), "window": s.get("entry_window", "9-19"),
-            "exit_late": exit_choice(s), "carry_all": bool(s.get("carry_all", True)),
+            "exit_late": exit_choice(s), "carry_all": carry_choice(s),
             "day_carry": int(s.get("day_carry", 0) or 0), "day_exit": s.get("day_exit", "18:45"), "day_mode": s.get("day_mode", "fixed"),
             "day_tp": float(s.get("day_tp", 8) or 0) / 100, "day_tp_half": float(s.get("day_tp_half", 50) or 100) / 100,
             "day_trail": float(s.get("day_trail", 2) or 0) / 100, "day_act": float(s.get("day_act", 0) or 0) / 100,
@@ -105,7 +111,7 @@ def chart_data(token, sandbox, ticker, tf, s):
             med = at._median(list(days.values())) if days else 0
             tier = "2" if med >= at.TIER2_TURNOVER else "3"
         trades = at.history_trades(bars, at.params(chart_sp(s), tf), tf, tier, s.get("entry_window", "9-19"),
-                                   exit_choice(s), bool(s.get("carry_all", True)))
+                                   exit_choice(s), carry_choice(s))
     return rows, trades, tier
 
 

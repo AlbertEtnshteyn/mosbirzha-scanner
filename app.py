@@ -433,7 +433,10 @@ class App(tk.Tk):
         self.WIN = {"9-19": "09:00–19:00", "10-18": "10:00–18:00"}
         self.EXIT_EARLY = {"9-19": "19:25", "10-18": "18:45"}
         self.v_win = tk.StringVar(value=self.WIN.get(self.s.get("entry_window", "9-19"), self.WIN["9-19"]))
-        self.v_carry_all = tk.BooleanVar(value=bool(self.s.get("carry_all", True)))
+        self.CARRY = {True: "переносить все позиции (держать до стопа, тейка или трейлинга)",
+                      False: "закрыть только в минусе (в плюсе или с тейком1 — перенести, до 2 дней)",
+                      "none": "закрыть все позиции"}
+        self.v_carry_all = tk.StringVar(value=self.CARRY[rc.carry_choice(self.s)])
         self.v_exit = tk.StringVar(value=self._exit_txt(self.s))
         self.v_takes = tk.StringVar(value="два тейка" if self.s.get("two_takes", True) else "один тейк у хая")
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
@@ -551,9 +554,9 @@ class App(tk.Tk):
         cw.bind("<<ComboboxSelected>>", _exits)
         _exits()
         self._exits_cb = _exits
-        ttk.Checkbutton(f, text="Переносить на следующий день ВСЕ позиции — держать, пока не закроют стоп, тейк или трейлинг. "
-                                "Если снять — в указанное время закрываются позиции в минусе, переносятся только в плюсе или с взятым тейком1 (до 2 дней)",
-                        variable=self.v_carry_all).pack(anchor="w")
+        fcr = ttk.Frame(f); fcr.pack(anchor="w", pady=(2, 0))
+        ttk.Label(fcr, text="Во время выхода:").pack(side="left")
+        ttk.Combobox(fcr, textvariable=self.v_carry_all, width=66, state="readonly", values=list(self.CARRY.values())).pack(side="left", padx=6)
         r += 1
         ttk.Label(g, text="Чем торговать:").grid(row=r, column=0, sticky="e", padx=(0, 6))
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
@@ -842,7 +845,7 @@ class App(tk.Tk):
                       tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get(),
                       tg_trend=self.v_tg_trend.get(), trend_on=self.v_trend_on.get(), trend_trade=self.v_trend_trade.get(),
                       tier_profile=self.v_tier.get(), entry_window={v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19"),
-                      exit_late=self._exit_val(), carry_all=self.v_carry_all.get())
+                      exit_late=self._exit_val(), carry_all={v: k for k, v in self.CARRY.items()}.get(self.v_carry_all.get(), True))
         if self.s["token"]:
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         else:
@@ -1374,7 +1377,7 @@ class App(tk.Tk):
         self.v_exit.set(self._exit_txt(s))
         if hasattr(self, "_exits_cb"):
             self._exits_cb()
-        self.v_carry_all.set(bool(s.get("carry_all", True)))
+        self.v_carry_all.set(self.CARRY[rc.carry_choice(s)])
         self.v_takes.set("два тейка" if s.get("two_takes", True) else "один тейк у хая")
         self.v_spk.set(bool(s.get("spike_on", True)))
         for tf, v in self.v_spk_tf.items():

@@ -537,7 +537,10 @@ function renderSettings(s) {
     ${sel("entry_window", "Время входов", [["9-19", "09:00–19:00"], ["10-18", "10:00–18:00"]])}
     <label class="f"><span>Время выхода</span>
       <select name="exit_late" id="exitSel"></select></label>
-    ${chk("carry_all", "Переносить на следующий день ВСЕ позиции", "Держать, пока не закроют стоп, тейк или трейлинг. Если снять — во время выхода закрываются позиции в минусе, переносятся только в плюсе или с взятым тейком1 (до 2 дней).")}
+    <label class="f"><span>Во время выхода</span><select name="carry_all">
+      <option value="all" ${SET.carry_all === true || SET.carry_all === undefined ? "selected" : ""}>переносить все позиции (до стопа, тейка или трейлинга)</option>
+      <option value="loss" ${SET.carry_all === false ? "selected" : ""}>закрыть только в минусе (в плюсе — перенести, до 2 дней)</option>
+      <option value="none" ${SET.carry_all === "none" ? "selected" : ""}>закрыть все позиции</option></select></label>
     <div class="f"><span>Чем торговать</span>
       ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="mk_${k}" ${mk.includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
     ${sel("two_takes", "Тейки", [["true", "два тейка"], ["false", "один тейк"]])}
@@ -621,7 +624,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     real_account: (v("real_account") || "").trim(), real_token: (v("real_token") || "").trim(),
     finam_secret: (v("finam_secret") || "").trim(), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
     spike_on: c("spike_on"), spike_tfs: [5, 15, 60].filter((t) => c("tf" + t)),
-    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") === "23:45" ? true : v("exit_late") === f.exit_late.dataset.early ? false : v("exit_late"), carry_all: c("carry_all"),
+    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") === "23:45" ? true : v("exit_late") === f.exit_late.dataset.early ? false : v("exit_late"), carry_all: v("carry_all") === "none" ? "none" : v("carry_all") !== "loss",
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
