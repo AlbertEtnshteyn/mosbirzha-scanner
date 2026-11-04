@@ -390,11 +390,12 @@ class App(tk.Tk):
         ttk.Label(g6, text="Пароль:").grid(row=11, column=0, sticky="w", pady=4)
         ttk.Entry(g6, textvariable=self.v_srv2_pass, width=24, show="•").grid(row=11, column=1, sticky="w")
         ttk.Button(g6, text="Вставить из буфера", command=lambda: self._paste_to(self.v_srv2_pass)).grid(row=11, column=2, padx=6)
-        ttk.Button(g6, text="Установить резервный сервер и связать в пару", command=self.server_install_backup).grid(
-            row=12, column=1, columnspan=2, sticky="w", pady=10)
+        fb2 = ttk.Frame(g6); fb2.grid(row=12, column=1, columnspan=3, sticky="w", pady=10)
+        ttk.Button(fb2, text="Установить резервный сервер и связать в пару", command=self.server_install_backup).pack(side="left")
+        ttk.Button(fb2, text="Обновить резервный сервер без пароля", command=lambda: self.server_update_quick("backup")).pack(side="left", padx=8)
         ttk.Button(f6, text="Установить / обновить сервер", style="Start.TButton", command=self.server_install).pack(side="left")
         ttk.Button(f6, text="Показать QR-код для телефона", command=self.server_qr).pack(side="left", padx=8)
-        ttk.Button(f6, text="Обновить сервер без пароля", command=self.server_update_quick).pack(side="left")
+        ttk.Button(f6, text="Обновить сервер без пароля (оба)", command=self.server_update_quick).pack(side="left")
 
         # --- Настройки
         t4o = ttk.Frame(nb)
@@ -1627,18 +1628,41 @@ class App(tk.Tk):
         cv.create_polygon(*pts, x(len(vals) - 1), H - B, x(0), H - B, fill="#16303a" if col == "#26a69a" else "#3a1c22", outline="")
         cv.create_line(*pts, fill=col, width=2)
 
-    def server_update_quick(self):
-        """Обновить программу на сервере по коду подключения (без пароля от VPS)."""
-        if not (self.remote_mode() and self.robot_running() and hasattr(self.robot, "update_server")):
-            messagebox.showinfo(APP_TITLE, "Нет связи с сервером. Используйте «Установить / обновить сервер» с паролем.")
+    def server_update_quick(self, which="both"):
+        """Обновить программу на серверах по кодам подключения (без пароля от VPS): основной и резервный — одновременно."""
+        codes = []
+        if which in ("both", "main") and self.s.get("srv_code"):
+            codes.append(("основной", self.s.get("srv_ip", ""), self.s["srv_code"]))
+        if which in ("both", "backup") and self.s.get("srv_code2"):
+            codes.append(("резервный", self.s.get("srv2_ip", ""), self.s["srv_code2"]))
+        if not codes:
+            messagebox.showinfo(APP_TITLE, "Нет кода подключения к " + ("резервному серверу — установите его кнопкой ниже."
+                                                                       if which == "backup" else "серверу — установите его с паролем."))
             return
-        if not messagebox.askyesno(APP_TITLE, f"Обновить программу на сервере до версии {VERSION}?\n\n"
-                                              "Робот на сервере перезапустится на ~20 секунд; позиции, настройки и журналы сохранятся."):
+        names = " и ".join(f"{n} ({ip})" for n, ip, _ in codes)
+        if not messagebox.askyesno(APP_TITLE, f"Обновить программу на сервере: {names} — до версии {VERSION}?\n\n"
+                                              "Робот перезапустится на ~20 секунд; позиции, настройки и журналы сохранятся."):
             return
         import serverinstall as si
-        rr = self.robot
-        self.submit("Обновление сервера", lambda: print("Сервер обновлён до версии " + rr.update_server(si.bundle_bytes())
-                                                         + " и перезапускается."))
+        import remote
+
+        def job():
+            data = si.bundle_bytes()
+            res = {}
+
+            def one(n, ip, code):
+                try:
+                    res[n] = "обновлён до версии " + remote.update_code(code, data)
+                except Exception as e:
+                    res[n] = f"НЕ обновлён: {e}"
+            th = [threading.Thread(target=one, args=x, daemon=True) for x in codes]
+            for t in th:
+                t.start()
+            for t in th:
+                t.join(150)
+            for n, ip, _ in codes:
+                print(f"Сервер {n} ({ip}): {res.get(n, 'нет ответа')}.")
+        self.submit("Обновление серверов" if len(codes) > 1 else "Обновление сервера", job)
 
     def _save_backup_code(self, code):
         if self.s.get("srv_code2") != code:

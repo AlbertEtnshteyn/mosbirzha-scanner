@@ -52,6 +52,18 @@ class Client:
         return r.json()
 
 
+def update_code(code, data, from_peer=True):
+    """Обновить программу на сервере по его коду подключения. from_peer=True — сервер не пересылает обновление второму
+    (программа на компьютере обновляет оба сама)."""
+    import base64
+    c = Client(code)
+    r = c.s.post(c.base + "/api/update", json={"zip": base64.b64encode(data).decode(), "from_peer": from_peer}, timeout=120)
+    if r.status_code == 404:
+        raise RuntimeError("программа на сервере старая и не умеет обновляться так — обновите её с паролем")
+    r.raise_for_status()
+    return r.json().get("version", "")
+
+
 class RemoteRobot:
     """Подменяет AutoTrader в окне программы: позиции, статус и кнопки — с сервера."""
     def __init__(self, code, log, on_update, on_event, backup=None, on_backup=None):
