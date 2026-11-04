@@ -28,16 +28,11 @@ jobs:
       - name: Проверка кода
         run: python -c "import scanner, app; print('ok')"
 
-      # Сервер госуслуг может не отвечать зарубежным адресам — тогда программа скачает сертификаты сама
-      - name: Сертификаты НУЦ Минцифры (попытка, не обязательно)
-        continue-on-error: true
-        run: python tools/get_ru_certs.py certs
-
-      - name: Папка certs для сборки
+      # Сертификатов Минцифры в программе для Windows нет: они только на сервере робота
+      - name: Проверка — в сборке нет сертификатов
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path certs | Out-Null
-          Set-Content -Path certs/README.txt -Value "Сертификаты НУЦ Минцифры для проверки соединений. В Windows не устанавливаются."
+          if (Test-Path certs) { Remove-Item -Recurse -Force certs }
 
       - name: Номер версии
         shell: pwsh
@@ -49,7 +44,7 @@ jobs:
         run: python -c "import serverinstall as si, zipfile, io; b = si.bundle_bytes(); n = zipfile.ZipFile(io.BytesIO(b)).namelist(); assert 'install.sh' in n and 'server.py' in n, n; open('server_bundle.zip','wb').write(b); print(len(b), n)"
 
       - name: Сборка .exe
-        run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "certs;certs" --add-data "version.txt;." --add-data "server_bundle.zip;." app.py
+        run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "version.txt;." --add-data "server_bundle.zip;." app.py
 
       - name: Архив с инструкцией
         shell: pwsh

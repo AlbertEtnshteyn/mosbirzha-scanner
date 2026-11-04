@@ -114,7 +114,8 @@ class ChartWindow(tk.Toplevel):
         if self.loading:
             return
         tok = os.environ.get("TINVEST_TOKEN")
-        if not tok:
+        srv = self.app._server() if hasattr(self.app, "_server") else None
+        if not tok and not srv:
             self.info.configure(text="Для графика нужен токен Т-Инвестиций (вкладка «Настройки»).")
             return
         self.loading = True
@@ -124,7 +125,10 @@ class ChartWindow(tk.Toplevel):
 
         def job():
             try:
-                rows, trades, tier = rc.chart_data(tok, bool(self.app.s.get("sandbox_token")), tk_, tf, self.app.s)
+                if srv:                          # через сервер робота: компьютер к Т-Инвестициям не обращается
+                    rows, trades, tier = _from_server(srv.get("/api/chart", ticker=tk_, tf=tf))
+                else:
+                    rows, trades, tier = rc.chart_data(tok, bool(self.app.s.get("sandbox_token")), tk_, tf, self.app.s)
                 self.tier = tier or ""
                 self.res.put((tk_, tf, (rows, trades), None))
             except Exception as e:
@@ -365,6 +369,30 @@ class ChartWindow(tk.Toplevel):
         return (f"\n{'ЛОНГ' if tr['side'] > 0 else 'ШОРТ'}: импульс {tr['impulse_t']:%d.%m %H:%M}, касание {tr['touch_t']:%H:%M}, "
                 f"вход {b[tr['entry_i']]['t']:%H:%M} по {_fmt(tr['entry'])}, стоп {_fmt(tr['stop'])}, тейк1 {_fmt(tr['t1'])}"
                 + (f", тейк2 {_fmt(tr['t2'])}" if tr.get("t2") else "") + f" → {ex}; итог {tr['result'] * 100:+.2f}%")
+
+
+def _from_server(d):
+    """Ответ /api/chart сервера → свечи и сделки в том виде, что рисует окно графика."""
+    from datetime import timezone as _tz
+    conv = lambda ts: datetime.fromtimestamp(ts, _tz.utc).replace(tzinfo=sc.MSK)     # сервер отдаёт время МСК «как есть»
+    rows = [{"t": conv(b["t"]), "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"], "v": b.get("v", 0)} for b in d.get("bars", [])]
+    idx = {b["t"]: i for i, b in enumerate(d.get("bars", []))}
+    year = datetime.now(sc.MSK).year
+
+    def dt(s_):
+        try:
+            return datetime.strptime(f"{s_}.{year}", "%d.%m %H:%M.%Y").replace(tzinfo=sc.MSK)
+        except Exception:
+            return rows[0]["t"] if rows else datetime.now(sc.MSK)
+    trades = []
+    for t in d.get("trades", []):
+        if t["entry_t"] not in idx:
+            continue
+        trades.append({"side": t["side"], "entry": t["entry"], "stop": t["stop"], "t1": t.get("t1"), "t2": t.get("t2"),
+                       "entry_i": idx[t["entry_t"]], "result": t["result"], "open": t.get("open", False),
+                       "impulse_t": dt(t.get("impulse")), "touch_t": dt(t.get("touch")),
+                       "exits": [(idx.get(x["t"], idx[t["entry_t"]]), x["px"], x["frac"], x["why"]) for x in t.get("exits", [])]})
+    return rows, trades, d.get("tier")
 
 
 def _nice(x):

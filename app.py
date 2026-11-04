@@ -78,6 +78,7 @@ class App(tk.Tk):
         self.geometry("1100x760")
         self.minsize(820, 560)
         self.s = load_settings()
+        self._purged = sc.purge_ru_certs()          # на компьютере сертификатов Минцифры быть не должно
         if self.s.get("token"):
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         self.q = queue.Queue()
@@ -98,6 +99,8 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         # мониторинг формаций — сразу при открытии программы; торговля — по «Старт» (или сразу, если так в настройках)
         self.after(1500, lambda: self.robot_start(trade=bool(self.s.get("autostart")), quiet=True))
+        if self._purged:
+            self.log("Удалены оставшиеся от прошлых версий сертификаты Минцифры: " + ", ".join(self._purged) + "\n")
         self.log(f"Версия {VERSION}. Готово. Порог {self.s['threshold']:g}%, вход в {self.s['entry']}. "
                  f"Журналы сохраняются в папке: {sc.HERE}\n")
 
@@ -808,12 +811,6 @@ class App(tk.Tk):
                 self.q.put(("log", f"{e}\n"))
             except sc.CertError as e:
                 self.q.put(("log", f"Ошибка: {e}\n"))
-                try:
-                    anchor, chain = sc.trust_anchor(e.host, e.port)
-                    self.q.put(("log", "Сервер предъявил сертификаты: " + "; ".join(
-                        f"{c['subject']} (выдан: {c['issuer']})" for c in chain) + "\n"))
-                except Exception:
-                    pass
             except RuntimeError as e:
                 self.q.put(("log", f"Ошибка: {e}\n"))
             except BaseException:
@@ -873,8 +870,23 @@ class App(tk.Tk):
             messagebox.showinfo(APP_TITLE, f"Сигналов: {len(sigs)}. Подробности во вкладке «Сегодня».")
 
     # --- журнал
+    def _server(self):
+        """Клиент сервера робота (режим пульта) или None."""
+        if not self.remote_mode():
+            return None
+        if self.robot_running() and hasattr(self.robot, "c"):
+            return self.robot.c
+        try:
+            import remote
+            return remote.Client(self.s["srv_code"])
+        except Exception:
+            return None
+
     def journal_today(self):
         n = now_msk()
+        if self._server():
+            self.refresh_journal()
+            return
         if (n.hour, n.minute) < (17, 15):
             messagebox.showinfo(APP_TITLE, "Итог дня считается после 17:15 (данные Мосбиржи идут с задержкой).")
             return
@@ -888,6 +900,13 @@ class App(tk.Tk):
             return
         n = now_msk()
         d1 = n.date() if (n.hour, n.minute) >= (17, 15) else n.date() - timedelta(days=1)
+
+        srv = self._server()
+        if srv:
+            self.submit(f"Дозаполнение журнала на сервере с {d0}",
+                        lambda: (srv.post("/api/journal_fill", {"from": d0.isoformat()}),
+                                 print("Сервер считает журнал — обновите вкладку через пару минут.")), lambda _: self.refresh_journal())
+            return
 
         def job():
             tick = sc.imoex_tickers()
@@ -905,6 +924,16 @@ class App(tk.Tk):
                     lambda: history_dl.download_all(tok, bool(self.s.get("sandbox_token", True))))
 
     def refresh_journal(self):
+        srv = self._server()
+        if srv:
+            def job():
+                try:
+                    d = srv.get("/api/journal")
+                    self.q.put(("call", self._show_journal_remote, d))
+                except Exception as e:
+                    self.q.put(("log", f"Журнал с сервера не получен: {e}\n"))
+            threading.Thread(target=job, daemon=True).start()
+            return
         self.j_tree.delete(*self.j_tree.get_children())
         rows = read_csv(sc.JOURNAL)
         for r in reversed(rows[-500:]):
@@ -931,8 +960,24 @@ class App(tk.Tk):
             + (lambda v: f"Ориентир по бэктесту: {v[0]:+.2f}% на сделку после затрат." if v else "")(
                 self._bt(self.s["entry"], self.s["threshold"]))))
 
+    def _show_journal_remote(self, d):
+        self.j_tree.delete(*self.j_tree.get_children())
+        for r in d.get("rows", []):
+            net = float(r["net_pct"])
+            self.j_tree.insert("", "end", tags=("pos" if net > 0 else "neg",), values=(
+                r["date"], r["ticker"], r["side"], f"{float(r['move_pct']):+.2f}%", r["entry"], f"{float(r['exit']):.4g}",
+                "стоп" if r["reason"] == "stop" else "17:00", f"{net:+.2f}%"))
+        self.stats_lbl.configure(text=(
+            f"Журнал сервера. Дней: {d.get('days', 0)} ({d.get('period', '')}). Сделок: {d.get('trades', 0)}, в плюсе {d.get('wins', 0)}. "
+            f"Средняя после затрат: {d.get('avg', 0):+.3f}%. Итог: {d.get('total', 0):+.2f}%, просадка {d.get('dd', 0):.2f}%."
+            if d.get("days") else "Журнал сервера пуст — нажмите «Дозаполнить»."))
+
     # --- песочница
     def check_access(self):
+        srv = self._server()
+        if srv:
+            self.submit("Проверка доступа через сервер", lambda: print("Сервер отвечает:", srv.get("/api/ping")))
+            return
         if not os.environ.get("TINVEST_TOKEN"):
             messagebox.showinfo(APP_TITLE, "Сначала введите токен во вкладке «Настройки» и нажмите «Сохранить».")
             return
@@ -1265,7 +1310,8 @@ class App(tk.Tk):
         import time as _t
         while True:
             try:
-                q = sc.index_quote()
+                srv = self._server()
+                q = (srv.get("/api/state").get("index") if srv else sc.index_quote())
                 if q:
                     self.q.put(("call", self._show_index, q))
             except Exception:
@@ -1612,7 +1658,7 @@ class App(tk.Tk):
         webbrowser.open(sc.tbank_url(ticker, kind))
 
     def open_chart(self, ticker, tf=5):
-        if not os.environ.get("TINVEST_TOKEN"):
+        if not os.environ.get("TINVEST_TOKEN") and not self.remote_mode():
             messagebox.showinfo(APP_TITLE, "Для графика нужен токен Т-Инвестиций (вкладка «Настройки»).")
             return
         chart.ChartWindow(self, ticker, tf)

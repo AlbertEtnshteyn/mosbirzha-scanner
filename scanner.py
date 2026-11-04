@@ -78,6 +78,29 @@ from urllib.parse import urlparse
 from requests.adapters import HTTPAdapter
 
 TRUST_FILE = os.path.join(HERE, "trusted_certs.pem")
+# Сертификаты НУЦ Минцифры допускаются ТОЛЬКО на сервере робота (Linux, папка программы /opt/moexrobot/certs) —
+# для связи с Т-Инвестициями. Программа на компьютере (Windows) их не скачивает, не хранит и не использует:
+# всё, что ей нужно от Т-Инвестиций, идёт через сервер.
+RU_CERTS_ALLOWED = sys.platform.startswith("linux") and not getattr(sys, "frozen", False)
+
+
+def purge_ru_certs():
+    """На компьютере: удалить из папки программы всё, что осталось от сертификатов Минцифры прошлых версий."""
+    if RU_CERTS_ALLOWED:
+        return []
+    import shutil
+    gone = []
+    for p in (os.path.join(HERE, "certs"), TRUST_FILE):
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+                gone.append(p)
+            elif os.path.exists(p):
+                os.remove(p)
+                gone.append(p)
+        except OSError:
+            pass
+    return gone
 
 
 class CertError(RuntimeError):
@@ -85,6 +108,12 @@ class CertError(RuntimeError):
     def __init__(self, host, port=443):
         self.host = host
         self.port = port or 443
+        if not RU_CERTS_ALLOWED:
+            super().__init__(
+                f"Сертификат сервера {host} не прошёл стандартную проверку Windows. Программа на компьютере не использует "
+                "сертификаты Минцифры — запросы к Т-Инвестициям идут через сервер робота. Подключите программу к серверу "
+                "(вкладка «Сервер и телефон»). Если это не Т-Инвестиции, соединение может подменять антивирус.")
+            return
         super().__init__(
             f"Сертификат сервера {host} не прошёл проверку даже с сертификатами Минцифры. "
             "Скорее всего, защищённое соединение подменяет антивирус или программа фильтрации трафика. "
@@ -100,8 +129,11 @@ def _ssl_context():
         ctx.load_verify_locations(certifi.where())
     except Exception:
         pass
-    # встроенные в программу сертификаты НУЦ Минцифры (папка certs при сборке)
-    for base in {getattr(sys, "_MEIPASS", HERE), HERE}:
+    if not RU_CERTS_ALLOWED:                       # компьютер: только стандартная проверка (Windows + certifi)
+        ctx.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
+        return ctx
+    # сервер робота: сертификаты НУЦ Минцифры из папки программы (в систему не ставятся)
+    for base in {HERE}:
         cdir = os.path.join(base, "certs")
         if os.path.isdir(cdir):
             for fn in sorted(os.listdir(cdir)):
@@ -220,6 +252,8 @@ def server_chain(host, port=443):
 
 
 def trust_anchor(host, port=443):
+    if not RU_CERTS_ALLOWED:
+        raise RuntimeError("на компьютере сертификаты не добавляются")
     """Сертификат, которому предлагаем доверять: самый верхний из предъявленных сервером."""
     chain = server_chain(host, port)
     return chain[-1], chain
@@ -245,6 +279,8 @@ _RU_TRIED = False
 
 
 def fetch_ru_certs(dest=None, verbose=True):
+    if not RU_CERTS_ALLOWED:
+        return False
     """Скачивает сертификаты НУЦ Минцифры с сервера госуслуг в папку программы (не в Windows).
     Только по проверенному HTTPS; сохраняет, только если это действительно нужные сертификаты."""
     import urllib.request
@@ -280,12 +316,13 @@ def fetch_ru_certs(dest=None, verbose=True):
 
 
 def with_ru_certs(fn):
-    """Выполняет запрос; при ошибке сертификата один раз докачивает сертификаты Минцифры и повторяет."""
+    """Выполняет запрос; на сервере при ошибке сертификата один раз докачивает сертификаты Минцифры в папку программы.
+    На компьютере ничего не докачивается."""
     global _RU_TRIED
     try:
         return fn()
     except CertError:
-        if _RU_TRIED:
+        if _RU_TRIED or not RU_CERTS_ALLOWED:
             raise
         _RU_TRIED = True
         print("Сертификат сервера не прошёл проверку. Загружаю сертификаты НУЦ Минцифры с госуслуг в папку программы…")
