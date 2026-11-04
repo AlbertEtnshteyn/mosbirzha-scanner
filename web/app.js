@@ -135,6 +135,7 @@ function renderState(st) {
   const P = st.positions || [];
   $("#posCount").textContent = P.length ? `(${P.length})` : "";
   $("#closeAllBtn").hidden = P.length < 2;
+  $("#closeProfitBtn").hidden = P.length < 1;
   const posCard = (p) => {
     const res = p.last ? p.side * (p.last / p.entry - 1) * 100 : null;
     const take = p.take ? ((p.stage || 0) === 0 ? fmt(p.take) : (p.stage === 1 && p.take2 ? "т2 " + fmt(p.take2) : "трейл")) : "—";
@@ -204,6 +205,12 @@ document.addEventListener("click", async (ev) => {
 $("#closeAllBtn").onclick = async () => {
   if (await ask("Закрыть ВСЕ открытые позиции по рынку?", [["Закрыть все", true, "danger"], ["Отмена", false]])) {
     await api("/api/close", { ticker: null }); toast("Закрытие всех позиций запрошено");
+  }
+};
+
+$("#closeProfitBtn").onclick = async () => {
+  if (await ask("Закрыть по рынку все позиции, которые сейчас в плюсе?", [["Закрыть в плюсе", true, "danger"], ["Отмена", false]])) {
+    await api("/api/close", { ticker: "+" }); toast("Закрытие позиций в плюсе запрошено");
   }
 };
 
@@ -526,6 +533,11 @@ function renderSettings(s) {
     ${sel("leverage", "Маржа", Object.entries(LEV))}
     ${sel("direction", "Направление", [["both", "лонг и шорт"], ["long", "только лонг"], ["short", "только шорт"]])}
   </div>
+  <div class="grp"><h3>Разворот индекса (обе стратегии)</h3>
+    <label class="c"><input type="checkbox" name="flip_all" ${SET.idx_flip === "all" ? "checked" : ""}><span>При смене направления индекса закрыть все сделки</span></label>
+    <label class="c"><input type="checkbox" name="flip_profit" ${SET.idx_flip === "profit" ? "checked" : ""}><span>При смене направления индекса закрыть все сделки в плюсе</span></label>
+    <div class="hint">Направление — рост или падение индекса от открытия дня. Разворот засчитывается, когда индекс ушёл больше чем на 0,1% в другую сторону. Можно включить только один вариант.</div>
+  </div>
   <div class="grp"><h3>Движение дня</h3>
     ${chk("day_on", "Торговать «движение дня» (вход в заданное время)")}
     ${chk("idx_day", "Только по направлению рынка", "Акция идёт туда же, куда рынок. Если снять — в обе стороны.")}
@@ -564,6 +576,9 @@ function renderSettings(s) {
     f.exit_late.value = cur;
   };
   fillExit(); $("#setForm").entry_window.onchange = fillExit;
+  const fA = $("#setForm").flip_all, fP = $("#setForm").flip_profit;     // только один из двух вариантов
+  fA.onchange = () => { if (fA.checked) fP.checked = false; };
+  fP.onchange = () => { if (fP.checked) fA.checked = false; };
   $("#tgFind").onclick = async () => {
     const r = await api("/api/tg_find", { tg_token: $("#setForm").tg_token.value.trim() });
     if (r.ok) { $("#setForm").tg_chat.value = r.chat; toast(`Найден чат ${r.name}. Нажмите «Сохранить».`); }
@@ -588,7 +603,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
     day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),

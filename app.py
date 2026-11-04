@@ -220,6 +220,7 @@ class App(tk.Tk):
         pb.pack(fill="x", pady=(0, 4))
         ttk.Button(pb, text="Закрыть выбранную", command=self.close_selected).pack(side="left")
         ttk.Button(pb, text="Закрыть все", command=self.close_all).pack(side="left", padx=6)
+        ttk.Button(pb, text="Закрыть все в плюсе", command=self.close_profit).pack(side="left")
         ttk.Button(pb, text="График", command=self.chart_selected).pack(side="left", padx=(12, 0))
         ttk.Button(pb, text="В Т-Инвестиции", command=lambda: self.open_tbank(self._sel_ticker(self.pos_tree))).pack(side="left", padx=(6, 0))
         ttk.Label(pb, text="двойной щелчок по бумаге — график", foreground="#777").pack(side="left", padx=8)
@@ -418,6 +419,8 @@ class App(tk.Tk):
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
+        self.v_flip_all = tk.BooleanVar(value=self.s.get("idx_flip") == "all")
+        self.v_flip_profit = tk.BooleanVar(value=self.s.get("idx_flip") == "profit")
         self.v_dtp = tk.StringVar(value=str(self.s.get("day_tp", 8)))
         self.v_dhalf = tk.StringVar(value=str(self.s.get("day_tp_half", 50)))
         self.v_dtrail = tk.StringVar(value=str(self.s.get("day_trail", 2)))
@@ -497,6 +500,11 @@ class App(tk.Tk):
                                 "3-й эшелон и 5 мин — никогда не торгуются, только уведомления", variable=self.v_tier).pack(anchor="w")
         ttk.Checkbutton(f, text="Только по направлению индекса (лонг — когда индекс растёт, шорт — когда падает). "
                                 "Если снять — входит в обе стороны", variable=self.v_idx_form).pack(anchor="w")
+        ttk.Checkbutton(f, text="При смене направления индекса закрыть все сделки (обе стратегии)", variable=self.v_flip_all,
+                        command=lambda: self.v_flip_all.get() and self.v_flip_profit.set(False)).pack(anchor="w")
+        ttk.Checkbutton(f, text="При смене направления индекса закрыть все сделки в плюсе (обе стратегии). Разворот — индекс "
+                                "ушёл от открытия больше чем на 0,1% в другую сторону", variable=self.v_flip_profit,
+                        command=lambda: self.v_flip_profit.get() and self.v_flip_all.set(False)).pack(anchor="w")
         fw = ttk.Frame(f); fw.pack(anchor="w", pady=(4, 0))
         ttk.Label(fw, text="Время входов:").pack(side="left")
         cw = ttk.Combobox(fw, textvariable=self.v_win, width=13, state="readonly", values=list(self.WIN.values()))
@@ -756,6 +764,7 @@ class App(tk.Tk):
                       day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0),
                       day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"),
                       idx_form=self.v_idx_form.get(), idx_day=self.v_idx_day.get(),
+                      idx_flip="all" if self.v_flip_all.get() else "profit" if self.v_flip_profit.get() else "off",
                       day_tp=float(self.v_dtp.get()), day_tp_half=float(self.v_dhalf.get()),
                       day_trail=float(self.v_dtrail.get()), day_act=float(self.v_dact.get()), sound_on=self.v_sound.get(),
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
@@ -1266,7 +1275,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "auto_journal"]
+                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1281,6 +1290,7 @@ class App(tk.Tk):
         self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
+        self.v_flip_all.set(s.get("idx_flip") == "all"); self.v_flip_profit.set(s.get("idx_flip") == "profit")
         self.v_dtp.set(f"{float(s.get('day_tp', 8)):g}"); self.v_dhalf.set(f"{float(s.get('day_tp_half', 50)):g}")
         self.v_dtrail.set(f"{float(s.get('day_trail', 2)):g}"); self.v_dact.set(f"{float(s.get('day_act', 0)):g}")
         self.v_trend_on.set(bool(s.get("trend_on", True))); self.v_trend_trade.set(bool(s.get("trend_trade")))
@@ -1647,6 +1657,12 @@ class App(tk.Tk):
         if messagebox.askyesno(APP_TITLE, f"Закрыть позицию {tkr} по рынку?"):
             self.robot.request_close(tkr)
             self.log(f"Запрошено закрытие {tkr}.\n")
+
+    def close_profit(self):
+        if not self.robot_running() or not self.robot.positions:
+            return
+        if messagebox.askyesno(APP_TITLE, "Закрыть по рынку все позиции, которые сейчас в плюсе?"):
+            self.robot.request_close("+")
 
     def close_all(self):
         if not self.robot_running() or not self.robot.positions:

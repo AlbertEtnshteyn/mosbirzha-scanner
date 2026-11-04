@@ -44,7 +44,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -410,6 +410,7 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, ca
     return out
 
 
+IDX_FLIP_BAND = 0.001          # разворот индекса считается, когда он ушёл от открытия больше чем на 0,1% в другую сторону
 LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct", "time", "pnl_rub"]
 BAL_COLS = ["time", "value", "deposit"]
 
@@ -542,6 +543,7 @@ class AutoTrader:
         self.scan_rows = []          # [(тикер, движение, статус)]
         self.spikes = []             # [время, тикер, ТФ, оборот, кратность, импульс, статус]
         self.market = None
+        self.idx_dir, self.idx_ref = 0, None             # направление индекса (для закрытия при развороте)
         self.prices = {}
         self.opens = {}              # цена открытия дня 10:00
         self.pre_opens = {}          # цена открытия утренней сессии (индекс до 10:00)
@@ -748,6 +750,7 @@ class AutoTrader:
         self.st = self._fresh(now.date().isoformat())
         self.st["positions"] = keep
         self.opens, self.open_tries, self.scan_rows, self.market, self.prices = {}, {}, [], None, {}
+        self.idx_dir, self.idx_ref = 0, None
         self.pre_opens = {}
         self.spikes, self.seen_spikes, self.hist, self.hist_loaded, self.waits = [], set(), {}, {}, {}
         self._save()
@@ -871,6 +874,7 @@ class AutoTrader:
                 mv = [self.prices[tk] / self.pre_opens[tk] - 1 for tk in pre if self.prices.get(tk)]
                 if mv:
                     self.market = sum(mv) / len(mv)
+                    self._idx_flip("утро")
                     self.last_scan = now
                     self._push()
             return
@@ -879,6 +883,7 @@ class AutoTrader:
         if not moves:
             return
         self.market = sum(moves.values()) / len(moves)
+        self._idx_flip("сигнал" if self._day_signal_mode() else "день")
         rows = []
         for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1])):
             if abs(mv) < sc.THRESHOLD:
@@ -1401,6 +1406,40 @@ class AutoTrader:
             why = "стоп" if not p.get("armed") else ("б/у" if abs(p["stop"] - e) < 1e-9 else "трейлинг-стоп")
             self._close(p, px, why)
 
+    def _idx_flip(self, ref):
+        """Индекс сменил направление (рост ↔ падение больше чем на IDX_FLIP_BAND от открытия) — закрыть позиции
+        по настройке: все или только те, что в плюсе. Пока индекс у нуля, направление не считается сменившимся."""
+        if ref != self.idx_ref:                       # сменилась точка отсчёта (утро → основная сессия) — начать заново
+            self.idx_ref, self.idx_dir = ref, 0
+        m = self.market
+        d = 1 if m > IDX_FLIP_BAND else -1 if m < -IDX_FLIP_BAND else 0
+        if not d:
+            return
+        prev, self.idx_dir = self.idx_dir, d
+        mode = self.sp.get("idx_flip", "off")
+        if not prev or prev == d or mode not in ("all", "profit") or not self.positions:
+            return
+        name = "вверх" if d > 0 else "вниз"
+        targets = list(self.positions)
+        if mode == "profit":
+            targets = self._in_profit(targets)
+        self.log(f"Индекс развернулся {name} ({m * 100:+.2f}% от открытия) — закрываю "
+                 + ("все позиции" if mode == "all" else "позиции в плюсе") + (f": {', '.join(p['ticker'] for p in targets)}" if targets else ": таких нет"))
+        if targets:
+            self._close_all(f"разворот индекса {name}", only=targets)
+
+    def _in_profit(self, positions):
+        try:
+            lp = self.b.last_prices([p["ticker"] for p in positions])
+        except Exception:
+            lp = {}
+        out = []
+        for p in positions:
+            px = lp.get(p["ticker"]) or self.prices.get(p["ticker"])
+            if px and p["side"] * (px / p["entry"] - 1) > 0:
+                out.append(p)
+        return out
+
     def _close_all(self, why, only=None):
         targets = list(only if only is not None else self.positions)
         try:
@@ -1498,7 +1537,10 @@ class AutoTrader:
         with self._lock:
             req, self.manual = self.manual, []
         for tk in req:
-            targets = list(self.positions) if tk == "*" else [p for p in self.positions if p["ticker"] == tk]
+            targets = (list(self.positions) if tk == "*" else self._in_profit(list(self.positions)) if tk == "+"
+                       else [p for p in self.positions if p["ticker"] == tk])
+            if tk == "+" and not targets:
+                self.log("Закрыть позиции в плюсе: таких сейчас нет.")
             if targets:
                 self.log(f"Закрываю вручную: {', '.join(p['ticker'] for p in targets)}")
                 self._close_all("вручную", only=targets)
