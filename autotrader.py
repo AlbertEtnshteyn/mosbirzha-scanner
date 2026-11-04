@@ -226,6 +226,7 @@ WINDOWS = {
     "10-18": {"from": 10 * 60, "to": 18 * 60, "exit_early": 18 * 60 + 45, "carry": True, "name": "10:00–18:00"},
 }
 LATE_EXIT = 23 * 60 + 45
+DAY_EXIT = 18 * 60 + 45        # «Движение дня»: выход в 18:45 (было 17:00)
 
 
 def trade_profile(tier, tf, kind, window="9-19", late=True):
@@ -240,7 +241,11 @@ def trade_profile(tier, tf, kind, window="9-19", late=True):
     if not isinstance(window, str):
         window = "9-19"
     w = dict(WINDOWS.get(window, WINDOWS["9-19"]))
-    w["exit"] = LATE_EXIT if late else w["exit_early"]
+    if isinstance(late, str) and ":" in late:          # выбранное время выхода, например "18:45"
+        hh, mm = (int(x) for x in late.split(":"))
+        w["exit"] = hh * 60 + mm
+    else:
+        w["exit"] = LATE_EXIT if late else w["exit_early"]
     w["name"] = f"{w['name']}, выход {hm(w['exit'])}"
     return w
 
@@ -546,8 +551,55 @@ class FinamBroker(SandboxBroker):
         return self.fn.market_order(tk, qty, side)
 
 
+class TInvestRealBroker(SandboxBroker):
+    """Реальный брокерский счёт Т-Инвестиций: сделки на РЕАЛЬНЫЕ деньги. Нужен токен с полным доступом
+    (личный кабинет → Настройки → Токены T-Invest API → «Полный доступ»). Свечи и цены — тем же токеном."""
+    name = "Т-Инвестиции (реальный счёт)"
+
+    def __init__(self, real_token, capital, account="", log=print):
+        super().__init__(real_token, capital, log)
+        self.ti = sc.TInvest(real_token, "prod")
+        self.want = str(account or "").strip()
+
+    def prepare(self):
+        accs = self.ti.real_accounts()
+        if not accs:
+            raise RuntimeError("у токена нет открытых брокерских счетов")
+        ids = [a["id"] for a in accs]
+        if self.want and self.want not in ids:
+            raise RuntimeError(f"счёт {self.want} не найден (доступны: {', '.join(ids)})")
+        acc = next((a for a in accs if a["id"] == self.want), None) or \
+            next((a for a in accs if a.get("type") == "ACCOUNT_TYPE_TINKOFF"), accs[0])
+        if acc.get("accessLevel") not in (None, "ACCOUNT_ACCESS_LEVEL_FULL_ACCESS"):
+            raise RuntimeError("у токена нет права торговать по этому счёту — создайте токен с полным доступом")
+        self.acc = acc["id"]
+        v = self.ti.real_portfolio_value(self.acc)
+        self.log(f"РЕАЛЬНЫЙ счёт Т-Инвестиций {self.acc} ({acc.get('name', '')}): {v:,.0f} ₽. Сделки — на реальные деньги.".replace(",", " "))
+
+    def portfolio_value(self):
+        return self.ti.real_portfolio_value(self.acc)
+
+    def live_value(self):
+        return self.ti.real_live_value(self.acc)
+
+    def order(self, tk, lots, side):
+        js = self.ti.real_order(self.acc, tk, lots, side)
+        st = js.get("executionReportStatus", "") if isinstance(js, dict) else ""
+        if st in ("EXECUTION_REPORT_STATUS_REJECTED", "EXECUTION_REPORT_STATUS_CANCELLED"):
+            raise RuntimeError(f"брокер отклонил заявку: {js.get('message') or st}")
+        px = sc.TInvest.q(js.get("executedOrderPrice")) if isinstance(js, dict) else 0
+        return px or None
+
+
+REAL_BROKERS = ("tinvest_real", "finam")
+BROKER_NAMES = {"tinvest": "Т-Инвестиции — песочница (демо-счёт)", "tinvest_real": "Т-Инвестиции — реальный счёт",
+                "finam": "Финам — Trade API"}
+
+
 def make_broker(s, log=print):
-    """Брокер по настройкам: песочница Т-Инвестиций (по умолчанию) или Финам."""
+    """Брокер по настройкам: песочница Т-Инвестиций (по умолчанию), реальный счёт Т-Инвестиций или Финам."""
+    if s.get("broker") == "tinvest_real":
+        return TInvestRealBroker(s.get("real_token"), float(s["capital"]), s.get("real_account", ""), log=log)
     if s.get("broker") == "finam":
         return FinamBroker(s.get("token"), float(s["capital"]), s.get("finam_secret"), s.get("finam_account", ""), log=log)
     return SandboxBroker(s.get("token"), float(s["capital"]), log=log)
@@ -724,7 +776,7 @@ class AutoTrader:
         if not self.day_on:
             self.log("Стратегия «движение дня» (вход в заданное время) выключена в настройках.")
         else:
-            self.log(f"Стратегия «{hm(sc.ENTRY_MIN)}»: порог {sc.THRESHOLD * 100:g}%, стоп {sc.STOP * 100:g}%, выход {hm(sc.EXIT_MIN)}"
+            self.log(f"Стратегия «{hm(sc.ENTRY_MIN)}»: порог {sc.THRESHOLD * 100:g}%, стоп {sc.STOP * 100:g}%, выход {hm(DAY_EXIT)}"
                  + (", добор новых сигналов до 16:30" if self.rescan else "") + ".")
         sp = self.sp
         tfs = ", ".join(("1 час" if tf == 60 else f"{tf} мин") for tf in sp["tfs"]) or "нет"
@@ -821,7 +873,7 @@ class AutoTrader:
                     self._close_all(hm(p.get("exit_min", sc.EXIT_MIN)), only=[p])
             if self.positions:
                 self._check_stops()
-        if self.st["entered"] and secs >= sc.EXIT_MIN * 60 - 10 and not self.st["done"] \
+        if self.st["entered"] and secs >= DAY_EXIT * 60 - 10 and not self.st["done"] \
                 and not any(p.get("strat") == "15" for p in self.positions):
             self.st["done"] = True
             self._save()
@@ -1346,14 +1398,14 @@ class AutoTrader:
             carry, carry_max = True, int(self.sp["day_carry"])
         pos = {"ticker": tk, "side": side, "lots": lots, "entry": entry, "stop": stop, "take": take1, "take2": take2,
                "strat": strat, "R": abs(entry - stop), "took": False, "per_lot": per_lot, "stage": 0, "peak": entry,
-               "exit_min": exit_min or sc.EXIT_MIN, "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
+               "exit_min": exit_min or (DAY_EXIT if strat == "15" else sc.EXIT_MIN), "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
                "date": self.clock().date().isoformat()}
         pos.update(day_ex)
         if day_ex.get("dtp"):                         # уровень тейка «движения дня» — для таблиц и графика
             pos["take"] = entry * (1 + side * day_ex["dtp"])
         now_t = self.clock()
         if strat == "15" and now_t.hour * 60 + now_t.minute >= pos["exit_min"]:
-            pos["carry_date"] = now_t.date().isoformat()     # вошли после 17:00 — выход завтра в 17:00
+            pos["carry_date"] = now_t.date().isoformat()     # вошли после времени выхода — выход завтра
             pos["overnight"] = True
         self.positions.append(pos)
         self._save()

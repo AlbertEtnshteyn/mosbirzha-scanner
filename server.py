@@ -166,6 +166,10 @@ class Robot:
         tgt = d.get("tg_token", "")
         d["tg_token"] = ""
         d["tg_token_set"] = bool(tgt)
+        rt = d.pop("real_token", "")
+        d["real_set"] = bool(rt)
+        d["real_hint"] = (rt[:4] + "…" + rt[-4:]) if len(rt) > 12 else ""
+        d["brokers"] = list(at.BROKER_NAMES.items())
         fs = d.pop("finam_secret", "")
         d["finam_set"] = bool(fs)
         d["finam_hint"] = (fs[:4] + "…" + fs[-4:]) if len(fs) > 12 else ""
@@ -175,6 +179,9 @@ class Robot:
     # --- работа робота
     def running(self):
         return bool(self.thread and self.thread.is_alive())
+
+    def has_token(self):
+        return bool(self.s.get("real_token") if self.s.get("broker") == "tinvest_real" else self.s.get("token"))
 
     def start(self, trade):
         if PAIR and PAIR.enabled and not PAIR.active:
@@ -186,7 +193,12 @@ class Robot:
                     log("Торговля включена.")
                 return True
             tok = self.s.get("token")
-            if not tok or not self.s.get("sandbox_token", True):
+            if self.s.get("broker") == "tinvest_real":
+                tok = self.s.get("real_token")
+                if not tok:
+                    log("Выбран реальный счёт Т-Инвестиций — введите токен с полным доступом в настройках.")
+                    return False
+            elif not tok or not self.s.get("sandbox_token", True):
                 log("Робот ждёт токен песочницы Т-Инвестиций — введите его в настройках на телефоне.")
                 return False
             self._apply()
@@ -254,8 +266,8 @@ class Robot:
         """Сброс: новый демо-счёт на сумму капитала, история сделок и баланса — с нуля. Робот перезапускается в том же режиме."""
         if self.resetting:
             return "Сброс уже идёт."
-        if self.s.get("broker") == "finam" and self.running() and self.robot.positions:
-            return "Финам: счёт не пересоздаётся — сначала закройте открытые позиции, потом сбрасывайте историю."
+        if self.s.get("broker") in at.REAL_BROKERS and self.running() and self.robot.positions:
+            return "Реальный счёт не пересоздаётся — сначала закройте открытые позиции, потом сбрасывайте историю."
         self.resetting = True
 
         def job():
@@ -329,7 +341,7 @@ class Robot:
                 if PAIR and PAIR.enabled and not PAIR.active:
                     time.sleep(20)
                     continue
-                if not self.running() and time.time() - last_try > 60 and self.s.get("token"):
+                if not self.running() and time.time() - last_try > 60 and self.has_token():
                     last_try = time.time()
                     self.start(bool(self.s.get("autostart")))
                 n = now_msk()
@@ -353,8 +365,8 @@ class Robot:
         snap = self.snap or {}
         r = self.robot if self.running() else None
         return {"version": VERSION, "time": now_msk().strftime("%d.%m.%Y %H:%M:%S"),
-                "running": bool(r), "trade": bool(r and r.trade), "token_set": bool(self.s.get("token")),
-                "status": snap.get("status") if r else ("ждёт токен песочницы в настройках" if not self.s.get("token") else "запускается…"),
+                "running": bool(r), "trade": bool(r and r.trade), "token_set": self.has_token(),
+                "status": snap.get("status") if r else ("ждёт токен в настройках" if not self.has_token() else "запускается…"),
                 "market": snap.get("market"), "last_scan": snap.get("last_scan"),
                 "positions": snap.get("positions", []) if r else [],
                 "spikes": list(reversed(snap.get("spikes", []))), "scan": snap.get("scan", [])[:60],
@@ -693,6 +705,8 @@ class Handler(BaseHTTPRequestHandler):
                     new.pop("tg_token", None)
                 if not new.get("finam_secret"):
                     new.pop("finam_secret", None)
+                if not new.get("real_token"):
+                    new.pop("real_token", None)
                 if new.get("broker") and new["broker"] != ROBOT.s.get("broker", "tinvest") and ROBOT.running() and ROBOT.robot.positions:
                     return self._send(200, {"ok": False, "msg": "Сначала закройте открытые позиции — потом меняйте брокера."})
                 ROBOT.save(new)
@@ -780,7 +794,7 @@ def main():
     threading.Thread(target=ROBOT.watchdog, daemon=True, name="watchdog").start()
     if PAIR and PAIR.enabled:
         pass                                              # кто торгует — решит пара после проверки второго сервера
-    elif ROBOT.s.get("token"):
+    elif ROBOT.has_token():
         ROBOT.start(bool(ROBOT.s.get("autostart")))
     else:
         log("Токен песочницы ещё не введён — откройте приложение на телефоне → Настройки.")

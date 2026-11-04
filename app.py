@@ -148,7 +148,7 @@ class App(tk.Tk):
         self.market_lbl.pack(anchor="w", pady=(8, 4))
         self.sig_tree = self._tree(t1, [("ticker", "Бумага", 90), ("side", "Направление", 140), ("move", "Движение дня", 120),
                                         ("price", "Цена", 100), ("stop", "Стоп", 100)])
-        ttk.Label(t1, text="Капитал делится поровну между сигналами. Все позиции закрыть в 17:00, раньше — только по стопу.",
+        ttk.Label(t1, text="Капитал делится поровну между сигналами. Все позиции закрыть в 18:45, раньше — только по стопу или тейку.",
                   foreground="#555").pack(anchor="w", pady=(6, 0))
 
         # --- Журнал
@@ -415,7 +415,7 @@ class App(tk.Tk):
         self.v_day = tk.BooleanVar(value=self.s.get("day_on", True))
         self.DMODE = {"fixed": "в заданное время (проверено на истории)", "signal": "сразу при сигнале 09:00–19:00 (на истории в минусе)"}
         self.v_dmode = tk.StringVar(value=self.DMODE.get(self.s.get("day_mode", "fixed"), self.DMODE["fixed"]))
-        self.DAYC = {0: "нет — выход в 17:00", 1: "на 1 день", 2: "на 2 дня", 3: "на 3 дня"}
+        self.DAYC = {0: "нет — выход в 18:45", 1: "на 1 день", 2: "на 2 дня", 3: "на 3 дня"}
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
@@ -433,8 +433,7 @@ class App(tk.Tk):
         self.EXIT_EARLY = {"9-19": "19:25", "10-18": "18:45"}
         self.v_win = tk.StringVar(value=self.WIN.get(self.s.get("entry_window", "9-19"), self.WIN["9-19"]))
         self.v_carry_all = tk.BooleanVar(value=bool(self.s.get("carry_all", True)))
-        self.v_exit = tk.StringVar(value="23:45" if self.s.get("exit_late", True) else
-                                   self.EXIT_EARLY.get(self.s.get("entry_window", "9-19"), "19:25"))
+        self.v_exit = tk.StringVar(value=self._exit_txt(self.s))
         self.v_takes = tk.StringVar(value="два тейка" if self.s.get("two_takes", True) else "один тейк у хая")
         self.v_spk = tk.BooleanVar(value=self.s.get("spike_on", True))
         self.v_spk_tf = {tf: tk.BooleanVar(value=tf in self.s.get("spike_tfs", [15, 60])) for tf in (5, 15, 60)}
@@ -460,14 +459,25 @@ class App(tk.Tk):
         ttk.Checkbutton(f, text="Это токен песочницы", variable=self.v_sbtok).pack(side="left")
         ttk.Checkbutton(f, text="Запомнить токен (открытым текстом в settings.json)", variable=self.v_rem).pack(side="left", padx=(16, 0))
         r += 1
-        self.BROKERS = {"tinvest": "Т-Инвестиции — песочница (демо-счёт)", "finam": "Финам — Trade API"}
+        self.BROKERS = dict(at.BROKER_NAMES)
+        self.v_rtok = tk.StringVar(value="")
+        self.v_racc = tk.StringVar(value=self.s.get("real_account", ""))
         self.v_broker = tk.StringVar(value=self.BROKERS.get(self.s.get("broker", "tinvest"), self.BROKERS["tinvest"]))
         self.v_fsec = tk.StringVar(value="")
         self.v_facc = tk.StringVar(value=self.s.get("finam_account", ""))
         ttk.Label(g, text="Брокер для торговли:").grid(row=r, column=0, sticky="w", pady=4)
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
-        ttk.Combobox(f, textvariable=self.v_broker, width=36, state="readonly", values=list(self.BROKERS.values())).pack(side="left")
-        ttk.Label(f, foreground="#a33", text="  Финам: реальный счёт = реальные деньги; только акции; цены — из Т-Инвестиций").pack(side="left")
+        ttk.Combobox(f, textvariable=self.v_broker, width=42, state="readonly", values=list(self.BROKERS.values())).pack(side="left")
+        ttk.Label(f, foreground="#a33", text="  реальный счёт Т-Инвестиций и Финам — сделки на реальные деньги").pack(side="left")
+        r += 1
+        ttk.Label(g, text="Токен реального счёта Т-Инв.:").grid(row=r, column=0, sticky="w", pady=4)
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
+        ttk.Entry(f, textvariable=self.v_rtok, width=40, show="•").pack(side="left")
+        self.rtok_lbl = ttk.Label(f, foreground="#555", text="  сохранён — оставьте пустым, чтобы не менять" if self.s.get("real_token") else "  не введён (нужен «полный доступ»)")
+        self.rtok_lbl.pack(side="left")
+        ttk.Label(f, text="   Счёт:").pack(side="left")
+        ttk.Entry(f, textvariable=self.v_racc, width=14).pack(side="left")
+        ttk.Label(f, foreground="#555", text=" (пусто — основной)").pack(side="left")
         r += 1
         ttk.Label(g, text="Секретный токен Финама:").grid(row=r, column=0, sticky="w", pady=4)
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
@@ -533,7 +543,7 @@ class App(tk.Tk):
 
         def _exits(*_):
             k = {v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19")
-            vals = [self.EXIT_EARLY[k], "23:45"]
+            vals = [self.EXIT_EARLY[k], "18:45", "23:45"] if k == "9-19" else [self.EXIT_EARLY[k], "23:45"]
             ce.configure(values=vals)
             if self.v_exit.get() not in vals:
                 self.v_exit.set(vals[0] if self.v_exit.get() != "23:45" else "23:45")
@@ -623,7 +633,7 @@ class App(tk.Tk):
         fdc = ttk.Frame(g); fdc.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(fdc, text="Переносить позиции:").pack(side="left")
         ttk.Combobox(fdc, textvariable=self.v_dayc, width=20, state="readonly", values=list(self.DAYC.values())).pack(side="left", padx=6)
-        ttk.Label(fdc, text="выход в 17:00 последнего дня, стоп 3% действует всё время", foreground="#555").pack(side="left")
+        ttk.Label(fdc, text="выход в 18:45 последнего дня, стоп 3% действует всё время", foreground="#555").pack(side="left")
         r += 1
         fdt = ttk.Frame(g); fdt.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(fdt, text="Тейк, %:").pack(side="left")
@@ -769,6 +779,20 @@ class App(tk.Tk):
     def _apply_settings(self):
         sc.configure(float(self.s["threshold"]), self.s["entry"])
 
+    def _exit_txt(self, s):
+        v = s.get("exit_late", True)
+        if isinstance(v, str) and ":" in v:
+            return v
+        return "23:45" if v else self.EXIT_EARLY.get(s.get("entry_window", "9-19"), "19:25")
+
+    def _exit_val(self):
+        """Значение настройки exit_late: True — 23:45, False — ранний выход окна, "18:45" — выход в 18:45 для 09:00–19:00."""
+        win = {v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19")
+        e = self.v_exit.get()
+        if e == "23:45":
+            return True
+        return False if e == self.EXIT_EARLY.get(win) else e
+
     def save(self):
         try:
             cap = float(self.v_cap.get().replace(" ", ""))
@@ -780,14 +804,20 @@ class App(tk.Tk):
             if self.robot_running() and self.robot.positions:
                 messagebox.showerror(APP_TITLE, "Сначала закройте открытые позиции — потом меняйте брокера.")
                 return
-            if broker == "finam" and not messagebox.askyesno(APP_TITLE, "Робот будет торговать через Финам. Если указан реальный "
-                                                                        "счёт — сделки пойдут на реальные деньги. Продолжить?", icon="warning"):
+            if broker in at.REAL_BROKERS and not messagebox.askyesno(APP_TITLE, (
+                    "Робот будет торговать через Финам. Если указан реальный счёт — сделки пойдут на реальные деньги."
+                    if broker == "finam" else "Робот будет торговать на РЕАЛЬНОМ счёте Т-Инвестиций — на реальные деньги.")
+                    + " Продолжить?", icon="warning"):
                 return
         if self.v_fsec.get().strip():
             self.s["finam_secret"] = self.v_fsec.get().strip()
             self.v_fsec.set("")
             self.fsec_lbl.configure(text="  сохранён — оставьте пустым, чтобы не менять")
-        self.s.update(broker=broker, finam_account=self.v_facc.get().strip())
+        if self.v_rtok.get().strip():
+            self.s["real_token"] = self.v_rtok.get().strip()
+            self.v_rtok.set("")
+            self.rtok_lbl.configure(text="  сохранён — оставьте пустым, чтобы не менять")
+        self.s.update(broker=broker, finam_account=self.v_facc.get().strip(), real_account=self.v_racc.get().strip())
         self.s.update(threshold=float(self.v_thr.get()), entry=self.v_entry.get(), capital=cap,
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
@@ -809,7 +839,7 @@ class App(tk.Tk):
                       tg_form=self.v_tg_form.get(), tg_trades=self.v_tg_trades.get(), tg_imp=self.v_tg_imp.get(),
                       tg_trend=self.v_tg_trend.get(), trend_on=self.v_trend_on.get(), trend_trade=self.v_trend_trade.get(),
                       tier_profile=self.v_tier.get(), entry_window={v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19"),
-                      exit_late=self.v_exit.get() == "23:45", carry_all=self.v_carry_all.get())
+                      exit_late=self._exit_val(), carry_all=self.v_carry_all.get())
         if self.s["token"]:
             os.environ["TINVEST_TOKEN"] = self.s["token"]
         else:
@@ -1064,7 +1094,13 @@ class App(tk.Tk):
             self._robot_buttons()
             return
         tok = os.environ.get("TINVEST_TOKEN")
-        if not tok or not self.s["sandbox_token"]:
+        if self.s.get("broker") == "tinvest_real":
+            tok = self.s.get("real_token")
+        if self.s.get("broker") == "tinvest_real" and not tok:
+            if not quiet:
+                messagebox.showinfo(APP_TITLE, "Выбран реальный счёт Т-Инвестиций — введите токен с полным доступом в «Настройках».")
+            return
+        elif self.s.get("broker") != "tinvest_real" and (not tok or not self.s["sandbox_token"]):
             if not quiet:
                 messagebox.showinfo(APP_TITLE, "Для автоторговли нужен токен песочницы: введите его во вкладке «Настройки», "
                                                "отметьте «Это токен песочницы» и нажмите «Сохранить настройки».")
@@ -1306,7 +1342,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "broker", "finam_account", "auto_journal"]
+                   "carry_all", "day_carry", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "broker", "finam_account", "real_account", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1317,7 +1353,9 @@ class App(tk.Tk):
         s = self.s
         self.v_thr.set(f"{float(s['threshold']):g}"); self.v_entry.set(s["entry"]); self.v_cap.set(str(int(float(s["capital"]))))
         self.v_sbtok.set(bool(s["sandbox_token"])); self.v_aj.set(bool(s.get("auto_journal", True)))
-        self.v_broker.set(self.BROKERS.get(s.get("broker", "tinvest"), self.BROKERS["tinvest"])); self.v_facc.set(s.get("finam_account", ""))
+        self.v_broker.set(self.BROKERS.get(s.get("broker", "tinvest"), self.BROKERS["tinvest"])); self.v_facc.set(s.get("finam_account", "")); self.v_racc.set(s.get("real_account", ""))
+        if srv.get("real_set"):
+            self.rtok_lbl.configure(text="  сохранён на сервере — оставьте пустым, чтобы не менять")
         if srv.get("finam_set"):
             self.fsec_lbl.configure(text="  сохранён на сервере — оставьте пустым, чтобы не менять")
         self.v_rescan.set(bool(s.get("rescan"))); self.v_day.set(bool(s.get("day_on", True)))
@@ -1330,7 +1368,7 @@ class App(tk.Tk):
         self.v_trend_on.set(bool(s.get("trend_on", True))); self.v_trend_trade.set(bool(s.get("trend_trade")))
         self.v_tier.set(bool(s.get("tier_profile", True)))
         self.v_win.set(self.WIN.get(s.get("entry_window", "9-19"), self.WIN["9-19"]))
-        self.v_exit.set("23:45" if s.get("exit_late", True) else self.EXIT_EARLY.get(s.get("entry_window", "9-19"), "19:25"))
+        self.v_exit.set(self._exit_txt(s))
         if hasattr(self, "_exits_cb"):
             self._exits_cb()
         self.v_carry_all.set(bool(s.get("carry_all", True)))

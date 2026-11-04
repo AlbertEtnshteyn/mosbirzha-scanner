@@ -789,6 +789,39 @@ class TInvest:
             total += qty * px
         return total or self.q(js.get("totalAmountPortfolio"))
 
+    # --- реальный брокерский счёт (токен с полным доступом из личного кабинета Т-Инвестиций)
+    def real_accounts(self):
+        js = self.call("UsersService", "GetAccounts", {})
+        return [a for a in js.get("accounts", []) if a.get("status") == "ACCOUNT_STATUS_OPEN"]
+
+    def real_live_value(self, acc):
+        js = self.call("OperationsService", "GetPortfolio", {"accountId": acc, "currency": "RUB"})
+        total = self.q(js.get("totalAmountCurrencies"))
+        pos = [p for p in js.get("positions", []) if p.get("instrumentType") != "currency"]
+        uids = [p.get("instrumentUid") for p in pos if p.get("instrumentUid")]
+        last = {}
+        if uids:
+            try:
+                lp = self.call("MarketDataService", "GetLastPrices", {"instrumentId": uids})
+                last = {x.get("instrumentUid"): self.q(x.get("price")) for x in lp.get("lastPrices", [])}
+            except Exception:
+                pass
+        for p in pos:
+            qty = self.q(p.get("quantity"))
+            px = last.get(p.get("instrumentUid")) if p.get("instrumentType") == "share" else None
+            total += qty * (px or self.q(p.get("currentPrice")))
+        return total or self.q(js.get("totalAmountPortfolio"))
+
+    def real_portfolio_value(self, acc):
+        js = self.call("OperationsService", "GetPortfolio", {"accountId": acc, "currency": "RUB"})
+        return self.q(js.get("totalAmountPortfolio"))
+
+    def real_order(self, acc, ticker, lots, side):
+        return self.call("OrdersService", "PostOrder",
+                         {"accountId": acc, "instrumentId": self.share(ticker)["uid"], "quantity": str(lots),
+                          "direction": "ORDER_DIRECTION_BUY" if side > 0 else "ORDER_DIRECTION_SELL",
+                          "orderType": "ORDER_TYPE_MARKET", "orderId": str(uuid.uuid4())})
+
     def sandbox_portfolio_value(self, acc):
         js = self.call("SandboxService", "GetSandboxPortfolio", {"accountId": acc, "currency": "RUB"})
         return self.q(js.get("totalAmountPortfolio"))

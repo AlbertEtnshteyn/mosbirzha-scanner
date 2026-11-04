@@ -130,7 +130,7 @@ function renderState(st) {
   $("#robotHint").textContent = (st.trade ? "Робот сам входит и выходит по стратегиям. «Стоп» — выключить новые сделки."
     : st.token_set ? "Робот следит за рынком и шлёт формации, но не торгует. «Старт» — включить торговлю."
       : "Введите токен песочницы Т-Инвестиций во вкладке «Настройки».") + pairTxt +
-    (st.broker === "finam" ? " Брокер: Финам." : " Брокер: песочница Т-Инвестиций.");
+    (st.broker === "finam" ? " Брокер: Финам." : st.broker === "tinvest_real" ? " Брокер: РЕАЛЬНЫЙ счёт Т-Инвестиций." : " Брокер: песочница Т-Инвестиций.");
 
   // позиции
   const P = st.positions || [];
@@ -511,9 +511,15 @@ function renderSettings(s) {
     ${inp("capital", "Капитал песочницы, ₽", "number", 'inputmode="numeric"')}
   </div>
   <div class="grp"><h3>Брокер для торговли</h3>
-    ${sel("broker", "Через кого робот торгует", [["tinvest", "Т-Инвестиции — песочница (демо-счёт)"], ["finam", "Финам — Trade API"]])}
-    <div class="hint" style="margin-left:0">Свечи и цены робот в любом случае берёт из Т-Инвестиций (нужен токен песочницы выше). Через Финам торгуются только акции.
-      <b>Если в Финаме указан реальный счёт — сделки идут на реальные деньги.</b> Для проверки используйте демо-счёт Финама.</div>
+    ${sel("broker", "Через кого робот торгует", s.brokers || [["tinvest", "Т-Инвестиции — песочница (демо-счёт)"], ["tinvest_real", "Т-Инвестиции — реальный счёт"], ["finam", "Финам — Trade API"]])}
+    <div class="hint" style="margin-left:0"><b>Реальный счёт Т-Инвестиций и Финам — сделки на реальные деньги.</b></div>
+    <h3>Т-Инвестиции — реальный счёт</h3>
+    <label class="f"><span>Токен с полным доступом ${s.real_set ? `(сохранён: ${esc(s.real_hint)}; оставьте пустым, чтобы не менять)` : "(не введён)"}</span>
+      <input type="password" name="real_token" placeholder="${s.real_set ? "••••••••" : "Т-Инвестиции → Настройки → Токены → полный доступ"}" autocomplete="off"></label>
+    ${inp("real_account", "Номер счёта (пусто — основной брокерский)")}
+    <div class="hint" style="margin-left:0">Свечи и цены — этим же токеном; токен песочницы для этого варианта не нужен.</div>
+    <h3>Финам</h3>
+    <div class="hint" style="margin-left:0">Свечи и цены — из Т-Инвестиций (нужен токен песочницы выше). Через Финам торгуются только акции. Для проверки используйте демо-счёт Финама.</div>
     <label class="f"><span>Секретный токен Финама ${s.finam_set ? `(сохранён: ${esc(s.finam_hint)}; оставьте пустым, чтобы не менять)` : "(не введён)"}</span>
       <input type="password" name="finam_secret" placeholder="${s.finam_set ? "••••••••" : "из личного кабинета Trade API → Токены"}" autocomplete="off"></label>
     ${inp("finam_account", "Номер счёта Финама (пусто — первый доступный токену)")}
@@ -555,7 +561,7 @@ function renderSettings(s) {
     ${sel("day_tp_half", "Закрыть на тейке", [[50, "50% (остаток — б/у и трейлинг)"], [100, "всю позицию"]])}
     ${sel("day_trail", "Трейлинг-стоп, %", [[0, "нет"], [1, "1%"], [2, "2%"], [3, "3%"]])}
     ${sel("day_act", "Трейлинг включается", [[0, "после тейка"], [1, "с +1%"], [2, "с +2%"], [3, "с +3%"]])}
-    ${sel("day_carry", "Переносить позиции (выход в 17:00 последнего дня, стоп 3% действует всё время)", [[0, "нет — выход в 17:00"], [1, "на 1 день"], [2, "на 2 дня"], [3, "на 3 дня"]])}
+    ${sel("day_carry", "Переносить позиции (выход в 18:45 последнего дня, стоп 3% действует всё время)", [[0, "нет — выход в 18:45"], [1, "на 1 день"], [2, "на 2 дня"], [3, "на 3 дня"]])}
     ${inp("threshold", "Порог движения, %", "number", 'step="0.1" inputmode="decimal"')}
     ${inp("entry", "Время входа (МСК)", "time")}
     ${chk("rescan", "Добирать новые сигналы до 16:30")}
@@ -579,9 +585,10 @@ function renderSettings(s) {
   </div>
   <button type="submit" class="btn primary wide save">Сохранить настройки</button>`;
   const fillExit = () => {
-    const f = $("#setForm"), early = f.entry_window.value === "10-18" ? "18:45" : "19:25";
-    const cur = f.exit_late.value || (SET.exit_late === false ? "early" : "late");
-    f.exit_late.innerHTML = `<option value="early">${early}</option><option value="late">23:45</option>`;
+    const f = $("#setForm"), w9 = f.entry_window.value !== "10-18", early = w9 ? "19:25" : "18:45";
+    let cur = f.exit_late.value || (typeof SET.exit_late === "string" ? "s1845" : SET.exit_late === false ? "early" : "late");
+    if (!w9 && cur === "s1845") cur = "early";
+    f.exit_late.innerHTML = `<option value="early">${early}</option>` + (w9 ? `<option value="s1845">18:45</option>` : "") + `<option value="late">23:45</option>`;
     f.exit_late.value = cur;
   };
   fillExit(); $("#setForm").entry_window.onchange = fillExit;
@@ -607,9 +614,10 @@ $("#setForm").addEventListener("submit", async (e) => {
   const f = e.target, v = (n) => f[n] ? f[n].value : undefined, c = (n) => !!(f[n] && f[n].checked);
   const out = {
     sandbox_token: c("sandbox_token"), broker: v("broker") || "tinvest", finam_account: (v("finam_account") || "").trim(),
+    real_account: (v("real_account") || "").trim(), real_token: (v("real_token") || "").trim(),
     finam_secret: (v("finam_secret") || "").trim(), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
     spike_on: c("spike_on"), spike_tfs: [5, 15, 60].filter((t) => c("tf" + t)),
-    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") !== "early", carry_all: c("carry_all"),
+    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") === "s1845" ? "18:45" : v("exit_late") !== "early", carry_all: c("carry_all"),
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
@@ -621,9 +629,12 @@ $("#setForm").addEventListener("submit", async (e) => {
   if (!out.spike_markets.length) out.spike_markets = ["imoex"];
   const tok = (v("token") || "").trim(); if (tok) out.token = tok;
   const tgt = (v("tg_token") || "").trim(); if (tgt) out.tg_token = tgt;
-  if (out.broker === "finam" && SET.broker !== "finam" &&
-      !(await ask("Робот будет торговать через Финам. Если указан реальный счёт — сделки пойдут на реальные деньги. Продолжить?",
-        [["Да, через Финам", true, "danger"], ["Отмена", false]]))) return;
+  if (out.broker !== "tinvest" && out.broker !== (SET.broker || "tinvest") &&
+      !(await ask(out.broker === "finam" ? "Робот будет торговать через Финам. Если указан реальный счёт — сделки пойдут на реальные деньги. Продолжить?"
+        : "Робот будет торговать на РЕАЛЬНОМ счёте Т-Инвестиций — на реальные деньги. Продолжить?",
+        [["Да, торговать", true, "danger"], ["Отмена", false]]))) return;
+  if (!out.real_token) delete out.real_token;
+  if (!out.finam_secret) delete out.finam_secret;
   try {
     const r = await api("/api/settings", out);
     if (r.ok === false) { toast(r.msg, 6000); return; }

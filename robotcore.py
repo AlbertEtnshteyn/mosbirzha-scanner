@@ -17,7 +17,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed",
             "day_tp": 8, "day_tp_half": 50, "day_trail": 2, "day_act": 0,
             "idx_form": True, "idx_day": True, "idx_flip": "off",
-            "broker": "tinvest", "finam_secret": "", "finam_account": ""}
+            "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": ""}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -45,6 +45,12 @@ def save_settings(s, path=SETTINGS, keep_token=None):
     os.replace(tmp, path)
 
 
+def exit_choice(s):
+    """Время выхода формации: True — 23:45, False — ранний выход окна (19:25 / 18:45), или строка "18:45"."""
+    v = s.get("exit_late", True)
+    return v if isinstance(v, str) and ":" in v else bool(v)
+
+
 def spike_cfg(s):
     """Параметры стратегии «всплеск объёма + откат к EMA20» из настроек."""
     return {"on": bool(s.get("spike_on")), "tfs": list(s.get("spike_tfs", [15, 60])),
@@ -55,7 +61,7 @@ def spike_cfg(s):
             "two_takes": bool(s.get("two_takes", True)),
             "trend_on": bool(s.get("trend_on", True)), "trend_trade": bool(s.get("trend_trade", False)),
             "tier_profile": bool(s.get("tier_profile", True)), "window": s.get("entry_window", "9-19"),
-            "exit_late": bool(s.get("exit_late", True)), "carry_all": bool(s.get("carry_all", True)),
+            "exit_late": exit_choice(s), "carry_all": bool(s.get("carry_all", True)),
             "day_carry": int(s.get("day_carry", 0) or 0), "day_mode": s.get("day_mode", "fixed"),
             "day_tp": float(s.get("day_tp", 8) or 0) / 100, "day_tp_half": float(s.get("day_tp_half", 50) or 100) / 100,
             "day_trail": float(s.get("day_trail", 2) or 0) / 100, "day_act": float(s.get("day_act", 0) or 0) / 100,
@@ -99,7 +105,7 @@ def chart_data(token, sandbox, ticker, tf, s):
             med = at._median(list(days.values())) if days else 0
             tier = "2" if med >= at.TIER2_TURNOVER else "3"
         trades = at.history_trades(bars, at.params(chart_sp(s), tf), tf, tier, s.get("entry_window", "9-19"),
-                                   bool(s.get("exit_late", True)), bool(s.get("carry_all", True)))
+                                   exit_choice(s), bool(s.get("carry_all", True)))
     return rows, trades, tier
 
 
@@ -393,15 +399,15 @@ def reset_trading(token, capital, log=print, broker="tinvest"):
     Робот перед этим должен быть остановлен."""
     import glob
     import shutil
-    if broker == "finam":
-        # счёт Финама не пересоздать: позиции робот закрыл заранее, здесь — только чистая история
+    if broker in ("finam", "tinvest_real"):
+        # реальный счёт не пересоздать: позиции робот закрыл заранее, здесь — только чистая история
         try:
             with open(at.STATE_FILE, encoding="utf-8") as f:
                 if json.load(f).get("positions"):
-                    raise RuntimeError("у робота есть открытые позиции в Финаме — сначала закройте их")
+                    raise RuntimeError("у робота есть открытые позиции на реальном счёте — сначала закройте их")
         except (OSError, ValueError):
             pass
-        log("Финам: счёт не меняется, очищаю историю сделок и баланса.")
+        log("Реальный счёт не меняется, очищаю историю сделок и баланса робота.")
     else:
         if not token:
             raise ValueError("нет токена песочницы Т-Инвестиций")
@@ -438,7 +444,7 @@ def reset_trading(token, capital, log=print, broker="tinvest"):
     for p in files[:-1]:
         if os.path.exists(p):
             os.remove(p)
-    if broker != "finam":
+    if broker not in ("finam", "tinvest_real"):
         sc.append_rows(at.bal_log(), at.BAL_COLS, [{"time": now.strftime("%Y-%m-%d %H:%M"), "value": round(capital, 2),
                                                     "deposit": capital}])
     log(f"История сделок и баланса очищена (копия: {os.path.basename(arch)}). Начинаем с {capital:,.0f} ₽.".replace(",", " "))
