@@ -960,15 +960,21 @@ class AutoTrader:
         """Направление рынка для фильтров: по умолчанию — среднее движение бумаг индекса от открытия дня (как в
         проверке на истории); с настройкой idx_ref="imoex" — реальное изменение индекса IMOEX к вчерашнему закрытию."""
         self.market_open = own
-        if self.sp.get("idx_ref", "imoex") != "imoex":
+        mode = self.sp.get("idx_ref", "imoex")
+        if mode not in ("imoex", "imoex_open"):
             return own
         now = time.time()
-        if not getattr(self, "_ixq", None) or now - self._ixq[0] > 30:
+        if not getattr(self, "_ixq", None) or now - self._ixq[0] > 30 or self._ixq[2] != mode:
             try:
                 q = sc.index_quote()
-                self._ixq = (now, q["pct"] / 100 if q else None)
+                if q and mode == "imoex_open":      # IMOEX от открытия основной сессии (до 10:00 — от открытия утренней)
+                    o = sc.index_open()
+                    v = q["value"] / o - 1 if o else None
+                else:
+                    v = q["pct"] / 100 if q else None
+                self._ixq = (now, v, mode)
             except Exception:
-                self._ixq = (now, getattr(self, "_ixq", (0, None))[1])
+                self._ixq = (now, (getattr(self, "_ixq", None) or (0, None, mode))[1], mode)
         return self._ixq[1] if self._ixq[1] is not None else own
 
     def _scan_list(self):

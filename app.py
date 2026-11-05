@@ -433,7 +433,8 @@ class App(tk.Tk):
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
-        self.IDXREF = {"imoex": "индекс IMOEX — реальное изменение к вчерашнему закрытию", "open": "акции индекса с открытия дня (как в проверке на истории)"}
+        self.IDXREF = {"imoex": "IMOEX — реальное изменение к вчерашнему дню", "imoex_open": "IMOEX — от открытия основной сессии (10:00)",
+                       "open": "акции индекса с открытия дня (как в проверке на истории)"}
         self.v_idxref = tk.StringVar(value=self.IDXREF.get(self.s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
         self.v_wkend = tk.BooleanVar(value=bool(self.s.get("trade_weekends", False)))
         self.v_flip_all = tk.BooleanVar(value=self.s.get("idx_flip") == "all")
@@ -1217,10 +1218,12 @@ class App(tk.Tk):
         thr = snap.get("threshold") or sc.THRESHOLD
         early = self.s.get("day_mode") == "signal" or str(self.s.get("entry", "15:00")) < "11:00" or (ls and ls.hour < 10)
         ref_t = "09:00" if early else "10:00"
-        imx = (snap.get("idx_ref") or self.s.get("idx_ref", "imoex")) == "imoex"
+        ir = snap.get("idx_ref") or self.s.get("idx_ref", "imoex")
         mo = snap.get("market_open")
-        mk_txt = (f"рынок по IMOEX (к вчерашнему закрытию) {mk * 100:+.2f}%" + (f", акции индекса с открытия {mo * 100:+.2f}%" if mo is not None else "")
-                  if imx else f"рынок — акции индекса с открытия {ref_t}: {mk * 100:+.2f}%") if mk is not None else ""
+        extra = f", акции индекса с открытия {mo * 100:+.2f}%" if mo is not None else ""
+        mk_txt = ((f"рынок по IMOEX (к вчерашнему дню) {mk * 100:+.2f}%" + extra) if ir == "imoex" else
+                  (f"рынок по IMOEX (от открытия основной сессии) {mk * 100:+.2f}%" + extra) if ir == "imoex_open" else
+                  f"рынок — акции индекса с открытия {ref_t}: {mk * 100:+.2f}%") if mk is not None else ""
         self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: {mk_txt}; движение бумаг — от открытия {ref_t}; порог {thr * 100:g}%"
                                       if ls and mk is not None else "Данные появятся после 09:01."))
         self.scan_tree.delete(*self.scan_tree.get_children())

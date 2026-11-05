@@ -70,7 +70,7 @@ def spike_cfg(s):
             "exit_late": exit_choice(s), "carry_all": carry_choice(s),
             "day_carry": int(s.get("day_carry", 0) or 0), "day_exit": s.get("day_exit", "18:45"),
             "trade_weekends": bool(s.get("trade_weekends", False)),
-            "idx_ref": "open" if s.get("idx_ref") == "open" else "imoex", "day_mode": s.get("day_mode", "fixed"),
+            "idx_ref": s.get("idx_ref") if s.get("idx_ref") in ("open", "imoex_open") else "imoex", "day_mode": s.get("day_mode", "fixed"),
             "day_tp": float(s.get("day_tp", 8) or 0) / 100, "day_tp_half": float(s.get("day_tp_half", 50) or 100) / 100,
             "day_trail": float(s.get("day_trail", 2) or 0) / 100, "day_act": float(s.get("day_act", 0) or 0) / 100,
             "index": bool(s.get("idx_form", True)), "idx_day": bool(s.get("idx_day", True)),

@@ -544,6 +544,27 @@ def index_quote(code="IMOEX"):
             "pct": float(x.get("LASTCHANGEPRC") or 0), "time": str(x.get("UPDATETIME") or x.get("TIME") or "")[:5]}
 
 
+_IDX_OPEN = {}
+
+
+def index_open(code="IMOEX", main=True):
+    """Значение индекса на открытии основной сессии (10:00) сегодня; до 10:00 или main=False — на открытии утренней сессии."""
+    now = datetime.now(MSK)
+    key = (code, now.date(), main and now.hour >= 10)
+    if key in _IDX_OPEN:
+        return _IDX_OPEN[key]
+    js = iss_get(f"/engines/stock/markets/index/securities/{code}/candles.json",
+                 {"from": now.date().isoformat(), "till": now.date().isoformat(), "interval": 1}, retries=1)
+    c = js["candles"]
+    rows = [dict(zip(c["columns"], r)) for r in c["data"]]
+    if key[2]:
+        rows = [r for r in rows if str(r.get("begin", ""))[11:16] >= "10:00"]
+    val = float(rows[0]["open"]) if rows else None
+    if val:
+        _IDX_OPEN[key] = val
+    return val
+
+
 def imoex_tickers():
     try:
         js = iss_get("/statistics/engines/stock/markets/index/analytics/IMOEX.json", {"limit": 100})
