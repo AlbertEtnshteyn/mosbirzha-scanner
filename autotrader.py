@@ -45,7 +45,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "day_markets": ["imoex"], "entry_from": "", "day_ref": "main", "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "trade_weekends": False, "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "day_markets": ["imoex"], "entry_from": "", "day_ref": "main", "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "ema200": False, "trade_weekends": False, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -1302,6 +1302,8 @@ class AutoTrader:
             why = f"вне времени входа {hm(prof['from'])}–{hm(prof['to'])} для этого варианта — только уведомление"
         elif not self._side_ok(s):
             why = f"в настройках — {self._dir_name()}, не вхожу"
+        elif sp.get("ema200") and not self._ema200_ok(tk, sig.get("tf") or 15, s, self.clock()):
+            why = self._e200_why
         elif status != "ПОДТВЕРЖДЁН":
             why = "индекс идёт в другую сторону, не вхожу"
         elif not sp["on"]:
@@ -1703,6 +1705,37 @@ class AutoTrader:
         self.log("Торговля ВКЛЮЧЕНА — робот сам входит и выходит." if on else
                  "Торговля выключена — робот только наблюдает (открытые позиции продолжает вести до стопа/тейка/выхода).")
         self.wake.set()
+
+    def _ema200_ok(self, tk, tf, s, now):
+        """Фильтр тренда: лонг — только если цена выше EMA200 на ТФ формации, шорт — только ниже."""
+        key = (tk, tf, now.strftime("%Y-%m-%d %H"))
+        cache = self.__dict__.setdefault("_e200", {})
+        if key not in cache:
+            days = {5: 5, 15: 8, 60: 30}.get(tf, 8)
+            try:
+                rows = self.b.ti.candles_range(tk, now - timedelta(days=days), now, tf)
+                naive = now.replace(tzinfo=None)
+                cl = [r["c"] for r in rows if r["t"] + timedelta(minutes=tf) <= naive]
+                cache[key] = ema(cl, 200)[-1] if len(cl) >= 200 else None
+            except sc.CertError:
+                raise
+            except Exception as e:
+                self.log(f"  {tk}: EMA200 не посчитана ({e})")
+                cache[key] = None
+        e200 = cache[key]
+        tfn = {5: "5 мин", 15: "15 мин", 60: "1 час"}.get(tf, f"{tf} мин")
+        if e200 is None:
+            self._e200_why = f"мало истории для EMA200 ({tfn}) — не вхожу"
+            return False
+        px = self.prices.get(tk)
+        if not px:
+            try:
+                px = self.b.last_prices([tk]).get(tk)
+            except Exception:
+                px = None
+        ok = bool(px) and (px - e200) * s > 0
+        self._e200_why = f"цена {px:.4g} {'ниже' if s > 0 else 'выше'} EMA200 ({tfn}) {e200:.4g} — не вхожу" if px else "нет цены для EMA200"
+        return ok
 
     def _side_ok(self, side):
         return self.direction == "both" or (self.direction == "long") == (side > 0)
