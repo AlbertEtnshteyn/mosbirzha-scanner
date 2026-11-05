@@ -147,9 +147,12 @@ class ChartWindow(tk.Toplevel):
         def job():
             try:
                 if srv:                          # через сервер робота: компьютер к Т-Инвестициям не обращается
-                    rows, trades, tier = _from_server(srv.get("/api/chart", ticker=tk_, tf=tf))
+                    d = srv.get("/api/chart", ticker=tk_, tf=tf)
+                    rows, trades, tier = _from_server(d)
+                    self.real = d.get("real") or []
                 else:
                     rows, trades, tier = rc.chart_data(tok, bool(self.app.s.get("sandbox_token")), tk_, tf, self.app.s)
+                    self.real = rc.real_trades(tk_)
                 self.tier = tier or ""
                 self.res.put((tk_, tf, (rows, trades), None))
             except Exception as e:
@@ -193,7 +196,8 @@ class ChartWindow(tk.Toplevel):
                                    else "на 5 мин робот не торгует (включается в настройках) — сделок нет")
             return
         if getattr(self, "tier", "") == "3":
-            self.sum_lbl.configure(text="3-й эшелон — робот не торгует, сделок нет")
+            self.sum_lbl.configure(text="3-й эшелон — по профилю только уведомления" if self.app.s.get("tier_profile", True)
+                                   else "3-й эшелон — профиль эшелонов выключен, робот торгует")
             return
         done = [t for t in self.trades if not t["open"]]
         if not self.trades:
@@ -490,6 +494,41 @@ class ChartWindow(tk.Toplevel):
                 if 0 <= ix < len(vis):
                     cv.create_text(xl + 7, y(tr["exits"][-1][1]) + 10, text=f"{tr['result'] * 100:+.2f}%", fill=lc_,
                                    anchor="w", font=("Consolas", 9, "bold"))
+        # настоящие сделки робота: ▲/▼ — вход, ● — выход (с итогом)
+        tkey = lambda b: b["t"].replace(tzinfo=None)
+        times = [tkey(b) for b in vis]
+
+        def xi(ts):
+            try:
+                t = datetime.strptime(ts[:16], "%Y-%m-%d %H:%M")
+            except (ValueError, TypeError):
+                return None
+            if not times or t < times[0] or t > times[-1] + timedelta(minutes=self.tf if self.tf < 1440 else 1440):
+                return None
+            k = max(i for i, tt in enumerate(times) if tt <= t) if t >= times[0] else 0
+            return x0 + (k + 0.5) * bw
+        marks = [dict(r, open=False) for r in getattr(self, "real", [])]
+        for p in poss:
+            marks.append({"side": p["side"], "entry": p["entry"], "entry_time": f"{p.get('date', '')} {str(p.get('time', ''))[:5]}",
+                          "open": True})
+        for r in marks:
+            s_ = r["side"]
+            xe = xi(r.get("entry_time") or "")
+            if xe is not None and r.get("entry"):
+                ye = y(r["entry"])
+                pts = (xe, ye + 9, xe - 6, ye + 19, xe + 6, ye + 19) if s_ > 0 else (xe, ye - 9, xe - 6, ye - 19, xe + 6, ye - 19)
+                cv.create_polygon(*pts, fill=UP if s_ > 0 else DOWN, outline="white")
+                cv.create_text(xe + 8, ye + (14 if s_ > 0 else -14), text=("вход" + (" (открыта)" if r["open"] else "")),
+                               fill=TXT, anchor="w", font=("Segoe UI", 8))
+            xx = xi(r.get("exit_time") or "") if not r["open"] else None
+            if xx is not None and r.get("exit"):
+                yx = y(r["exit"])
+                rp = r.get("result_pct") or 0
+                col_ = UP if rp > 0 else DOWN
+                cv.create_oval(xx - 5, yx - 5, xx + 5, yx + 5, fill=col_, outline="white")
+                cv.create_text(xx + 8, yx - 10, text=f"{r.get('reason', '')} {rp:+.2f}%", fill=col_, anchor="w", font=("Segoe UI", 8, "bold"))
+                if xe is not None:
+                    cv.create_line(xe, y(r["entry"]), xx, yx, fill=col_, dash=(2, 3))
         # уровни позиции
         for p in poss:
             for lv, col, name in ((p.get("entry"), "#9598a1", "вход"), (p.get("stop"), DOWN, "стоп"),

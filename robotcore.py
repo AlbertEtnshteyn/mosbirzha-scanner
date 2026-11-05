@@ -155,6 +155,19 @@ def _num(x):
 STRAT_NAMES = {"всплеск": "Всплеск + EMA20", "15:00": "Движение дня", "spike": "Всплеск + EMA20", "15": "Движение дня"}
 
 
+def real_trades(ticker):
+    """Настоящие сделки робота по бумаге (закрытые) — для отметок входа и выхода на графике."""
+    out = []
+    for path, strat in ((sc.SPIKE_LOG, "всплеск"), (sc.SANDBOX_LOG, "15:00"), (sc.MANUAL_LOG, "вручную")):
+        for r in _read(path):
+            if r.get("ticker") != ticker:
+                continue
+            out.append({"strat": strat, "side": 1 if r.get("side") == "лонг" else -1, "entry": _num(r.get("entry")),
+                        "exit": _num(r.get("exit")), "reason": r.get("reason", ""), "result_pct": _num(r.get("result_pct")),
+                        "exit_time": r.get("time", ""), "entry_time": r.get("entry_time", "")})
+    return out[-200:]
+
+
 def strat_summary(rows):
     """Сводка по закрытым сделкам: число, в плюсе, итог ₽ (где известен), средний %."""
     res = [x for x in (_num(t.get("result_pct")) for t in rows) if x is not None]

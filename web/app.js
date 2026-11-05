@@ -401,6 +401,18 @@ function drawTrades() {
         text: x.why + (j === t.exits.length - 1 && !t.open ? " " + pct(t.result * 100) : "") }));
     }
   }
+  // настоящие сделки робота: время «ГГГГ-ММ-ДД ЧЧ:ММ» (МСК) → ближайшая свеча не позже
+  const ts = (x) => { const m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/.exec(x || ""); return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5]) / 1000 : null; };
+  const bar = (t) => { if (t == null || !d.bars.length || t < d.bars[0].t) return null; let k = null; for (const b of d.bars) { if (b.t <= t) k = b.t; else break; } return k; };
+  for (const r of d.real || []) {
+    const te = bar(ts(r.entry_time)), tx = bar(ts(r.exit_time));
+    if (te != null) M.push({ time: te, position: r.side > 0 ? "belowBar" : "aboveBar", color: r.side > 0 ? "#00e676" : "#ff5252", shape: r.side > 0 ? "arrowUp" : "arrowDown", text: "вход" });
+    if (tx != null) M.push({ time: tx, position: r.side > 0 ? "aboveBar" : "belowBar", color: (r.result_pct || 0) > 0 ? "#26a69a" : "#ef5350", shape: "circle", text: (r.reason || "") + " " + pct(r.result_pct || 0) });
+  }
+  for (const p of d.positions || []) {
+    const te = bar(ts(`${p.date || ""} ${String(p.time || "").slice(0, 5)}`));
+    if (te != null) M.push({ time: te, position: p.side > 0 ? "belowBar" : "aboveBar", color: p.side > 0 ? "#00e676" : "#ff5252", shape: p.side > 0 ? "arrowUp" : "arrowDown", text: "вход (открыта)" });
+  }
   M.sort((a, b) => a.time - b.time);
   CH.candles.setMarkers(M);
   for (const p of d.positions || []) {

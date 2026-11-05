@@ -426,7 +426,7 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, ca
 
 
 IDX_FLIP_BAND = 0.001          # разворот индекса считается, когда он ушёл от открытия больше чем на 0,1% в другую сторону
-LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct", "time", "pnl_rub"]
+LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct", "time", "pnl_rub", "entry_time"]
 BAL_COLS = ["time", "value", "deposit"]
 
 
@@ -1682,7 +1682,8 @@ class AutoTrader:
                        [{"date": self.st.get("date") or self.clock().date().isoformat(), "ticker": p["ticker"],
                          "side": "лонг" if p["side"] > 0 else "шорт", "lots": lots, "entry": round(p["entry"], 6),
                          "exit": round(exit_px, 6), "reason": why, "result_pct": round(res * 100, 4),
-                         "time": self.clock().strftime("%Y-%m-%d %H:%M"), "pnl_rub": round(pnl_rub, 2) if pnl_rub is not None else ""}])
+                         "time": self.clock().strftime("%Y-%m-%d %H:%M"), "pnl_rub": round(pnl_rub, 2) if pnl_rub is not None else "",
+                         "entry_time": f"{p.get('date', '')} {str(p.get('time', ''))[:5]}".strip()}])
         self.on_event("close", {"ticker": p["ticker"], "why": why, "result": res, "lots": lots})
         self._push()
         return True
@@ -1847,7 +1848,7 @@ class AutoTrader:
         stop = float(r["stop"]) if r.get("stop") else sc.STOP
         s = r["side"]
         lf = (self.st.get("last_form") or {}).get(tk) if r.get("by_form") else None
-        if lf and lf["side"] == s and (px - lf["stop"]) * s > 0 and (lf["take"] - px) * s > 0:
+        if lf and lf["side"] == s and (px - lf["stop"]) * s > 0 and (lf["take"] - px) * s >= 0.5 * abs(px - lf["stop"]):
             stop = abs(px / lf["stop"] - 1)              # стоп за лоем (хаем) отката формации
             r["take"] = abs(lf["take"] / px - 1)        # тейк — на хай (лой) импульса
             r["trail"] = 0.0
@@ -1855,7 +1856,7 @@ class AutoTrader:
             r["tf"] = {"5м": 5, "15м": 15, "1ч": 60}.get(lf["tf"], 5)
             self.log(f"  {tk}: стоп и тейк по формации {lf['tf']} ({lf['t']}): стоп {lf['stop']:.4g}, тейк {lf['take']:.4g}")
         elif r.get("by_form"):
-            self.log(f"  {tk}: подходящей формации сегодня нет" + (" (цена уже за её уровнями)" if lf and lf["side"] == s else "")
+            self.log(f"  {tk}: подходящей формации сегодня нет" + (" (цена уже далеко от неё: до тейка меньше половины расстояния до стопа)" if lf and lf["side"] == s else "")
                      + " — стоп и тейк в % из окна")
         try:
             hh, mm = (int(x) for x in str(r.get("exit_at") or "").split(":"))

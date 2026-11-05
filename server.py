@@ -519,7 +519,7 @@ def chart(ticker, tf):
                        "exits": [{"t": bars[i]["t"], "px": px, "frac": fr, "why": why} for i, px, fr, why in t["exits"]]})
     poss = [p for p in (ROBOT.robot.positions if ROBOT.running() else []) if p["ticker"] == ticker]
     return {"ticker": ticker, "tf": tf, "bars": bars, "ema10": e10, "ema20": e20, "ema200": e200, "sma200": s200, "trades": tr_out, "tier": tier,
-            "days": rc.CHART_DEPTH[tf], "positions": poss,
+            "days": rc.CHART_DEPTH[tf], "positions": poss, "real": rc.real_trades(ticker),
             "tbank": sc.tbank_url(ticker, (ROBOT.robot._terms_cache.get(ticker, ("share",))[0] if ROBOT.robot else "share"))}
 
 
