@@ -15,6 +15,17 @@ import robotcore as rc
 BG, GRID, TXT = "#131722", "#1f2433", "#b2b5be"
 UP, DOWN = "#26a69a", "#ef5350"
 EMA10_C, EMA20_C = "#e8e8e8", "#2962ff"
+EMA200_C, SMA200_C = "#ef5350", "#b388ff"
+
+
+def sma(vals, n=200):
+    out, acc = [], 0.0
+    for i, v in enumerate(vals):
+        acc += v
+        if i >= n:
+            acc -= vals[i - n]
+        out.append(acc / n if i >= n - 1 else None)
+    return out
 TFS = [(1, "1м"), (5, "5м"), (15, "15м"), (60, "1ч"), (1440, "Д")]
 DEPTH = rc.CHART_DEPTH
 
@@ -71,6 +82,8 @@ class ChartWindow(tk.Toplevel):
         self.info.pack(fill="x", padx=8)
         tk.Label(legend, text="━ EMA 10", fg=EMA10_C, bg=BG).pack(side="left")
         tk.Label(legend, text="━ EMA 20", fg=EMA20_C, bg=BG).pack(side="left", padx=10)
+        tk.Label(legend, text="━ EMA 200", fg=EMA200_C, bg=BG).pack(side="left")
+        tk.Label(legend, text="━ SMA 200", fg=SMA200_C, bg=BG).pack(side="left", padx=10)
         self.v_hist = tk.BooleanVar(value=True)
         tk.Checkbutton(legend, text="сделки робота на истории", variable=self.v_hist, command=self.draw,
                        bg=BG, fg=TXT, selectcolor=GRID, activebackground=BG, activeforeground=TXT).pack(side="left", padx=10)
@@ -174,7 +187,8 @@ class ChartWindow(tk.Toplevel):
             self.sum_lbl.configure(text="сделки робота показываются на 15м и 1ч")
             return
         if self.tf == 5:
-            self.sum_lbl.configure(text="на 5 мин робот не торгует — сделок нет (переключите на 15м или 1ч)")
+            self.sum_lbl.configure(text="сделок робота на истории 5 мин нет" if self.app.s.get("trade_5m")
+                                   else "на 5 мин робот не торгует (включается в настройках) — сделок нет")
             return
         if getattr(self, "tier", "") == "3":
             self.sum_lbl.configure(text="3-й эшелон — робот не торгует, сделок нет")
@@ -280,6 +294,7 @@ class ChartWindow(tk.Toplevel):
             return
         closes = [b["c"] for b in self.bars]
         e10, e20 = ema(closes, 10), ema(closes, 20)
+        e200, s200 = ema(closes, 200), sma(closes, 200)
         end = len(self.bars) - self.offset
         start = max(0, end - self.n_vis)
         vis = self.bars[start:end]
@@ -336,12 +351,19 @@ class ChartWindow(tk.Toplevel):
                                 fill=col, outline=col)
             vh = b.get("v", 0) / vmax * (vol_h - 4)
             cv.create_rectangle(xc - cw / 2, ph - vh, xc + cw / 2, ph, fill=col, outline="", stipple="gray50")
-        for series, col in ((e20, EMA20_C), (e10, EMA10_C)):
+        for series, col, wd in ((s200, SMA200_C, 1.4), (e200, EMA200_C, 1.4), (e20, EMA20_C, 1.6), (e10, EMA10_C, 1.6)):
             pts = []
             for i in range(len(vis)):
-                pts += [x0 + (i + 0.5) * bw, y(series[start + i])]
+                v = series[start + i]
+                yy = y(v) if v is not None else None
+                if yy is None or not (0 <= yy <= price_h) or (series is e200 and start + i < 50):
+                    if len(pts) >= 4:                       # линия вне поля цены — рвём (не залезает на объёмы)
+                        cv.create_line(*pts, fill=col, width=wd)
+                    pts = []
+                    continue
+                pts += [x0 + (i + 0.5) * bw, yy]
             if len(pts) >= 4:
-                cv.create_line(*pts, fill=col, width=1.6)
+                cv.create_line(*pts, fill=col, width=wd)
         # формации из истории: вход и выходы
         hover_trade = None
         if self.v_hist.get():

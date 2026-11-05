@@ -281,6 +281,8 @@ function ensureChart() {
   c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
   CH.e10 = c.addLineSeries({ color: "#e8e8e8", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
   CH.e20 = c.addLineSeries({ color: "#2962ff", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+  CH.e200 = c.addLineSeries({ color: "#ef5350", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
+  CH.s200 = c.addLineSeries({ color: "#b388ff", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
   c.subscribeCrosshairMove((p) => hover(p));
   new ResizeObserver(() => c.applyOptions({ width: el.clientWidth, height: el.clientHeight })).observe(el);
 }
@@ -311,6 +313,8 @@ async function loadChart(quiet) {
     CH.vol.setData(B.map((b) => ({ time: b.t, value: b.v, color: b.c >= b.o ? "rgba(38,166,154,.45)" : "rgba(239,83,80,.45)" })));
     CH.e10.setData(B.map((b, i) => ({ time: b.t, value: d.ema10[i] })));
     CH.e20.setData(B.map((b, i) => ({ time: b.t, value: d.ema20[i] })));
+    CH.e200.setData(d.ema200 ? B.map((b, i) => ({ time: b.t, value: d.ema200[i] })).filter((x, i) => i >= 50) : []);
+    CH.s200.setData(d.sma200 ? B.map((b, i) => ({ time: b.t, value: d.sma200[i] })).filter((x) => x.value != null) : []);
     const pf = B.length ? B[B.length - 1].c : 1;
     const prec = pf >= 1000 ? 1 : pf >= 10 ? 2 : pf >= 1 ? 3 : 5;
     CH.candles.applyOptions({ priceFormat: { type: "price", precision: prec, minMove: Math.pow(10, -prec) } });
