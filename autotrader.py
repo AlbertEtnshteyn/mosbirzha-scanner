@@ -621,6 +621,7 @@ class AutoTrader:
         self.on_event = on_event or (lambda kind, info: None)
         self.wake = threading.Event()            # будит робота раньше (ручное закрытие, «Стоп»)
         self.manual = []                         # тикеры, которые пользователь попросил закрыть ("*" — все)
+        self.manual_open = []                    # заявки на открытие позиции вручную
         self._lock = threading.Lock()
         self._sleep = sleep or self._wait
         self.rescan = rescan
@@ -800,7 +801,7 @@ class AutoTrader:
             now = self.clock()
             t = now.hour * 60 + now.minute
             try:
-                if self.manual:
+                if self.manual or self.manual_open:
                     self._process_manual()
                 kind = self.cal.kind(now.date())
                 wk = bool(self.sp.get("trade_weekends"))
@@ -1094,7 +1095,7 @@ class AutoTrader:
         for n, tk in enumerate(self.universe):
             if self.stop_event.is_set():
                 return
-            if self.manual:
+            if self.manual or self.manual_open:
                 self._process_manual()
             if n and n % 25 == 0 and self.positions:
                 self._check_stops()                                          # длинный проход не мешает стопам
@@ -1392,7 +1393,7 @@ class AutoTrader:
         held = {p["ticker"] for p in self.positions}
         for tk, side, mv in [x for x in self._signals_now() if self._side_ok(x[1])]:
             if tk in self.st["traded"] or tk in held or \
-                    sum(1 for p in self.positions if p.get("strat") != "spike") >= MAX_POS_RESCAN:
+                    sum(1 for p in self.positions if p.get("strat") == "15") >= MAX_POS_RESCAN:
                 continue
             self.log(f"Новый сигнал {tk} ({mv * 100:+.2f}%) — добираю.")
             self.st["traded"].append(tk)
@@ -1435,7 +1436,9 @@ class AutoTrader:
             return
         entry = fill or px
         stop = stop_level if stop_level is not None else entry * (1 - side * sc.STOP)
-        if self.sp.get("two_takes", True):
+        if strat == "manual":
+            take1, take2 = t1, None                                                # ручная позиция: один тейк — закрыть всё
+        elif self.sp.get("two_takes", True):
             take1, take2 = (entry + 0.5 * (t1 - entry), t1) if t1 else (None, None)   # тейк1 — полпути до хая, тейк2 — хай
         else:
             take1, take2 = t1, None                                                # один тейк у хая импульса
@@ -1481,7 +1484,7 @@ class AutoTrader:
             if not px:
                 continue
             s = p["side"]
-            if p.get("strat") == "15" and (p.get("dtp") or p.get("dtrail")):
+            if p.get("strat") in ("15", "manual") and (p.get("dtp") or p.get("dtrail")):
                 self._day_exits(p, px, s)
                 continue
             stage = p.get("stage", 1 if p.get("took") else 0)
@@ -1616,8 +1619,8 @@ class AutoTrader:
         except Exception:
             pnl_rub = None
         self.log(f"  {p['ticker']}: закрыто {lots} лот. ({why}) по ~{exit_px:.4g}, результат {res * 100:+.2f}%"
-                 + (" [всплеск]" if p.get("strat") == "spike" else ""))
-        sc.append_rows(sc.SPIKE_LOG if p.get("strat") == "spike" else sc.SANDBOX_LOG, LOG_COLS,
+                 + (" [всплеск]" if p.get("strat") == "spike" else " [вручную]" if p.get("strat") == "manual" else ""))
+        sc.append_rows(sc.SPIKE_LOG if p.get("strat") == "spike" else sc.MANUAL_LOG if p.get("strat") == "manual" else sc.SANDBOX_LOG, LOG_COLS,
                        [{"date": self.st.get("date") or self.clock().date().isoformat(), "ticker": p["ticker"],
                          "side": "лонг" if p["side"] > 0 else "шорт", "lots": lots, "entry": round(p["entry"], 6),
                          "exit": round(exit_px, 6), "reason": why, "result_pct": round(res * 100, 4),
@@ -1689,6 +1692,52 @@ class AutoTrader:
             self._push()
         return bool(hit)
 
+    def request_open(self, ticker, side, share=None, stop_pct=None, take_pct=0.0, trail_pct=0.0, exit_at="", carry=True):
+        """Открыть позицию вручную (из окна или с телефона). share — доля портфеля (0.10 = 10%), stop/take/trail — в долях
+        от цены входа (0 — нет). exit_at "ЧЧ:ММ" и carry: во время выхода перенести (True) или закрыть (False)."""
+        with self._lock:
+            self.manual_open.append({"ticker": str(ticker).upper().strip(), "side": 1 if side > 0 else -1,
+                                     "share": share, "stop": stop_pct, "take": take_pct or 0.0, "trail": trail_pct or 0.0,
+                                     "exit_at": exit_at, "carry": bool(carry)})
+        self.wake.set()
+
+    def _open_manual(self, r):
+        tk = r["ticker"]
+        if any(p["ticker"] == tk for p in self.positions):
+            self.log(f"  {tk}: по этой бумаге уже есть позиция — вручную не открываю")
+            return
+        try:
+            px = self.b.last_prices([tk]).get(tk)
+        except Exception as e:
+            self.log(f"  {tk}: нет цены ({e})")
+            return
+        if not px:
+            self.log(f"  {tk}: нет цены — бумага не торгуется или не найдена")
+            return
+        share = float(r.get("share") or self.sp.get("share", 0.10))
+        stop = float(r["stop"]) if r.get("stop") else sc.STOP
+        s = r["side"]
+        try:
+            hh, mm = (int(x) for x in str(r.get("exit_at") or "").split(":"))
+            exit_min = hh * 60 + mm
+        except ValueError:
+            exit_min = self._day_exit()
+        self.log(f"Открываю вручную: {tk} {'лонг' if s > 0 else 'шорт'}, {share * 100:g}% портфеля, стоп {stop * 100:g}%"
+                 + (f", тейк {r['take'] * 100:g}%" if r.get("take") else "") + (f", трейлинг {r['trail'] * 100:g}%" if r.get("trail") else "")
+                 + f", во время выхода {hm(exit_min)} — " + ("перенести" if r.get("carry") else "закрыть"))
+        n0 = len(self.positions)
+        self._open(tk, s, self.capital * share, strat="manual", stop_level=px * (1 - s * stop), exit_min=exit_min)
+        if len(self.positions) > n0:
+            p = self.positions[-1]
+            p["carry_pick"] = "carry" if r.get("carry") else "close"
+            if r.get("take") or r.get("trail"):         # тейк (закрывает всё) и трейлинг в % — как у «Движения дня»
+                p.update(dtp=float(r.get("take") or 0), dhalf=1.0, dtrail=float(r.get("trail") or 0), dact=0.0)
+                p["take"] = p["entry"] * (1 + s * r["take"]) if r.get("take") else None
+            p["stop"] = p["entry"] * (1 - s * stop)
+            p["R"] = abs(p["entry"] - p["stop"])
+            self._save()
+            self._push()
+
     def request_close(self, ticker=None):
         """Вызывается из окна: закрыть позицию по рынку (ticker=None — все позиции)."""
         with self._lock:
@@ -1698,6 +1747,14 @@ class AutoTrader:
     def _process_manual(self):
         with self._lock:
             req, self.manual = self.manual, []
+            opens, self.manual_open = self.manual_open, []
+        for r in opens:
+            try:
+                self._open_manual(r)
+            except sc.CertError:
+                raise
+            except Exception as e:
+                self.log(f"  {r.get('ticker')}: открыть вручную не удалось: {e}")
         for tk in req:
             targets = (list(self.positions) if tk == "*" else self._in_profit(list(self.positions)) if tk == "+"
                        else [p for p in self.positions if p["ticker"] == tk])

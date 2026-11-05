@@ -392,12 +392,13 @@ def read_csv(path):
 
 def closed_trades():
     rows = [dict(r, strat="15:00") for r in read_csv(sc.SANDBOX_LOG)[-500:]] + \
-           [dict(r, strat="всплеск") for r in read_csv(sc.SPIKE_LOG)[-500:]]
+           [dict(r, strat="всплеск") for r in read_csv(sc.SPIKE_LOG)[-500:]] + \
+           [dict(r, strat="вручную") for r in read_csv(sc.MANUAL_LOG)[-500:]]
     rows.sort(key=lambda r: r.get("date", ""))
     out = list(reversed(rows))
     res = [float(r.get("result_pct") or 0) for r in out]
     return {"rows": out[:400], "n": len(res), "wins": sum(1 for x in res if x > 0), "sum": sum(res),
-            "by_strat": {k: rc.strat_summary([r for r in out if r["strat"] == k]) for k in ("всплеск", "15:00")},
+            "by_strat": {k: rc.strat_summary([r for r in out if r["strat"] == k]) for k in ("всплеск", "15:00", "вручную")},
             "total": rc.strat_summary(out)}
 
 
@@ -710,6 +711,17 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/stop":
                 ROBOT.stop_trade(bool(b.get("close")))
                 return self._send(200, {"ok": True})
+            if u.path == "/api/open":
+                if not ROBOT.running():
+                    return self._send(200, {"ok": False, "msg": "Робот не запущен."})
+                tk = str(b.get("ticker") or "").upper().strip()
+                if not tk:
+                    return self._send(200, {"ok": False, "msg": "Укажите тикер."})
+                f = lambda k: float(str(b.get(k) or 0).replace(",", ".")) / 100
+                ROBOT.robot.request_open(tk, 1 if b.get("side", "long") == "long" else -1, f("share") or None, f("stop") or None,
+                                         f("take"), f("trail"), b.get("exit_at") or "", bool(b.get("carry", True)))
+                log(f"Запрошено открытие вручную: {tk} {'лонг' if b.get('side', 'long') == 'long' else 'шорт'}.")
+                return self._send(200, {"ok": True, "msg": f"Открытие {tk} запрошено — результат в журнале действий."})
             if u.path == "/api/carry":
                 if not ROBOT.running():
                     return self._send(200, {"ok": False, "msg": "Робот не запущен."})

@@ -62,6 +62,7 @@ JOURNAL = os.path.join(HERE, "forward_journal.csv")
 DAYS_LOG = os.path.join(HERE, "forward_days.csv")
 SANDBOX_LOG = os.path.join(HERE, "sandbox_trades.csv")
 SPIKE_LOG = os.path.join(HERE, "sandbox_spikes.csv")      # сделки стратегии «всплеск объёма»
+MANUAL_LOG = os.path.join(HERE, "manual_trades.csv")     # сделки, открытые вручную
 STOP_EVENT = threading.Event()   # кнопка «Стоп» в приложении
 
 # ============================================================================ защищённые соединения

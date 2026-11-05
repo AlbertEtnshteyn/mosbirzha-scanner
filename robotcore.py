@@ -159,7 +159,7 @@ def positions_summary(positions):
     """Открытые позиции по стратегиям: число и текущий результат (₽ и %), плюс общий итог."""
     out, tot = {}, {"n": 0, "pnl_rub": 0.0, "known": 0}
     for p in positions:
-        k = "всплеск" if p.get("strat") == "spike" else "15:00"
+        k = "всплеск" if p.get("strat") == "spike" else "вручную" if p.get("strat") == "manual" else "15:00"
         d = out.setdefault(k, {"n": 0, "pnl_rub": 0.0, "known": 0, "pct": []})
         d["n"] += 1
         tot["n"] += 1
@@ -209,7 +209,8 @@ def results(balance_now=None):
         bal.append((t, v, _num(r.get("deposit")) or 0.0))
     bal.sort(key=lambda x: x[0])
     cur = balance_now if balance_now else (bal[-1][1] if bal else None)
-    trades = [dict(r, strat="всплеск") for r in _read(sc.SPIKE_LOG)] + [dict(r, strat="15:00") for r in _read(sc.SANDBOX_LOG)]
+    trades = [dict(r, strat="всплеск") for r in _read(sc.SPIKE_LOG)] + [dict(r, strat="15:00") for r in _read(sc.SANDBOX_LOG)] + \
+        [dict(r, strat="вручную") for r in _read(sc.MANUAL_LOG)]
     out = []
     for kind, name in PERIODS:
         start = period_start(kind, now)
@@ -233,7 +234,7 @@ def results(balance_now=None):
         pnl = [x for x in pnl if x is not None]
         row.update(trades=len(res), wins=sum(1 for x in res if x > 0), avg_pct=round(sum(res) / len(res), 3) if res else None,
                    pnl_rub=round(sum(pnl), 2) if pnl else None, pnl_known=len(pnl),
-                   by_strat={s: strat_summary([t for t in tr if t["strat"] == s]) for s in ("всплеск", "15:00")})
+                   by_strat={s: strat_summary([t for t in tr if t["strat"] == s]) for s in ("всплеск", "15:00", "вручную")})
         out.append(row)
     # баланс по дням (последнее значение дня) — для графика
     daily = {}
@@ -431,7 +432,7 @@ def reset_trading(token, capital, log=print, broker="tinvest"):
     now = datetime.now(sc.MSK)
     arch = os.path.join(sc.HERE, "reset_" + now.strftime("%Y%m%d_%H%M%S"))
     os.makedirs(arch, exist_ok=True)
-    files = glob.glob(os.path.join(sc.HERE, "sandbox_trades*.csv")) + [sc.SPIKE_LOG, at.bal_log(), at.STATE_FILE]
+    files = glob.glob(os.path.join(sc.HERE, "sandbox_trades*.csv")) + [sc.SPIKE_LOG, sc.MANUAL_LOG, at.bal_log(), at.STATE_FILE]
     for p in files:
         if os.path.exists(p):
             shutil.copy2(p, arch)

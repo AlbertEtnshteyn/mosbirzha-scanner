@@ -228,6 +228,7 @@ class App(tk.Tk):
         ttk.Button(pb, text="Закрыть выбранную", command=self.close_selected).pack(side="left")
         ttk.Button(pb, text="Закрыть все", command=self.close_all).pack(side="left", padx=6)
         ttk.Button(pb, text="Закрыть все в плюсе", command=self.close_profit).pack(side="left")
+        ttk.Button(pb, text="+ Открыть позицию…", command=self.open_manual).pack(side="left", padx=6)
         ttk.Label(pb, text="   Выбранную во время выхода:").pack(side="left")
         for txt, mode in (("перенести", "carry"), ("закрыть", "close"), ("авто", "")):
             ttk.Button(pb, text=txt, width=10, command=lambda m=mode: self.carry_selected(m)).pack(side="left", padx=2)
@@ -1227,7 +1228,8 @@ class App(tk.Tk):
         money = lambda v: "—" if v is None else (("+" if v > 0 else "") + f"{v:,.0f}").replace(",", " ")
         PS = rc.positions_summary(snap["positions"])
         groups = [("всплеск", "Всплеск + EMA20", [p for p in snap["positions"] if p.get("strat") == "spike"]),
-                  ("15:00", "Движение дня", [p for p in snap["positions"] if p.get("strat") != "spike"])]
+                  ("15:00", "Движение дня", [p for p in snap["positions"] if p.get("strat") not in ("spike", "manual")]),
+                  ("вручную", "Открытые вручную", [p for p in snap["positions"] if p.get("strat") == "manual"])]
         for key, name, G in groups:
             if not G:
                 continue
@@ -1238,7 +1240,8 @@ class App(tk.Tk):
             for p in G:
                 last = p.get("last")
                 res = p["side"] * (last / p["entry"] - 1) if last else None
-                strat = "всплеск" + (" (б/у)" if p.get("took") else "") if p.get("strat") == "spike" else "15:00"
+                strat = "всплеск" + (" (б/у)" if p.get("took") else "") if p.get("strat") == "spike" else \
+                    "вручную" if p.get("strat") == "manual" else "15:00"
                 strat += {"carry": " · перенести", "close": " · закрыть"}.get(p.get("carry_pick"), "")
                 self.pos_tree.insert("", "end", tags=(("pos" if res > 0 else "neg"),) if res is not None else (), values=(
                     p["ticker"], strat, "лонг" if p["side"] > 0 else "шорт", p["lots"], f"{p['entry']:.4g}", f"{p['stop']:.4g}",
@@ -1604,7 +1607,7 @@ class App(tk.Tk):
                 fmt(ch, True), f"{p['change_pct']:+.2f}%" if p.get("change_pct") is not None else "—",
                 p.get("trades", 0), f"{p['wins'] / p['trades'] * 100:.0f}%" if p.get("trades") else "—",
                 fmt(p.get("pnl_rub"), True), f"{p['avg_pct']:+.2f}%" if p.get("avg_pct") is not None else "—"))
-            for k, n in (("всплеск", "Всплеск + EMA20"), ("15:00", "Движение дня")):
+            for k, n in (("всплеск", "Всплеск + EMA20"), ("15:00", "Движение дня"), ("вручную", "Вручную")):
                 x = bs.get(k) or {"n": 0}
                 self.res_tree.insert("", "end", tags=("sub",), values=(
                     f"   ↳ {n}", "", "", "", "", x.get("n", 0),
@@ -1811,6 +1814,56 @@ class App(tk.Tk):
             self.robot.request_close(tkr)
             self.log(f"Запрошено закрытие {tkr}.\n")
 
+    def open_manual(self):
+        """Окно «Открыть позицию вручную»: тикер, лонг/шорт, доля портфеля, стоп/тейк/трейлинг, время выхода и перенос."""
+        if not self.robot_running():
+            messagebox.showinfo(APP_TITLE, "Робот не запущен — нажмите «Старт».")
+            return
+        w = tk.Toplevel(self)
+        w.title("Открыть позицию вручную")
+        w.transient(self)
+        f = ttk.Frame(w, padding=12); f.pack(fill="both")
+        v = {k: tk.StringVar(value=d) for k, d in (("ticker", ""), ("side", "лонг"), ("share", f"{float(self.s.get('spike_share', 10)):g}"),
+                                                    ("stop", "3"), ("take", "0"), ("trail", "0"), ("exit", self.s.get("day_exit", "18:45")),
+                                                    ("carry", "перенести"))}
+        rows = [("Тикер", ttk.Entry(f, textvariable=v["ticker"], width=12)),
+                ("Направление", ttk.Combobox(f, textvariable=v["side"], values=["лонг", "шорт"], state="readonly", width=10)),
+                ("% портфеля", ttk.Entry(f, textvariable=v["share"], width=8)),
+                ("Стоп, % от входа", ttk.Entry(f, textvariable=v["stop"], width=8)),
+                ("Тейк, % (0 — нет)", ttk.Entry(f, textvariable=v["take"], width=8)),
+                ("Трейлинг, % (0 — нет)", ttk.Entry(f, textvariable=v["trail"], width=8)),
+                ("Время выхода", ttk.Combobox(f, textvariable=v["exit"], values=sorted(set(at.EXIT_CHOICES)), state="readonly", width=8)),
+                ("Во время выхода", ttk.Combobox(f, textvariable=v["carry"], values=["перенести", "закрыть"], state="readonly", width=10))]
+        for i, (lbl, wd) in enumerate(rows):
+            ttk.Label(f, text=lbl + ":").grid(row=i, column=0, sticky="w", pady=3)
+            wd.grid(row=i, column=1, sticky="w", pady=3)
+        rows[0][1].focus_set()
+
+        def num(k):
+            try:
+                return float(v[k].get().replace(",", ".") or 0) / 100
+            except ValueError:
+                return 0.0
+
+        def go():
+            t = v["ticker"].get().strip().upper()
+            if not t:
+                messagebox.showinfo(APP_TITLE, "Укажите тикер.", parent=w)
+                return
+            side = 1 if v["side"].get() == "лонг" else -1
+            if not messagebox.askyesno(APP_TITLE, f"Открыть {'ЛОНГ' if side > 0 else 'ШОРТ'} {t} по рынку на {v['share'].get()}% портфеля, "
+                                                  f"стоп {v['stop'].get()}%?", parent=w):
+                return
+            self.robot.request_open(t, side, num("share") or None, num("stop") or None, num("take"), num("trail"),
+                                    v["exit"].get(), v["carry"].get() == "перенести")
+            self.log(f"Запрошено открытие вручную: {t} {'лонг' if side > 0 else 'шорт'} — результат в журнале.\n")
+            w.destroy()
+        b = ttk.Frame(f); b.grid(row=len(rows), column=0, columnspan=2, pady=(10, 0), sticky="w")
+        ttk.Button(b, text="Открыть по рынку", command=go).pack(side="left")
+        ttk.Button(b, text="Отмена", command=w.destroy).pack(side="left", padx=6)
+        ttk.Label(f, foreground="#555", wraplength=330, text="Позицию ведёт робот: стоп, тейк, трейлинг и время выхода. "
+                  "«Перенести/закрыть» можно поменять потом кнопками под таблицей.").grid(row=len(rows) + 1, column=0, columnspan=2, pady=(8, 0), sticky="w")
+
     def carry_selected(self, mode):
         tkr = self._sel_ticker(self.pos_tree)
         if not tkr:
@@ -1900,7 +1953,8 @@ class App(tk.Tk):
             threading.Thread(target=job, daemon=True).start()
             return
         rows = [dict(r, strat="15:00") for r in read_csv(sc.SANDBOX_LOG)[-500:]] + \
-               [dict(r, strat="всплеск") for r in read_csv(sc.SPIKE_LOG)[-500:]]
+               [dict(r, strat="всплеск") for r in read_csv(sc.SPIKE_LOG)[-500:]] + \
+               [dict(r, strat="вручную") for r in read_csv(sc.MANUAL_LOG)[-500:]]
         rows.sort(key=lambda r: r["date"])
         self._fill_sandbox(list(reversed(rows)))
 
@@ -1916,6 +1970,7 @@ class App(tk.Tk):
         self.sb_sum.configure(text="\n".join([
             line("Всплеск + EMA20", rc.strat_summary([r for r in rows if r.get("strat") == "всплеск"])),
             line("Движение дня", rc.strat_summary([r for r in rows if r.get("strat") == "15:00"])),
+            line("Вручную", rc.strat_summary([r for r in rows if r.get("strat") == "вручную"])),
             line("ВСЕГО", rc.strat_summary(rows))]))
         for r in rows:
             res = float(r["result_pct"])

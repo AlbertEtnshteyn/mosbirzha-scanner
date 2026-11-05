@@ -143,7 +143,7 @@ function renderState(st) {
   const posCard = (p) => {
     const res = p.last ? p.side * (p.last / p.entry - 1) * 100 : null;
     const take = p.take ? ((p.stage || 0) === 0 ? fmt(p.take) : (p.stage === 1 && p.take2 ? "т2 " + fmt(p.take2) : "трейл")) : "—";
-    const strat = p.strat === "spike" ? "всплеск" + (p.took ? " (б/у)" : "") : "15:00";
+    const strat = p.strat === "spike" ? "всплеск" + (p.took ? " (б/у)" : "") : p.strat === "manual" ? "вручную" : "15:00";
     return `<div class="item ${p.side > 0 ? "l" : "s"}">
       <div class="hd"><span class="tk">${esc(p.ticker)} <span class="small ${p.side > 0 ? "up" : "down"}">${p.side > 0 ? "ЛОНГ" : "ШОРТ"}</span></span>
         <span style="text-align:right"><span class="big ${cls(res)}" style="font-size:18px">${pct(res)}</span>
@@ -161,8 +161,8 @@ function renderState(st) {
   const grpHead = (name, d) => `<div class="grp-h"><span>${name} · ${d.n} поз.</span>
     <span>${d.avg_pct != null ? `<span class="${cls(d.avg_pct)}">${pct(d.avg_pct)} ср.</span> · ` : ""}<b class="${cls(d.pnl_rub)}">${d.known ? rub(d.pnl_rub, true) : "—"}</b></span></div>`;
   let html = "";
-  for (const [k, kp, name] of [["всплеск", "spike", "Всплеск + EMA20"], ["15:00", "15", "Движение дня"]]) {
-    const G = P.filter((p) => (p.strat === "spike") === (kp === "spike"));
+  for (const [k, kp, name] of [["всплеск", "spike", "Всплеск + EMA20"], ["15:00", "15", "Движение дня"], ["вручную", "manual", "Открытые вручную"]]) {
+    const G = P.filter((p) => (p.strat === "spike" ? "spike" : p.strat === "manual" ? "manual" : "15") === kp);
     if (!G.length) continue;
     html += grpHead(name, PS.by_strat[k] || { n: G.length }) + G.map(posCard).join("");
   }
@@ -435,6 +435,34 @@ async function loadCalendar() {
   }).join("") + `<p class="muted small">Источник: ${esc(c.source)}.</p>`;
 }
 
+// --- открыть позицию вручную
+let OPEN_SIDE = "long";
+$$("#openSide button").forEach((b) => (b.onclick = () => { OPEN_SIDE = b.dataset.v; $$("#openSide button").forEach((x) => x.classList.toggle("on", x === b)); }));
+$("#openBtn").onclick = () => {
+  const f = $("#openForm");
+  f.hidden = !f.hidden;
+  if (!f.hidden) {
+    const times = [...new Set([...Array(14).keys()].map((i) => String(10 + i).padStart(2, "0") + ":00").concat(["18:45", "19:25", "23:45"]))].sort();
+    f.exit_at.innerHTML = times.map((t) => `<option ${t === ((SET && SET.day_exit) || "18:45") ? "selected" : ""}>${t}</option>`).join("");
+    if (!f.share.value) f.share.value = (SET && +SET.spike_share) || 10;
+    f.ticker.focus();
+  }
+};
+$("#openCancel").onclick = () => { $("#openForm").hidden = true; };
+$("#openForm").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const f = ev.target, tk = f.ticker.value.trim().toUpperCase();
+  if (!tk) { toast("Укажите тикер"); return; }
+  const side = OPEN_SIDE === "long" ? "ЛОНГ" : "ШОРТ";
+  if (!(await ask(`Открыть ${side} ${tk} по рынку на ${f.share.value}% портфеля, стоп ${f.stop.value}%?`, [["Открыть", true, "primary"], ["Отмена", false]]))) return;
+  try {
+    const r = await api("/api/open", { ticker: tk, side: OPEN_SIDE, share: f.share.value, stop: f.stop.value, take: f.take.value,
+      trail: f.trail.value, exit_at: f.exit_at.value, carry: f.carry.value === "1" });
+    toast(r.msg || (r.ok ? "Запрошено" : "Не получилось"), 5000);
+    if (r.ok) { f.hidden = true; f.ticker.value = ""; setTimeout(poll, 3000); }
+  } catch (e) { toast("Не получилось: " + e.message); }
+};
+
 let RES = null, RCH = null;
 $("#resetBtn").onclick = async () => {
   const cap = SET && SET.capital ? rub(+SET.capital) : "сумму капитала из настроек";
@@ -457,7 +485,7 @@ async function loadResults() {
       <td class="${cls(p.change)}">${rub(p.change, true)}</td><td class="${cls(p.change_pct)}">${pct(p.change_pct)}</td>
       <td>${p.trades}${p.trades ? " · " + Math.round(p.wins / p.trades * 100) + "%" : ""}</td>
       <td class="${cls(p.pnl_rub)}">${rub(p.pnl_rub, true)}</td></tr>` +
-      [["всплеск", "Всплеск + EMA20"], ["15:00", "Движение дня"]].map(([k, n]) => { const x = (p.by_strat || {})[k] || { n: 0 };
+      [["всплеск", "Всплеск + EMA20"], ["15:00", "Движение дня"], ["вручную", "Вручную"]].map(([k, n]) => { const x = (p.by_strat || {})[k] || { n: 0 };
         return `<tr class="sub"><td>↳ ${n}</td><td></td><td class="${cls(x.avg_pct)}">${x.n ? pct(x.avg_pct) + " ср." : ""}</td><td>${x.n}${x.n ? " · " + Math.round(x.wins / x.n * 100) + "%" : ""}</td><td class="${cls(x.pnl_rub)}">${rub(x.pnl_rub, true)}</td></tr>`; }).join("")).join("");
   const el = $("#resChart");
   if (!RCH) {
@@ -483,7 +511,7 @@ async function loadTrades() {
       const line = (name, x, key) => `<tr class="${TRF === key ? "sel" : ""}" data-trf="${key}"><td>${name}</td><td>${x.n}</td><td>${x.n ? Math.round(x.wins / x.n * 100) + "%" : "—"}</td>
         <td class="${cls(x.avg_pct)}">${pct(x.avg_pct)}</td><td class="${cls(x.pnl_rub)}">${rub(x.pnl_rub, true)}</td></tr>`;
       $("#trSum").innerHTML = d.n ? `<table class="tbl"><tr><th>Стратегия</th><th>Сделок</th><th>в плюсе</th><th>средняя</th><th>итог</th></tr>
-        ${line("Всплеск + EMA20", d.by_strat["всплеск"], "всплеск")}${line("Движение дня", d.by_strat["15:00"], "15:00")}
+        ${line("Всплеск + EMA20", d.by_strat["всплеск"], "всплеск")}${line("Движение дня", d.by_strat["15:00"], "15:00")}${d.by_strat["вручную"] && d.by_strat["вручную"].n ? line("Вручную", d.by_strat["вручную"], "вручную") : ""}
         ${line("<b>Всего</b>", d.total, "")}</table><div class="muted small">Нажмите на строку — в списке останутся сделки этой стратегии.</div>`
         : "Закрытых сделок робота пока нет.";
       $$("#trSum tr[data-trf]").forEach((tr) => (tr.onclick = () => { TRF = tr.dataset.trf; loadTrades(); }));
