@@ -964,15 +964,16 @@ class AutoTrader:
             if last_try and (now - last_try).total_seconds() < 300:
                 continue
             self.open_tries[tk] = now
-            try:
-                rows = self.b.candles(tk, day)
+            try:   # с 09:00: открытие утренней сессии — точка отсчёта до 10:00 (по умолчанию свечи берутся только с 09:55)
+                rows = self.b.candles(tk, day, datetime(day.year, day.month, day.day, 9, 0, tzinfo=sc.MSK))
             except sc.CertError:
                 raise
             except Exception as e:
                 self.log(f"  {tk}: свечи не получены ({e})")
                 continue
-            if rows and tk not in self.pre_opens:
-                self.pre_opens[tk] = rows[0]["o"]          # открытие утренней сессии — для индекса до 10:00
+            pre9 = [r for r in rows if sc.minute_of(r["t"]) >= 9 * 60]
+            if pre9 and tk not in self.pre_opens:
+                self.pre_opens[tk] = pre9[0]["o"]          # открытие утренней сессии — для индекса до 10:00
             first = [r for r in rows if sc.OPEN_MIN <= sc.minute_of(r["t"]) <= sc.OPEN_MIN + 5]
             if first:
                 self.opens[tk] = first[0]["o"]
