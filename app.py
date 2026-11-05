@@ -1257,6 +1257,8 @@ class App(tk.Tk):
                 why = why + " (индекс против)"
             self.spk_tree.insert("", "end", tags=(("pos" if body > 0 else "neg"),),
                                  values=(tm, sig_t, tkr, tfn, f"{val / 1e6:.0f}", f"{mult:.1f}", f"{body * 100:+.2f}%", d, why))
+        if getattr(self, "_menu_open", False):
+            return                                     # открыто меню правой кнопки — таблицу не перестраиваем
         self.pos_tree.delete(*self.pos_tree.get_children())
         money = lambda v: "—" if v is None else (("+" if v > 0 else "") + f"{v:,.0f}").replace(",", " ")
         PS = rc.positions_summary(snap["positions"])
@@ -1944,11 +1946,34 @@ class App(tk.Tk):
             return
         tv.selection_set(row)
         tkr = tv.item(row, "values")[col]
-        m = tk.Menu(self, tearoff=0)
+        if getattr(self, "_menu", None) is not None:
+            try:
+                self._menu.destroy()
+            except Exception:
+                pass
+        m = self._menu = tk.Menu(self, tearoff=0)        # держим ссылку — иначе меню пропадает сразу после щелчка
+        if tv is self.pos_tree and self.robot_running():
+            m.add_command(label=f"Закрыть позицию {tkr} по рынку", command=lambda: self._close_ticker(tkr))
+            sub = tk.Menu(m, tearoff=0)
+            for txt, mode in (("перенести на следующий день", "carry"), ("закрыть", "close"), ("по настройкам (авто)", "")):
+                sub.add_command(label=txt, command=lambda md=mode, t=txt: (self.robot.request_carry(tkr, md),
+                                                                             self.log(f"{tkr}: во время выхода — {t}.\n")))
+            m.add_cascade(label="Во время выхода…", menu=sub)
+            m.add_separator()
         m.add_command(label=f"График {tkr}", command=lambda: self._chart_from(tv, col))
         m.add_command(label=f"Открыть {tkr} в Т-Инвестициях", command=lambda: self.open_tbank(tkr))
         m.add_command(label="Терминал Т-Инвестиций", command=lambda: self.open_tbank(None))
-        m.tk_popup(e.x_root, e.y_root)
+        self._menu_open = True
+        try:
+            m.tk_popup(e.x_root, e.y_root)
+        finally:
+            m.grab_release()
+            self.after(300, lambda: setattr(self, "_menu_open", False))
+
+    def _close_ticker(self, tkr):
+        if messagebox.askyesno(APP_TITLE, f"Закрыть позицию {tkr} по рынку?"):
+            self.robot.request_close(tkr)
+            self.log(f"Запрошено закрытие {tkr}.\n")
 
     def open_tbank(self, ticker):
         """Страница бумаги в Т-Инвестициях или веб-терминал — в браузере по умолчанию."""
