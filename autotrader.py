@@ -45,7 +45,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "trade_weekends": False, "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "day_markets": ["imoex"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "trade_weekends": False, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -649,6 +649,7 @@ class AutoTrader:
         self.open_tries = {}
         self.seen_spikes = set()
         self.tickers = []
+        self.day_tickers = []                    # чем торгует «Движение дня» (по умолчанию — акции индекса)
         self.last_scan = None
         self.balance = None
         self._bal_t = None
@@ -825,6 +826,14 @@ class AutoTrader:
                         u = self.b.universe(self.sp["markets"], self.tickers, self.log)
                         if u:
                             self.universe = u
+                    dm = self.sp.get("day_markets") or ["imoex"]
+                    self.day_tickers = list(self.tickers)
+                    if dm != ["imoex"] and hasattr(self.b, "universe"):
+                        u = self.b.universe(dm, self.tickers, self.log)
+                        if u:
+                            self.day_tickers = u
+                    self.log("«Движение дня» торгует: " + ", ".join(dict(MARKETS).get(m, m) for m in dm)
+                             + f" — {len(self.day_tickers)} инструментов.")
                     prepared_for = now.date()
                     names = ", ".join(dict(MARKETS).get(m, m) for m in self.sp["markets"])
                     self.log(f"{now:%d.%m} рабочий день начат: индекс — {len(self.tickers)} акций; формацию ищу в группах: "
@@ -962,6 +971,23 @@ class AutoTrader:
                 self._ixq = (now, getattr(self, "_ixq", (0, None))[1])
         return self._ixq[1] if self._ixq[1] is not None else own
 
+    def _scan_list(self):
+        """Бумаги для «Движения дня» плюс акции индекса (по ним считается направление рынка «с открытия»)."""
+        seen, out = set(), []
+        for tk in list(self.day_tickers or self.tickers) + list(self.tickers):
+            if tk not in seen:
+                seen.add(tk); out.append(tk)
+        return out
+
+    def _own_market(self, moves):
+        idx = [moves[tk] for tk in self.tickers if tk in moves]
+        src = idx or list(moves.values())
+        return sum(src) / len(src)
+
+    def _day_only(self, moves):
+        allow = set(self.day_tickers or self.tickers)
+        return {tk: mv for tk, mv in moves.items() if tk in allow}
+
     def _rank(self, moves):
         rows = []
         for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1])):
@@ -977,7 +1003,7 @@ class AutoTrader:
     def _scan(self, now):
         day = now.date()
         t = now.hour * 60 + now.minute
-        for tk in self.tickers:
+        for tk in self._scan_list():
             if tk in self.opens:
                 continue
             last_try = self.open_tries.get(tk)
@@ -1006,17 +1032,18 @@ class AutoTrader:
         live = list(ref)
         if not live:
             # до 10:00: движение индекса от открытия утренней сессии (для фильтра «шорт только при падающем индексе»)
-            pre = [tk for tk in self.tickers if self.pre_opens.get(tk)]
+            pre = [tk for tk in self._scan_list() if self.pre_opens.get(tk)]
             if pre and t < sc.OPEN_MIN + 6:
                 try:
                     self.prices.update(self.b.last_prices(pre))
                 except Exception:
                     return
-                mvs = {tk: self.prices[tk] / self.pre_opens[tk] - 1 for tk in pre if self.prices.get(tk)}
+                mvs = {tk: self.prices[tk] / self.pre_opens[tk] - 1 for tk in self._scan_list()
+                       if self.pre_opens.get(tk) and self.prices.get(tk)}
                 if mvs:
-                    self.market = self._real_index(sum(mvs.values()) / len(mvs))
+                    self.market = self._real_index(self._own_market(mvs))
                     self._idx_flip("утро")
-                    self.scan_rows = self._rank(mvs)        # кандидаты с 09:01 — движение от открытия утренней сессии
+                    self.scan_rows = self._rank(self._day_only(mvs))        # кандидаты с 09:01 — движение от открытия утренней сессии
                     self.last_scan = now
                     self._push()
             return
@@ -1024,9 +1051,9 @@ class AutoTrader:
         moves = {tk: self.prices[tk] / ref[tk] - 1 for tk in live if self.prices.get(tk)}
         if not moves:
             return
-        self.market = self._real_index(sum(moves.values()) / len(moves))
+        self.market = self._real_index(self._own_market(moves))
         self._idx_flip("сигнал" if self._day_signal_mode() else "день")
-        self.scan_rows = self._rank(moves)
+        self.scan_rows = self._rank(self._day_only(moves))
         self.last_scan = now
         self._push()
 
@@ -1374,7 +1401,7 @@ class AutoTrader:
         t = now.hour * 60 + now.minute
         self.log(f"Опоздание на {t - sc.ENTRY_MIN} мин: проверяю, были ли эти сигналы в {hm(sc.ENTRY_MIN)}…")
         data = {}
-        for tk in self.tickers:
+        for tk in self.day_tickers or self.tickers:
             try:
                 data[tk] = self.b.candles(tk, now.date())
             except sc.CertError:

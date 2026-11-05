@@ -429,6 +429,7 @@ class App(tk.Tk):
         self.v_dmode = tk.StringVar(value=self.DMODE.get(self.s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.DAYC = {0: "нет", 1: "на 1 день", 2: "на 2 дня", 3: "на 3 дня"}
         self.v_dexit = tk.StringVar(value=self.s.get("day_exit", "18:45"))
+        self.v_dmk = {k: tk.BooleanVar(value=k in self.s.get("day_markets", ["imoex"])) for k, _ in at.MARKETS}
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
@@ -654,6 +655,13 @@ class App(tk.Tk):
         ttk.Label(fdm, text="«сразу при сигнале» — как только бумага прошла порог от открытия в сторону рынка; "
                             "размер позиции — «% от портфеля» из настроек формации", foreground="#555").pack(side="left")
         r += 1
+        fdk = ttk.Frame(g); fdk.grid(row=r, column=1, sticky="w", pady=2)
+        ttk.Label(fdk, text="Чем торговать:").grid(row=0, column=0, sticky="nw", padx=(0, 6))
+        for i, (k, name) in enumerate(at.MARKETS):
+            ttk.Checkbutton(fdk, text=name, variable=self.v_dmk[k]).grid(row=i // 3, column=1 + i % 3, sticky="w", padx=(0, 14))
+        ttk.Label(fdk, foreground="#555", text="на истории проверены только акции индекса Мосбиржи; направление рынка — по выбранной настройке"
+                  ).grid(row=3, column=1, columnspan=3, sticky="w")
+        r += 1
         fdc = ttk.Frame(g); fdc.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(fdc, text="Переносить позиции:").pack(side="left")
         ttk.Combobox(fdc, textvariable=self.v_dayc, width=20, state="readonly", values=list(self.DAYC.values())).pack(side="left", padx=6)
@@ -849,6 +857,7 @@ class App(tk.Tk):
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
                       rescan=self.v_rescan.get(), autostart=self.v_autostart.get(), day_on=self.v_day.get(),
                       day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0), day_exit=self.v_dexit.get(),
+                      day_markets=[k for k, _ in at.MARKETS if self.v_dmk[k].get()] or ["imoex"],
                       day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"),
                       idx_form=self.v_idx_form.get(), idx_day=self.v_idx_day.get(),
                       trade_weekends=self.v_wkend.get(),
@@ -1370,7 +1379,7 @@ class App(tk.Tk):
                 self.restart_robot()                       # окно программы — пульт робота на сервере
         self.submit(f"Установка сервера на {a[0]}", job, done)
 
-    SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
+    SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets", "day_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
                    "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "idx_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
@@ -1411,6 +1420,8 @@ class App(tk.Tk):
             v.set(tf in s.get("spike_tfs", []))
         for k, v in self.v_mk.items():
             v.set(k in s.get("spike_markets", []))
+        for k, v in self.v_dmk.items():
+            v.set(k in s.get("day_markets", ["imoex"]))
         self.v_spk_half.set(str(s.get("spike_half", 50))); self.v_spk_trail.set(f"{float(s.get('spike_trail', 1.0)):g}")
         self.v_spk_max.set(str(s.get("spike_max", 0) or "без ограничения")); self.v_spk_share.set(f"{float(s.get('spike_share', 10)):g}")
         self.v_dir.set(self.DIRS.get(s.get("direction", "both"), "лонг и шорт"))

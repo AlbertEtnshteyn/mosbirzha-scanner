@@ -624,6 +624,8 @@ function renderSettings(s) {
     ${sel("day_tp_half", "Закрыть на тейке", [[50, "50% (остаток — б/у и трейлинг)"], [100, "всю позицию"]])}
     ${sel("day_trail", "Трейлинг-стоп, %", [[0, "нет"], [1, "1%"], [2, "2%"], [3, "3%"]])}
     ${sel("day_act", "Трейлинг включается", [[0, "после тейка"], [1, "с +1%"], [2, "с +2%"], [3, "с +3%"]])}
+    <div class="f"><span>Чем торговать (на истории проверены только акции индекса)</span>
+      ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="dmk_${k}" ${(s.day_markets || ["imoex"]).includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
     ${sel("day_exit", "Время выхода (на истории 17:00 лучше)", [...new Set([...Array(14).keys()].map((i) => String(10 + i).padStart(2, "0") + ":00").concat(["18:45", "19:25", "23:45", SET.day_exit || "18:45"]))].sort().map((t) => [t, t]))}
     ${sel("day_carry", "Переносить позиции (выход в выбранное время последнего дня, стоп 3% действует всё время)", [[0, "нет"], [1, "на 1 день"], [2, "на 2 дня"], [3, "на 3 дня"]])}
     ${inp("threshold", "Порог движения, %", "number", 'step="0.1" inputmode="decimal"')}
@@ -686,6 +688,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     spike_on: c("spike_on"), spike_tfs: [5, 15, 60].filter((t) => c("tf" + t)),
     trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") === "23:45" ? true : v("exit_late") === f.exit_late.dataset.early ? false : v("exit_late"), carry_all: v("carry_all") === "none" ? "none" : v("carry_all") !== "loss",
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
+    day_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("dmk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
     day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), idx_ref: v("idx_ref") || "imoex", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
@@ -694,6 +697,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };
   if (!out.spike_markets.length) out.spike_markets = ["imoex"];
+  if (!out.day_markets.length) out.day_markets = ["imoex"];
   const tok = (v("token") || "").trim(); if (tok) out.token = tok;
   const tgt = (v("tg_token") || "").trim(); if (tgt) out.tg_token = tgt;
   if (out.broker !== "tinvest" && out.broker !== (SET.broker || "tinvest") &&
