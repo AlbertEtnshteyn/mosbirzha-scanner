@@ -431,6 +431,8 @@ class App(tk.Tk):
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
+        self.IDXREF = {"open": "акции индекса с открытия дня (проверено на истории)", "imoex": "индекс IMOEX к вчерашнему закрытию"}
+        self.v_idxref = tk.StringVar(value=self.IDXREF.get(self.s.get("idx_ref", "open"), self.IDXREF["open"]))
         self.v_wkend = tk.BooleanVar(value=bool(self.s.get("trade_weekends", False)))
         self.v_flip_all = tk.BooleanVar(value=self.s.get("idx_flip") == "all")
         self.v_flip_profit = tk.BooleanVar(value=self.s.get("idx_flip") == "profit")
@@ -544,6 +546,9 @@ class App(tk.Tk):
                                 "3-й эшелон и 5 мин — никогда не торгуются, только уведомления", variable=self.v_tier).pack(anchor="w")
         ttk.Checkbutton(f, text="Только по направлению индекса (лонг — когда индекс растёт, шорт — когда падает). "
                                 "Если снять — входит в обе стороны", variable=self.v_idx_form).pack(anchor="w")
+        fir = ttk.Frame(f); fir.pack(anchor="w", pady=2)
+        ttk.Label(fir, text="Направление рынка (для фильтра и разворота) считать по:").pack(side="left")
+        ttk.Combobox(fir, textvariable=self.v_idxref, width=48, state="readonly", values=list(self.IDXREF.values())).pack(side="left", padx=6)
         ttk.Checkbutton(f, text="Торговать в выходные и праздничные дни (сессии выходного дня Мосбиржи; обе стратегии). Без галочки — только "
                                 "в торговые дни по календарю (вкладка «Автоторговля» → «Календарь»)", variable=self.v_wkend).pack(anchor="w")
         ttk.Checkbutton(f, text="При смене направления индекса закрыть все сделки (обе стратегии)", variable=self.v_flip_all,
@@ -846,6 +851,7 @@ class App(tk.Tk):
                       day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"),
                       idx_form=self.v_idx_form.get(), idx_day=self.v_idx_day.get(),
                       trade_weekends=self.v_wkend.get(),
+                      idx_ref={v: k for k, v in self.IDXREF.items()}.get(self.v_idxref.get(), "open"),
                       idx_flip="all" if self.v_flip_all.get() else "profit" if self.v_flip_profit.get() else "off",
                       day_tp=float(self.v_dtp.get()), day_tp_half=float(self.v_dhalf.get()),
                       day_trail=float(self.v_dtrail.get()), day_act=float(self.v_dact.get()), sound_on=self.v_sound.get(),
@@ -1364,7 +1370,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
+                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "idx_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1385,6 +1391,7 @@ class App(tk.Tk):
         self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
         self.v_wkend.set(bool(s.get("trade_weekends", False)))
+        self.v_idxref.set(self.IDXREF.get(s.get("idx_ref", "open"), self.IDXREF["open"]))
         self.v_flip_all.set(s.get("idx_flip") == "all"); self.v_flip_profit.set(s.get("idx_flip") == "profit")
         self.v_dtp.set(f"{float(s.get('day_tp', 8)):g}"); self.v_dhalf.set(f"{float(s.get('day_tp_half', 50)):g}")
         self.v_dtrail.set(f"{float(s.get('day_trail', 2)):g}"); self.v_dact.set(f"{float(s.get('day_act', 0)):g}")

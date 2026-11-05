@@ -17,7 +17,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed",
             "day_tp": 8, "day_tp_half": 50, "day_trail": 2, "day_act": 0,
             "idx_form": True, "idx_day": True, "idx_flip": "off",
-            "day_exit": "18:45", "trade_weekends": False, "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": ""}
+            "day_exit": "18:45", "trade_weekends": False, "idx_ref": "open", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": ""}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -69,7 +69,8 @@ def spike_cfg(s):
             "tier_profile": bool(s.get("tier_profile", True)), "window": s.get("entry_window", "9-19"),
             "exit_late": exit_choice(s), "carry_all": carry_choice(s),
             "day_carry": int(s.get("day_carry", 0) or 0), "day_exit": s.get("day_exit", "18:45"),
-            "trade_weekends": bool(s.get("trade_weekends", False)), "day_mode": s.get("day_mode", "fixed"),
+            "trade_weekends": bool(s.get("trade_weekends", False)),
+            "idx_ref": "imoex" if s.get("idx_ref") == "imoex" else "open", "day_mode": s.get("day_mode", "fixed"),
             "day_tp": float(s.get("day_tp", 8) or 0) / 100, "day_tp_half": float(s.get("day_tp_half", 50) or 100) / 100,
             "day_trail": float(s.get("day_trail", 2) or 0) / 100, "day_act": float(s.get("day_act", 0) or 0) / 100,
             "index": bool(s.get("idx_form", True)), "idx_day": bool(s.get("idx_day", True)),
