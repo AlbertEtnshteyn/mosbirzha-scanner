@@ -144,7 +144,8 @@ function renderState(st) {
   const posCard = (p) => {
     const res = p.last ? p.side * (p.last / p.entry - 1) * 100 : null;
     const take = p.take ? ((p.stage || 0) === 0 ? fmt(p.take) : (p.stage === 1 && p.take2 ? "т2 " + fmt(p.take2) : "трейл")) : "—";
-    const strat = p.strat === "spike" ? "всплеск" + (p.took ? " (б/у)" : "") : p.strat === "manual" ? "вручную" : "15:00";
+    const tfl = { 5: "5м", 15: "15м", 60: "1ч" }[p.tf] || "";
+    const strat = p.strat === "spike" ? "всплеск " + (tfl || "15м") + (p.took ? " (б/у)" : "") : p.strat === "manual" ? "вручную" + (tfl ? " " + tfl : "") : "15:00";
     return `<div class="item ${p.side > 0 ? "l" : "s"}">
       <div class="hd"><span class="tk">${esc(p.ticker)} <span class="small ${p.side > 0 ? "up" : "down"}">${p.side > 0 ? "ЛОНГ" : "ШОРТ"}</span></span>
         <span style="text-align:right"><span class="big ${cls(res)}" style="font-size:18px">${pct(res)}</span>

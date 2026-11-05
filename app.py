@@ -1210,8 +1210,9 @@ class App(tk.Tk):
             for p in G:
                 last = p.get("last")
                 res = p["side"] * (last / p["entry"] - 1) if last else None
-                strat = "всплеск" + (" (б/у)" if p.get("took") else "") if p.get("strat") == "spike" else \
-                    "вручную" if p.get("strat") == "manual" else "15:00"
+                tfl = {5: "5м", 15: "15м", 60: "1ч"}.get(int(p.get("tf") or 0), "")
+                strat = ("всплеск " + (tfl or "15м") + (" (б/у)" if p.get("took") else "")) if p.get("strat") == "spike" else \
+                    ("вручную" + (" " + tfl if tfl else "")) if p.get("strat") == "manual" else "15:00"
                 strat += {"carry": " · перенести", "close": " · закрыть"}.get(p.get("carry_pick"), "")
                 self.pos_tree.insert("", "end", tags=(("pos" if res > 0 else "neg"),) if res is not None else (), values=(
                     p["ticker"], strat, "лонг" if p["side"] > 0 else "шорт", p["lots"], f"{p['entry']:.4g}", f"{p['stop']:.4g}",
@@ -1869,7 +1870,10 @@ class App(tk.Tk):
             self.log("Запрошено закрытие всех позиций.\n")
 
     def chart_selected(self):
-        self.open_chart(self._sel_ticker(self.pos_tree) or "SBER")
+        if self._sel_ticker(self.pos_tree):
+            self._chart_from(self.pos_tree, 0)            # ТФ, на котором открыта позиция
+        else:
+            self.open_chart("SBER")
 
     def _chart_from(self, tv, col):
         tkr = self._sel_ticker(tv, col)
@@ -1878,6 +1882,9 @@ class App(tk.Tk):
             if tv is self.spk_tree:
                 tfn = tv.item(tv.selection()[0], "values")[3]
                 tf = {"5м": 5, "15м": 15, "1ч": 60}.get(tfn, 5)
+            elif tv is self.pos_tree and self.robot_running():
+                p = next((x for x in self.robot.positions if x["ticker"] == tkr), None)
+                tf = int(p.get("tf") or (15 if p.get("strat") == "spike" else 5)) if p else 5
             self.open_chart(tkr, tf)
 
     def _row_menu(self, e, tv, col):

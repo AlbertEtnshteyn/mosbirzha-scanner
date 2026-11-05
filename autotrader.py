@@ -1350,7 +1350,7 @@ class AutoTrader:
         self.log(f"  размер позиции: {sp['share'] * 100:g}% от {'портфеля' if base != self.capital else 'капитала'} "
                  f"{base:,.0f} ₽{lev_txt} = {alloc:,.0f} ₽".replace(",", " "))
         self._open(tk, side=s, alloc=alloc, strat="spike", stop_level=level, t1=sig["t1"],
-                   exit_min=prof["exit"], carry=prof["carry"])
+                   exit_min=prof["exit"], carry=prof["carry"], tf=sig.get("tf"))
 
     # ------------------------------------------------------------------ вход по «15:00»
     def _enter(self, now):
@@ -1455,7 +1455,7 @@ class AutoTrader:
             self._open(tk, side, self.capital / MAX_POS_RESCAN)
 
     # ------------------------------------------------------------------ сделки
-    def _open(self, tk, side, alloc, strat="15", stop_level=None, t1=None, exit_min=None, carry=False):
+    def _open(self, tk, side, alloc, strat="15", stop_level=None, t1=None, exit_min=None, carry=False, tf=None):
         self._save()
         try:
             sh = self.b.share(tk)
@@ -1507,7 +1507,7 @@ class AutoTrader:
         pos = {"ticker": tk, "side": side, "lots": lots, "entry": entry, "stop": stop, "take": take1, "take2": take2,
                "strat": strat, "R": abs(entry - stop), "took": False, "per_lot": per_lot, "stage": 0, "peak": entry,
                "exit_min": exit_min or (self._day_exit() if strat == "15" else sc.EXIT_MIN), "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
-               "date": self.clock().date().isoformat()}
+               "date": self.clock().date().isoformat(), "tf": tf or (5 if strat in ("15", "manual") else 15)}
         pos.update(day_ex)
         if day_ex.get("dtp"):                         # уровень тейка «движения дня» — для таблиц и графика
             pos["take"] = entry * (1 + side * day_ex["dtp"])
@@ -1849,6 +1849,7 @@ class AutoTrader:
             r["take"] = abs(lf["take"] / px - 1)        # тейк — на хай (лой) импульса
             r["trail"] = 0.0
             r["stop_level"], r["take_level"] = lf["stop"], lf["take"]
+            r["tf"] = {"5м": 5, "15м": 15, "1ч": 60}.get(lf["tf"], 5)
             self.log(f"  {tk}: стоп и тейк по формации {lf['tf']} ({lf['t']}): стоп {lf['stop']:.4g}, тейк {lf['take']:.4g}")
         elif r.get("by_form"):
             self.log(f"  {tk}: подходящей формации сегодня нет" + (" (цена уже за её уровнями)" if lf and lf["side"] == s else "")
@@ -1862,7 +1863,7 @@ class AutoTrader:
                  + (f", тейк {r['take'] * 100:g}%" if r.get("take") else "") + (f", трейлинг {r['trail'] * 100:g}%" if r.get("trail") else "")
                  + f", во время выхода {hm(exit_min)} — " + ("перенести" if r.get("carry") else "закрыть"))
         n0 = len(self.positions)
-        self._open(tk, s, self.capital * share, strat="manual", stop_level=px * (1 - s * stop), exit_min=exit_min)
+        self._open(tk, s, self.capital * share, strat="manual", stop_level=px * (1 - s * stop), exit_min=exit_min, tf=r.get("tf"))
         if len(self.positions) > n0:
             p = self.positions[-1]
             p["carry_pick"] = "carry" if r.get("carry") else "close"
