@@ -50,6 +50,7 @@ SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
 MARKETS = [
+    ("all", "Все акции (с 3-м эшелоном)"),
     ("all_shares", "Все российские акции (без 3-го эшелона)"),
     ("blue", "Голубые фишки Мосбиржи"),
     ("imoex", "Акции индекса Мосбиржи"),
@@ -488,7 +489,9 @@ class SandboxBroker:
             return shares
         for m in markets:
             try:
-                if m == "all_shares":           # без 3-го эшелона: акции индекса широкого рынка (MOEXBMI) и индекса Мосбиржи
+                if m == "all":                  # все акции Мосбиржи, доступные через API, вместе с 3-м эшелоном
+                    out |= set(get_shares())
+                elif m == "all_shares":         # без 3-го эшелона: акции индекса широкого рынка (MOEXBMI) и индекса Мосбиржи
                     bmi = sc.index_members("MOEXBMI", None, 50)
                     out |= (set(get_shares()) & set(bmi)) | set(index_list) if bmi else set(get_shares())
                 elif m == "imoex":
@@ -548,7 +551,7 @@ class FinamBroker(SandboxBroker):
         return self.fn.equity()
 
     def universe(self, markets, index_list, log=print):
-        only = [m for m in markets if m in ("all_shares", "imoex", "blue", "third")]
+        only = [m for m in markets if m in ("all", "all_shares", "imoex", "blue", "third")]
         if len(only) < len(markets):
             log("Финам: валюта и фьючерсы через этого брокера роботом не торгуются — только акции.")
         return super().universe(only or ["all_shares"], index_list, log)
