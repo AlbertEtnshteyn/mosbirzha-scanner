@@ -45,7 +45,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "day_markets": ["imoex"], "entry_from": "", "day_ref": "main", "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "ema200": False, "ema200_tfs": ["form"], "trade_weekends": False, "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "day_markets": ["imoex"], "entry_from": "", "day_ref": "main", "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "ema10_touch": False, "ema200": False, "ema200_tfs": ["form"], "trade_weekends": False, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -1163,6 +1163,10 @@ class AutoTrader:
                 self._note_impulse(tk, bars, p, em)
                 self._update_waits(tk, p, bars, em)
                 sig = find_pullback(bars, p, em)
+                if not sig and sp.get("ema10_touch"):                     # формация с откатом к EMA10 (настройка)
+                    sig = find_pullback(bars, p, ema([b["c"] for b in bars], 10))
+                    if sig:
+                        sig["ema_n"] = 10
                 kind = "form"
                 if not sig and sp.get("trend_on", True):
                     pt = dict(p, **TIER2_TREND) if (tier == "2" and tf == 15 and sp.get("tier_profile", True)) else p
@@ -1258,7 +1262,7 @@ class AutoTrader:
                 return
             self.seen_spikes.add(kd)
         imp_t = imp["t"].strftime("%d.%m %H:%M" if trend else "%H:%M")
-        txt = (f"{'Трендовый откат' if trend else 'Откат'} к EMA20 {tk} ({tfn}): импульс {imp_t} ({sig['body'] * 100:+.2f}%, "
+        txt = (f"{'Трендовый откат' if trend else 'Откат'} к EMA{sig.get('ema_n', 20)} {tk} ({tfn}): импульс {imp_t} ({sig['body'] * 100:+.2f}%, "
                f"×{sig['mult']:.1f}), касание {sig['touch']['t']:%H:%M}, подтверждение {sig['confirm']['t']:%H:%M}")
         sig_t = (sig["confirm"]["t"] + timedelta(minutes=sig["tf"])).strftime("%H:%M")   # закрытие свечи-подтверждения = сигнал
         status = "ПОДТВЕРЖДЁН"
