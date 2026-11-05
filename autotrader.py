@@ -45,7 +45,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "day_markets": ["imoex"], "entry_from": "", "day_ref": "main", "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "ema10_touch": False, "ema200": False, "ema200_tfs": ["form"], "trade_weekends": False, "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "day_markets": ["imoex"], "entry_from": "", "day_ref": "main", "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "ema10_touch": False, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "trade_weekends": False, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -1179,6 +1179,8 @@ class AutoTrader:
                         ok, why_no = tier_rules(tier, tf, kind)
                         if kind == "trend" and sp.get("trend_trade", False):
                             ok = True                                       # «торговать все трендовые откаты» в настройках
+                        if kind == "form" and tf == 5 and sp.get("trade_5m") and tier in ("index", "2"):
+                            ok, why_no = True, ""                           # «торговать и на 5 мин» в настройках
                         sig["tradeable"], sig["why_no"] = ok, why_no
                     self._pullback_signal(tk, sig)
         self._push()
@@ -1294,8 +1296,8 @@ class AutoTrader:
         ti = te.hour * 60 + te.minute                       # время последней свечи импульса (как в проверке на истории)
         if not self.trade:
             why = "наблюдение — торговля выключена (кнопка «Старт»)"
-        elif sig.get("tf") == 5:
-            why = "5 мин — не торгую, только уведомление"
+        elif sig.get("tf") == 5 and not sp.get("trade_5m"):
+            why = "5 мин — не торгую, только уведомление (галочка «торговать и на 5 мин» в настройках)"
         elif sig.get("tier") == "3":
             why = "3-й эшелон — не торгую, только уведомление"
         elif not sig.get("tradeable", (not trend) or sp.get("trend_trade", False)):
