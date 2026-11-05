@@ -209,7 +209,7 @@ class RemoteRobot:
     def push_settings(self, s):
         keys = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets", "day_markets",
                 "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
-                "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late", "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema200", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
+                "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late", "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
         body = {k: s[k] for k in keys if k in s}
         if s.get("token"):
             body["token"] = s["token"]

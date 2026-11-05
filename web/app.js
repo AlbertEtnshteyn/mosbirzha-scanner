@@ -588,7 +588,9 @@ function renderSettings(s) {
     ${chk("trend_trade", "…и торговать все трендовые откаты", "На истории в целом в минусе; по умолчанию только по профилю ниже.")}
     ${chk("tier_profile", "Профиль по эшелонам", "Индекс — формация 15 мин и 1 час; 2-й эшелон — формация 1 час и трендовый откат 15 мин; 3-й эшелон не торгуется.")}
     ${chk("idx_form", "Только по направлению индекса", "Лонг — когда индекс растёт, шорт — когда падает. Если снять — входит в обе стороны.")}
-    ${chk("ema200", "Только по тренду EMA200", "Лонг — только если цена выше EMA200 на таймфрейме формации, шорт — только ниже.")}
+    ${chk("ema200", "Только по тренду EMA200", "Лонг — только если цена выше EMA200, шорт — только ниже. Если отмечено несколько ТФ — условие на всех.")}
+    <div class="row" style="margin:-4px 0 6px 30px">${[["form", "ТФ формации"], ["5", "5 мин"], ["15", "15 мин"], ["60", "1 час"], ["1440", "1 день"]].map(([k, n]) =>
+      `<label class="chk"><input type="checkbox" name="e2_${k}" ${(SET.ema200_tfs || ["form"]).includes(k) ? "checked" : ""}> ${n}</label>`).join("")}</div>
     ${sel("entry_window", "Время входов", [["9-19", "09:00–19:00"], ["10-18", "10:00–18:00"]])}
     <label class="f"><span>Время выхода</span>
       <select name="exit_late" id="exitSel"></select></label>
@@ -699,7 +701,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     day_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("dmk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), ema200: c("ema200"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), entry_from: v("entry_from") || "", day_ref: v("day_ref") || "main", idx_ref: v("idx_ref") || "imoex", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), ema200: c("ema200"), ema200_tfs: ["form", "5", "15", "60", "1440"].filter((k) => c("e2_" + k)), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), entry_from: v("entry_from") || "", day_ref: v("day_ref") || "main", idx_ref: v("idx_ref") || "imoex", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
     day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
