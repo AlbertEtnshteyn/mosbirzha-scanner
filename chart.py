@@ -56,7 +56,8 @@ class ChartWindow(tk.Toplevel):
         self.configure(bg=BG)
         self._build()
         self.load()
-        self.after(20000, self._auto)
+        self.after(60000, self._auto)
+        self.after(3000, self._fast)
 
     # ------------------------------------------------------------------ интерфейс
     def _build(self):
@@ -215,11 +216,59 @@ class ChartWindow(tk.Toplevel):
         self.draw()
 
     def _auto(self):
+        """Полная перезагрузка (с разметкой сделок) — раз в минуту; между ними — быстрое обновление последних свечей."""
         if not self.winfo_exists():
             return
         if self.offset == 0:
             self.load()
-        self.after(20000 if self.tf <= 15 else 60000, self._auto)
+        self.after(60000, self._auto)
+
+    def _fast(self):
+        if not self.winfo_exists():
+            return
+        self.after(3000, self._fast)
+        if self.loading or not self.bars or getattr(self, "_tail_busy", False):
+            return
+        self._tail_busy = True
+        tk_, tf = self.ticker, self.tf
+        srv = self.app._server() if hasattr(self.app, "_server") else None
+        tok = os.environ.get("TINVEST_TOKEN")
+        env = "sandbox" if self.app.s.get("sandbox_token") else "prod"
+
+        def job():
+            rows = None
+            try:
+                if srv:
+                    from datetime import timezone as _tz
+                    d = srv.get("/api/chart_tail", ticker=tk_, tf=tf)
+                    rows = [{"t": datetime.fromtimestamp(b["t"], _tz.utc).replace(tzinfo=sc.MSK), "o": b["o"], "h": b["h"],
+                             "l": b["l"], "c": b["c"], "v": b.get("v", 0)} for b in d.get("bars", [])]
+                elif tok:
+                    if getattr(self, "_ti", None) is None:
+                        self._ti = sc.TInvest(tok, env)
+                    now = datetime.now(sc.MSK)
+                    back = timedelta(days=4) if tf >= 1440 else timedelta(minutes=tf * 4)
+                    rows = self._ti.candles_range(tk_, now - back, now + timedelta(minutes=1), tf)
+            except Exception:
+                rows = None
+            self.after(0, lambda: self._merge_tail(tk_, tf, rows))
+        threading.Thread(target=job, daemon=True).start()
+
+    def _merge_tail(self, tk_, tf, rows):
+        self._tail_busy = False
+        if not rows or tk_ != self.ticker or tf != self.tf or not self.bars:
+            return
+        key = lambda t: t.replace(tzinfo=None)
+        pos = {key(b["t"]): i for i, b in enumerate(self.bars[-10:], start=len(self.bars) - min(10, len(self.bars)))}
+        last = key(self.bars[-1]["t"])
+        for r in rows:
+            k = key(r["t"])
+            if k in pos:
+                self.bars[pos[k]] = dict(self.bars[pos[k]], **{x: r[x] for x in ("o", "h", "l", "c", "v")})
+            elif k > last:
+                self.bars.append(dict(r, t=r["t"] if self.bars[-1]["t"].tzinfo else key(r["t"])))
+                last = k
+        self.draw()
 
     # ------------------------------------------------------------------ мышь
     def _ywheel(self, e):

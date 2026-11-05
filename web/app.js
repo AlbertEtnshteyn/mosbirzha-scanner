@@ -299,6 +299,25 @@ $("#chPrev").onclick = () => {
   selectTrade(T.length - 1 - (CH.go++ % T.length));
 };
 
+let TAIL_BUSY = false;
+async function chartTail() {
+  if (TAIL_BUSY) return;
+  TAIL_BUSY = true;
+  const tk = CH.ticker, tf = CH.tf;
+  try {
+    const d = await api(`/api/chart_tail?ticker=${encodeURIComponent(tk)}&tf=${tf}`);
+    if (tk !== CH.ticker || tf !== CH.tf || !CH.data) return;
+    const B = CH.data.bars, lastT = B.length ? B[B.length - 1].t : 0;
+    for (const b of d.bars) {
+      if (b.t < lastT - tf * 60 * 3) continue;
+      CH.candles.update({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c });
+      CH.vol.update({ time: b.t, value: b.v, color: b.c >= b.o ? "rgba(38,166,154,.45)" : "rgba(239,83,80,.45)" });
+      const i = B.findIndex((x) => x.t === b.t);
+      if (i >= 0) B[i] = b; else if (b.t > lastT) B.push(b);
+    }
+  } catch (e) { /* тихо — следующая попытка через 3 с */ }
+  finally { TAIL_BUSY = false; }
+}
 async function loadChart(quiet) {
   ensureChart(); markTf();
   const tk = CH.ticker, tf = CH.tf;
@@ -766,7 +785,8 @@ function start() {
   poll(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) poll(); }, 3000);
   loadResults(); setInterval(() => { if (!document.hidden) loadResults(); }, 60000);
   loadCalendar(); setInterval(() => { if (!document.hidden) loadCalendar(); }, 30 * 60000);
-  setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data && CH.tf <= 60) loadChart(true); }, 30000);
+  setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) loadChart(true); }, 60000);
+  setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) chartTail(); }, 3000);   // последние свечи — каждые 3 с
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && KEY) poll(); });
 start();

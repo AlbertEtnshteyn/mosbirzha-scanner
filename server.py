@@ -456,6 +456,25 @@ def _ts(t):
     return calendar.timegm(t.replace(tzinfo=None).timetuple())   # время МСК «как есть» (график подписывает его без сдвига)
 
 
+_TAIL_TI = {}
+
+
+def chart_tail(ticker, tf):
+    """Последние 3–4 свечи — для быстрого обновления открытого графика (раз в несколько секунд)."""
+    s = ROBOT.s
+    r = ROBOT.robot if ROBOT.running() else None
+    ti = getattr(getattr(r, "b", None), "ti", None)
+    if ti is None:
+        key = (s.get("token"), bool(s.get("sandbox_token", True)))
+        ti = _TAIL_TI.get(key) or _TAIL_TI.setdefault(key, sc.TInvest(s.get("token"), "sandbox" if key[1] else "prod"))
+    now = datetime.now(sc.MSK)
+    back = timedelta(days=4) if tf >= 1440 else timedelta(minutes=tf * 4)
+    rows = ti.candles_range(ticker, now - back, now + timedelta(minutes=1), tf)
+    bars = [{"t": _ts(r_["t"]), "o": r_["o"], "h": r_["h"], "l": r_["l"], "c": r_["c"], "v": r_.get("v", 0)} for r_ in rows]
+    poss = [p for p in (ROBOT.robot.positions if ROBOT.running() else []) if p["ticker"] == ticker]
+    return {"ticker": ticker, "tf": tf, "bars": bars, "positions": poss}
+
+
 def chart(ticker, tf):
     s = ROBOT.s
     tok = s.get("token")
@@ -671,6 +690,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, rc.attach_formations(market(), (ROBOT.snap or {}).get("spikes", [])))
             if u.path == "/api/settings":
                 return self._send(200, ROBOT.public_settings())
+            if u.path == "/api/chart_tail":
+                tf = int(q.get("tf", 15))
+                if tf not in rc.CHART_DEPTH:
+                    raise ValueError("таймфрейм")
+                return self._send(200, chart_tail(q.get("ticker", "SBER").upper().strip(), tf))
             if u.path == "/api/chart":
                 tf = int(q.get("tf", 15))
                 if tf not in rc.CHART_DEPTH:
