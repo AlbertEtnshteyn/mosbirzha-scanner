@@ -6,6 +6,10 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+concurrency:              # новая сборка отменяет предыдущую — они не мешают друг другу при выкладке в релиз
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   actions: write          # чистка старых запусков и кэша после сборки
