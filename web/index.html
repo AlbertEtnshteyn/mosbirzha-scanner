@@ -55,6 +55,8 @@
           <div class="seg" id="openSide"><button type="button" data-v="long" class="on">Лонг</button><button type="button" data-v="short">Шорт</button></div></div>
         <div class="grid4" style="grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px">
           <label class="col small"><span class="muted">% портфеля</span><input name="share" type="number" inputmode="decimal" step="any"></label>
+          <label class="col small" style="grid-column:1/-1"><span class="muted">Стоп и тейк</span><select name="by_form">
+            <option value="1">по формации: стоп за лоем отката, тейк на хай (если формации нет — в %)</option><option value="0">в % (поля ниже)</option></select></label>
           <label class="col small"><span class="muted">Стоп, % от входа</span><input name="stop" type="number" inputmode="decimal" step="any" value="3"></label>
           <label class="col small"><span class="muted">Тейк, % (0 — нет)</span><input name="take" type="number" inputmode="decimal" step="any" value="0"></label>
           <label class="col small"><span class="muted">Трейлинг, % (0 — нет)</span><input name="trail" type="number" inputmode="decimal" step="any" value="0"></label>

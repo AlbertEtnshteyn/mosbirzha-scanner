@@ -719,7 +719,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {"ok": False, "msg": "Укажите тикер."})
                 f = lambda k: float(str(b.get(k) or 0).replace(",", ".")) / 100
                 ROBOT.robot.request_open(tk, 1 if b.get("side", "long") == "long" else -1, f("share") or None, f("stop") or None,
-                                         f("take"), f("trail"), b.get("exit_at") or "", bool(b.get("carry", True)))
+                                         f("take"), f("trail"), b.get("exit_at") or "", bool(b.get("carry", True)),
+                                         bool(b.get("by_form", True)))
                 log(f"Запрошено открытие вручную: {tk} {'лонг' if b.get('side', 'long') == 'long' else 'шорт'}.")
                 return self._send(200, {"ok": True, "msg": f"Открытие {tk} запрошено — результат в журнале действий."})
             if u.path == "/api/carry":

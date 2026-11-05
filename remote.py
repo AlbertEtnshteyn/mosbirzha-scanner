@@ -176,11 +176,12 @@ class RemoteRobot:
             self.trade = False
             self._bg(lambda: self.c.post("/api/stop", {"close": False}), "выключить торговлю")
 
-    def request_open(self, ticker, side, share=None, stop_pct=None, take_pct=0.0, trail_pct=0.0, exit_at="", carry=True):
+    def request_open(self, ticker, side, share=None, stop_pct=None, take_pct=0.0, trail_pct=0.0, exit_at="", carry=True,
+                     by_form=True):
         pc = lambda x: (x or 0) * 100
         self._bg(lambda: self.c.post("/api/open", {"ticker": ticker, "side": "long" if side > 0 else "short", "share": pc(share),
                                                    "stop": pc(stop_pct), "take": pc(take_pct), "trail": pc(trail_pct),
-                                                   "exit_at": exit_at, "carry": carry}), "открыть позицию")
+                                                   "exit_at": exit_at, "carry": carry, "by_form": by_form}), "открыть позицию")
 
     def request_carry(self, ticker, mode):
         self._bg(lambda: self.c.post("/api/carry", {"ticker": ticker, "mode": mode}), "перенос позиции")

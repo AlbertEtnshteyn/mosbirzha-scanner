@@ -1326,6 +1326,8 @@ class AutoTrader:
                                                         else ("тренд" if trend else "формация") + f" ({tfn})")
             self._push()
         level = sig["level"] * (1 - s * sig["buf"])
+        self.st.setdefault("last_form", {})[tk] = {     # для ручного входа: стоп за лоем формации, тейк на хай импульса
+            "side": s, "stop": level, "take": sig["t1"], "tf": tfn, "t": sig["confirm"]["t"].strftime("%H:%M")}
         price = self.prices.get(tk) or sig["confirm"]["c"]
         two = sp.get("two_takes", True)
         self.on_event("formation", {
@@ -1785,13 +1787,14 @@ class AutoTrader:
             self._push()
         return bool(hit)
 
-    def request_open(self, ticker, side, share=None, stop_pct=None, take_pct=0.0, trail_pct=0.0, exit_at="", carry=True):
+    def request_open(self, ticker, side, share=None, stop_pct=None, take_pct=0.0, trail_pct=0.0, exit_at="", carry=True,
+                     by_form=True):
         """Открыть позицию вручную (из окна или с телефона). share — доля портфеля (0.10 = 10%), stop/take/trail — в долях
         от цены входа (0 — нет). exit_at "ЧЧ:ММ" и carry: во время выхода перенести (True) или закрыть (False)."""
         with self._lock:
             self.manual_open.append({"ticker": str(ticker).upper().strip(), "side": 1 if side > 0 else -1,
                                      "share": share, "stop": stop_pct, "take": take_pct or 0.0, "trail": trail_pct or 0.0,
-                                     "exit_at": exit_at, "carry": bool(carry)})
+                                     "exit_at": exit_at, "carry": bool(carry), "by_form": bool(by_form)})
         self.wake.set()
 
     def _open_manual(self, r):
@@ -1810,6 +1813,16 @@ class AutoTrader:
         share = float(r.get("share") or self.sp.get("share", 0.10))
         stop = float(r["stop"]) if r.get("stop") else sc.STOP
         s = r["side"]
+        lf = (self.st.get("last_form") or {}).get(tk) if r.get("by_form") else None
+        if lf and lf["side"] == s and (px - lf["stop"]) * s > 0 and (lf["take"] - px) * s > 0:
+            stop = abs(px / lf["stop"] - 1)              # стоп за лоем (хаем) отката формации
+            r["take"] = abs(lf["take"] / px - 1)        # тейк — на хай (лой) импульса
+            r["trail"] = 0.0
+            r["stop_level"], r["take_level"] = lf["stop"], lf["take"]
+            self.log(f"  {tk}: стоп и тейк по формации {lf['tf']} ({lf['t']}): стоп {lf['stop']:.4g}, тейк {lf['take']:.4g}")
+        elif r.get("by_form"):
+            self.log(f"  {tk}: подходящей формации сегодня нет" + (" (цена уже за её уровнями)" if lf and lf["side"] == s else "")
+                     + " — стоп и тейк в % из окна")
         try:
             hh, mm = (int(x) for x in str(r.get("exit_at") or "").split(":"))
             exit_min = hh * 60 + mm
@@ -1826,7 +1839,10 @@ class AutoTrader:
             if r.get("take") or r.get("trail"):         # тейк (закрывает всё) и трейлинг в % — как у «Движения дня»
                 p.update(dtp=float(r.get("take") or 0), dhalf=1.0, dtrail=float(r.get("trail") or 0), dact=0.0)
                 p["take"] = p["entry"] * (1 + s * r["take"]) if r.get("take") else None
-            p["stop"] = p["entry"] * (1 - s * stop)
+            p["stop"] = r.get("stop_level") or p["entry"] * (1 - s * stop)
+            if r.get("take_level"):
+                p["take"] = r["take_level"]
+                p["dtp"] = abs(r["take_level"] / p["entry"] - 1)
             p["R"] = abs(p["entry"] - p["stop"])
             self._save()
             self._push()

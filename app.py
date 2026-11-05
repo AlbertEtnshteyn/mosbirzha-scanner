@@ -1881,8 +1881,10 @@ class App(tk.Tk):
         f = ttk.Frame(w, padding=12); f.pack(fill="both")
         v = {k: tk.StringVar(value=d) for k, d in (("ticker", ""), ("side", "лонг"), ("share", f"{float(self.s.get('spike_share', 10)):g}"),
                                                     ("stop", "3"), ("take", "0"), ("trail", "0"), ("exit", self.s.get("day_exit", "18:45")),
-                                                    ("carry", "перенести"))}
+                                                    ("carry", "перенести"), ("form", "по формации (стоп за лоем отката, тейк на хай)"))}
         rows = [("Тикер", ttk.Entry(f, textvariable=v["ticker"], width=12)),
+                ("Стоп и тейк", ttk.Combobox(f, textvariable=v["form"], values=["по формации (стоп за лоем отката, тейк на хай)",
+                                                                                 "в % (поля ниже)"], state="readonly", width=44)),
                 ("Направление", ttk.Combobox(f, textvariable=v["side"], values=["лонг", "шорт"], state="readonly", width=10)),
                 ("% портфеля", ttk.Entry(f, textvariable=v["share"], width=8)),
                 ("Стоп, % от входа", ttk.Entry(f, textvariable=v["stop"], width=8)),
@@ -1911,7 +1913,7 @@ class App(tk.Tk):
                                                   f"стоп {v['stop'].get()}%?", parent=w):
                 return
             self.robot.request_open(t, side, num("share") or None, num("stop") or None, num("take"), num("trail"),
-                                    v["exit"].get(), v["carry"].get() == "перенести")
+                                    v["exit"].get(), v["carry"].get() == "перенести", v["form"].get().startswith("по формации"))
             self.log(f"Запрошено открытие вручную: {t} {'лонг' if side > 0 else 'шорт'} — результат в журнале.\n")
             w.destroy()
         b = ttk.Frame(f); b.grid(row=len(rows), column=0, columnspan=2, pady=(10, 0), sticky="w")

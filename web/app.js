@@ -458,7 +458,7 @@ $("#openForm").onsubmit = async (ev) => {
   if (!(await ask(`Открыть ${side} ${tk} по рынку на ${f.share.value}% портфеля, стоп ${f.stop.value}%?`, [["Открыть", true, "primary"], ["Отмена", false]]))) return;
   try {
     const r = await api("/api/open", { ticker: tk, side: OPEN_SIDE, share: f.share.value, stop: f.stop.value, take: f.take.value,
-      trail: f.trail.value, exit_at: f.exit_at.value, carry: f.carry.value === "1" });
+      trail: f.trail.value, exit_at: f.exit_at.value, carry: f.carry.value === "1", by_form: f.by_form.value === "1" });
     toast(r.msg || (r.ok ? "Запрошено" : "Не получилось"), 5000);
     if (r.ok) { f.hidden = true; f.ticker.value = ""; setTimeout(poll, 3000); }
   } catch (e) { toast("Не получилось: " + e.message); }
