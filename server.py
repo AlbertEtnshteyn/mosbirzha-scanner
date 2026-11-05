@@ -403,7 +403,7 @@ def closed_trades():
 _CAL = {"cal": None}
 
 
-def calendar():
+def trade_calendar():
     """Календарь торгов на 2 недели (с отметкой, торгует ли робот в сессии выходного дня)."""
     r = ROBOT.robot if ROBOT.running() else None
     cal = getattr(r, "cal", None)
@@ -661,7 +661,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/results":
                 return self._send(200, rc.results((ROBOT.snap or {}).get("balance")))
             if u.path == "/api/calendar":
-                return self._send(200, calendar())
+                return self._send(200, trade_calendar())
             if u.path == "/api/journal":
                 return self._send(200, journal())
             if u.path == "/api/market":
