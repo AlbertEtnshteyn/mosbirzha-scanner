@@ -447,8 +447,6 @@ class App(tk.Tk):
                        "open": "акции индекса с открытия дня (как в проверке на истории)"}
         self.v_idxref = tk.StringVar(value=self.IDXREF.get(self.s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
         self.v_wkend = tk.BooleanVar(value=bool(self.s.get("trade_weekends", False)))
-        self.v_flip_all = tk.BooleanVar(value=self.s.get("idx_flip") == "all")
-        self.v_flip_profit = tk.BooleanVar(value=self.s.get("idx_flip") == "profit")
         self.v_dtp = tk.StringVar(value=str(self.s.get("day_tp", 8)))
         self.v_dhalf = tk.StringVar(value=str(self.s.get("day_tp_half", 50)))
         self.v_dtrail = tk.StringVar(value=str(self.s.get("day_trail", 2)))
@@ -523,71 +521,72 @@ class App(tk.Tk):
         ttk.Checkbutton(f, text="Включать торговлю сразу при открытии программы (поиск формаций включается всегда)", variable=self.v_autostart).pack(side="left")
         ttk.Checkbutton(f, text="Звук при входе и выходе из позиции", variable=self.v_sound).pack(side="left", padx=(16, 0))
         r += 1
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=(4, 0))
-        ttk.Label(f, text="Торговать:").pack(side="left")
         self.DIRS = {"both": "лонг и шорт", "long": "только лонг", "short": "только шорт"}
         self.v_dir = tk.StringVar(value=self.DIRS.get(self.s.get("direction", "both"), "лонг и шорт"))
-        for k, name in self.DIRS.items():
-            ttk.Radiobutton(f, text=name, value=name, variable=self.v_dir).pack(side="left", padx=(8, 0))
-        ttk.Label(f, text="(для обеих стратегий)", foreground="#777").pack(side="left", padx=(8, 0))
+        self.FLIP = {"off": "ничего не делать", "all": "закрыть все сделки", "profit": "закрыть сделки в плюсе"}
+        self.v_flip = tk.StringVar(value=self.FLIP.get(self.s.get("idx_flip", "off"), self.FLIP["off"]))
+        LEV = {"1": "без маржи", "auto": "с маржой — плечо брокера по бумаге", "2": "с маржой ×2", "3": "с маржой ×3",
+               "5": "с маржой ×5"}
+        self.LEV = LEV
+        self.v_lev = tk.StringVar(value=LEV.get(str(self.s.get("leverage", "1")), "без маржи"))
         bg = ttk.Style().lookup("TFrame", "background") or None
+        GREY = "#666"
+
+        def row(parent, *items, pady=3):
+            """Строка настроек: подписи (str), поля (виджет-фабрики) и подсказки (("hint", текст))."""
+            fr = ttk.Frame(parent); fr.pack(anchor="w", fill="x", pady=pady)
+            for it in items:
+                if isinstance(it, str):
+                    ttk.Label(fr, text=it).pack(side="left", padx=(0, 4))
+                elif isinstance(it, tuple) and it[0] == "hint":
+                    ttk.Label(fr, text=it[1], foreground=GREY).pack(side="left", padx=(4, 0))
+                else:
+                    it(fr).pack(side="left", padx=(0, 12))
+            return fr
+        cb = lambda var, vals, w: (lambda fr: ttk.Combobox(fr, textvariable=var, values=vals, width=w, state="readonly"))
+        ck = lambda txt, var: (lambda fr: ttk.Checkbutton(fr, text=txt, variable=var))
+
+        def box(title):
+            nonlocal r
+            r += 1
+            lf = ttk.LabelFrame(g, text=" " + title + " ", padding=(10, 6))
+            lf.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+            return lf
+
+        def markets(parent, vars_):
+            fr = ttk.Frame(parent); fr.pack(anchor="w", pady=3)
+            ttk.Label(fr, text="Чем торговать:").grid(row=0, column=0, sticky="nw", padx=(0, 6))
+            for i, (k, name) in enumerate(at.MARKETS):
+                ttk.Checkbutton(fr, text=name, variable=vars_[k]).grid(row=i // 3, column=1 + i % 3, sticky="w", padx=(0, 14))
+
+        # --- общее для обеих стратегий
+        b0 = box("Общее для обеих стратегий")
+        row(b0, "Сделки:", cb(self.v_dir, list(self.DIRS.values()), 14),
+            "Направление рынка — по:", cb(self.v_idxref, list(self.IDXREF.values()), 50))
+        row(b0, "Входы не раньше:", cb(self.v_efrom, list(self.EFROM.values()), 46),
+            "При развороте рынка:", cb(self.v_flip, list(self.FLIP.values()), 24),
+            ("hint", "разворот — рынок ушёл больше чем на 0,1% в другую сторону"))
+        f = row(b0, "Размер позиции, % портфеля:", lambda fr: ttk.Combobox(fr, textvariable=self.v_spk_share, width=5,
+                values=["1", "2", "3", "5", "10", "15", "20", "25", "33", "50", "100"]), cb(self.v_lev, list(LEV.values()), 32),
+                ck("торговать в выходные и праздники (сессии выходного дня)", self.v_wkend))
+        self.share_lbl = ttk.Label(b0, text="", foreground=GREY)
+        self.share_lbl.pack(anchor="w")
+
         # --- формация
-        r += 1
-        ttk.Separator(g).grid(row=r, column=0, columnspan=2, sticky="ew", pady=8)
-        r += 1
-        ttk.Label(g, text="1. Всплеск объёма + откат к EMA20", font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
-        ttk.Checkbutton(g, text="Робот торгует по этой формации", variable=self.v_spk).grid(row=r, column=1, sticky="w")
-        r += 1
-        tk.Label(g, text="Время входа не задаётся: робот входит сразу, как только формация подтверждена "
-                         "(в выбранное ниже время входов) и выходит по стопу, тейку, трейлингу "
-                         "или во время выхода; перенос позиций на следующий день — ниже.",
-                 justify="left", anchor="w", font=("Segoe UI", 9, "bold"), fg="#0a5a2f", bg=bg, wraplength=740).grid(row=r, column=1, sticky="w")
-        r += 1
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(f, text="Таймфреймы:").pack(side="left")
-        for tf in (5, 15, 60):
-            ttk.Checkbutton(f, text="1 час" if tf == 60 else (f"{tf} мин" if tf == 5 else f"{tf} мин"),
-                            variable=self.v_spk_tf[tf]).pack(side="left", padx=(6, 0))
-        r += 1
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Checkbutton(f, text="Искать трендовые откаты (импульс на объёме был в последние 3 дня, EMA10 над EMA20, касание EMA20 + подтверждение)",
-                        variable=self.v_trend_on).pack(anchor="w")
-        ttk.Checkbutton(f, text="…и торговать все трендовые откаты (на истории в целом в минусе; по умолчанию только по профилю ниже)",
-                        variable=self.v_trend_trade).pack(anchor="w")
-        ttk.Checkbutton(f, text="Профиль по эшелонам (по проверке на 152 акциях): индекс — формация 15 мин и 1 час; "
-                                "2-й эшелон — формация 1 час и трендовый откат 15 мин после роста ≥5% на объёме ×10; "
-                                "3-й эшелон и 5 мин — никогда не торгуются, только уведомления", variable=self.v_tier).pack(anchor="w")
-        ttk.Checkbutton(f, text="Только по направлению индекса (лонг — когда индекс растёт, шорт — когда падает). "
-                                "Если снять — входит в обе стороны", variable=self.v_idx_form).pack(anchor="w")
-        ttk.Checkbutton(f, text="Торговать и на 5 мин (формации 5 мин — вход, а не только уведомление; на истории −0,12% на сделку)",
-                        variable=self.v_t5).pack(anchor="w")
-        ttk.Checkbutton(f, text="Формация и на откате к EMA10 (откат не дошёл до EMA20, но коснулся EMA10 и отскочил)",
-                        variable=self.v_e10).pack(anchor="w")
-        fe2 = ttk.Frame(f); fe2.pack(anchor="w")
-        ttk.Checkbutton(fe2, text="Только по тренду EMA200 (лонг — цена выше EMA200, шорт — ниже) на ТФ:",
-                        variable=self.v_e200).pack(side="left")
-        for k, n in self.E2TF:
-            ttk.Checkbutton(fe2, text=n, variable=self.v_e2tf[k]).pack(side="left", padx=(6, 0))
-        fef = ttk.Frame(f); fef.pack(anchor="w", pady=2)
-        ttk.Label(fef, text="Время входов в позиции (обе стратегии):").pack(side="left")
-        ttk.Combobox(fef, textvariable=self.v_efrom, width=46, state="readonly", values=list(self.EFROM.values())).pack(side="left", padx=6)
-        fir = ttk.Frame(f); fir.pack(anchor="w", pady=2)
-        ttk.Label(fir, text="Направление рынка (для фильтра и разворота) считать по:").pack(side="left")
-        ttk.Combobox(fir, textvariable=self.v_idxref, width=48, state="readonly", values=list(self.IDXREF.values())).pack(side="left", padx=6)
-        ttk.Checkbutton(f, text="Торговать в выходные и праздничные дни (сессии выходного дня Мосбиржи; обе стратегии). Без галочки — только "
-                                "в торговые дни по календарю (вкладка «Автоторговля» → «Календарь»)", variable=self.v_wkend).pack(anchor="w")
-        ttk.Checkbutton(f, text="При смене направления индекса закрыть все сделки (обе стратегии)", variable=self.v_flip_all,
-                        command=lambda: self.v_flip_all.get() and self.v_flip_profit.set(False)).pack(anchor="w")
-        ttk.Checkbutton(f, text="При смене направления индекса закрыть все сделки в плюсе (обе стратегии). Разворот — индекс "
-                                "ушёл от открытия больше чем на 0,1% в другую сторону", variable=self.v_flip_profit,
-                        command=lambda: self.v_flip_profit.get() and self.v_flip_all.set(False)).pack(anchor="w")
-        fw = ttk.Frame(f); fw.pack(anchor="w", pady=(4, 0))
-        ttk.Label(fw, text="Время входов:").pack(side="left")
+        b1 = box("1. Всплеск объёма + откат к EMA20 — вход сразу после подтверждения формации")
+        f = row(b1, ck("Торговать по этой формации", self.v_spk), "   Таймфреймы:",
+                *[ck("1 час" if tf == 60 else f"{tf} мин", self.v_spk_tf[tf]) for tf in (5, 15, 60)])
+        markets(b1, self.v_mk)
+        fe = row(b1, ck("Только по направлению рынка", self.v_idx_form), ck("Только по тренду EMA200 на:", self.v_e200),
+                 *[ck(n, self.v_e2tf[k]) for k, n in self.E2TF])
+        fw = row(b1, "Окно входов:")
         cw = ttk.Combobox(fw, textvariable=self.v_win, width=13, state="readonly", values=list(self.WIN.values()))
-        cw.pack(side="left", padx=6)
-        ttk.Label(fw, text="выход:").pack(side="left", padx=(8, 0))
+        cw.pack(side="left", padx=(0, 12))
+        ttk.Label(fw, text="выход:").pack(side="left", padx=(0, 4))
         ce = ttk.Combobox(fw, textvariable=self.v_exit, width=7, state="readonly")
-        ce.pack(side="left", padx=6)
+        ce.pack(side="left", padx=(0, 12))
+        ttk.Label(fw, text="во время выхода:").pack(side="left", padx=(0, 4))
+        ttk.Combobox(fw, textvariable=self.v_carry_all, width=62, state="readonly", values=list(self.CARRY.values())).pack(side="left")
 
         def _exits(*_):
             k = {v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19")
@@ -598,50 +597,46 @@ class App(tk.Tk):
         cw.bind("<<ComboboxSelected>>", _exits)
         _exits()
         self._exits_cb = _exits
-        fcr = ttk.Frame(f); fcr.pack(anchor="w", pady=(2, 0))
-        ttk.Label(fcr, text="Во время выхода:").pack(side="left")
-        ttk.Combobox(fcr, textvariable=self.v_carry_all, width=66, state="readonly", values=list(self.CARRY.values())).pack(side="left", padx=6)
-        r += 1
-        ttk.Label(g, text="Чем торговать:").grid(row=r, column=0, sticky="e", padx=(0, 6))
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
-        for i, (k, name) in enumerate(at.MARKETS):
-            ttk.Checkbutton(f, text=name, variable=self.v_mk[k]).grid(row=i // 3, column=i % 3, sticky="w", padx=(0, 14))
-        r += 1
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(f, text="Тейки:").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_takes, width=15, state="readonly", values=["два тейка", "один тейк у хая"]).pack(side="left", padx=(4, 12))
-        ttk.Label(f, text="Закрыть на тейке1, %:").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_spk_half, width=5, state="readonly", values=["30", "50", "70", "100"]).pack(side="left", padx=(4, 12))
-        r += 1
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(f, text="Трейлинг, R (расстояние до стопа):").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_spk_trail, width=5, state="readonly", values=["0.5", "1", "1.5", "2"]).pack(side="left", padx=(4, 12))
-        ttk.Label(f, text="Макс. позиций:").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_spk_max, width=15, state="readonly",
-                     values=["без ограничения", "1", "2", "3", "5", "8", "10", "15", "20"]).pack(side="left", padx=(4, 0))
-        r += 1
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(f, text="Вход в позицию, % от портфеля:").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_spk_share, width=5,
-                     values=["1", "2", "3", "5", "10", "15", "20", "25", "33", "50", "100"]).pack(side="left", padx=(4, 8))
-        LEV = {"1": "без маржи", "auto": "с маржой — плечо брокера по бумаге", "2": "с маржой ×2", "3": "с маржой ×3",
-               "5": "с маржой ×5"}
-        self.LEV = LEV
-        self.v_lev = tk.StringVar(value=LEV.get(str(self.s.get("leverage", "1")), "без маржи"))
-        ttk.Combobox(f, textvariable=self.v_lev, width=32, state="readonly", values=list(LEV.values())).pack(side="left", padx=(0, 8))
-        r += 1
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
-        self.share_lbl = ttk.Label(f, text="", foreground="#555")
-        self.share_lbl.pack(side="left")
+        row(b1, "Тейки:", cb(self.v_takes, ["два тейка", "один тейк у хая"], 15), "закрыть на тейке1, %:",
+            cb(self.v_spk_half, ["30", "50", "70", "100"], 5), "трейлинг, R:", cb(self.v_spk_trail, ["0.5", "1", "1.5", "2"], 5),
+            "макс. позиций:", cb(self.v_spk_max, ["без ограничения", "1", "2", "3", "5", "8", "10", "15", "20"], 15))
+        row(b1, ck("Профиль по эшелонам", self.v_tier), ("hint", "индекс — формация 15 мин и 1 час; 2-й эшелон — 1 час и трендовый откат 15 мин; "
+                                                         "3-й эшелон — только уведомления"))
+        row(b1, "Дополнительно (на истории хуже):", ck("входить и на 5 мин", self.v_t5), ck("откат к EMA10", self.v_e10),
+            ck("все трендовые откаты", self.v_trend_trade), ck("искать трендовые откаты (уведомления)", self.v_trend_on))
+        tk.Label(b1, text="На истории (152 акции, 10.2025–10.2026, после затрат): формация 15 мин и 1 час — около +0,24% на сделку; "
+                          "5 мин — −0,12%. Стоп — под низом отката с запасом; тейк1 — полпути до хая импульса, тейк2 — хай, дальше трейлинг.",
+                 justify="left", anchor="w", font=("Segoe UI", 9), fg=GREY, bg=bg, wraplength=980).pack(anchor="w", pady=(4, 0))
+
+        # --- движение дня
+        b2 = box("2. Движение дня — бумаги, которые сильно ушли от открытия в сторону рынка")
+        row(b2, ck("Торговать по этой стратегии", self.v_day), "Вход:", cb(self.v_dmode, list(self.DMODE.values()), 34),
+            "в", cb(self.v_entry, sc.ENTRY_CHOICES, 6), "порог, %:", cb(self.v_thr, [f"{x:g}" for x in sc.THRESHOLD_CHOICES], 5))
+        row(b2, ck("Только по направлению рынка", self.v_idx_day), "Движение бумаги считать:", cb(self.v_dref, list(self.DREF.values()), 34),
+            ("hint", "до 10:00 — всегда от 07:00"))
+        markets(b2, self.v_dmk)
+        row(b2, "Выход в", cb(self.v_dexit, sorted(set(at.EXIT_CHOICES)), 6), "перенос позиций:", cb(self.v_dayc, list(self.DAYC.values()), 10),
+            ("hint", "стоп 3% действует всегда"))
+        row(b2, "Тейк, %:", cb(self.v_dtp, ["0", "3", "5", "8", "10"], 4), "закрыть на тейке, %:", cb(self.v_dhalf, ["50", "100"], 4),
+            "трейлинг, %:", cb(self.v_dtrail, ["0", "1", "2", "3"], 4), "трейлинг с +%:", cb(self.v_dact, ["0", "1", "2", "3"], 4),
+            ("hint", "лучше на истории: тейк 8%, закрыть 50%, трейлинг 2%"))
+        self.bt_lbl = tk.Label(b2, text="", justify="left", anchor="w", font=("Segoe UI", 9), bg=bg)
+        self.bt_lbl.pack(anchor="w")
+        self.v_thr.trace_add("write", lambda *_: self._show_bt())
+        self.v_entry.trace_add("write", lambda *_: self._show_bt())
+        self._show_bt()
+        row(b2, ck("Добирать новые сигналы до 16:30 (на истории хуже)", self.v_rescan), ck("сигналы со звуком", self.v_as),
+            ck("журнал форвард-теста в 17:20", self.v_aj))
+
         def _upd_share(*_):
             try:
                 pct = float(self.v_spk_share.get().replace(",", "."))
                 lk = {v: k for k, v in self.LEV.items()}.get(self.v_lev.get(), "1")
                 lv = 1.0 if lk in ("1", "auto") else float(lk)
                 if not self.v_spk_max.get().isdigit():
-                    self.share_lbl.configure(foreground="#555", text=(
-                        f"одна позиция = {pct * lv:g}% портфеля; число позиций не ограничено — новые сделки открываются, пока "
-                        f"хватает денег на счёте" + (f" (без маржи — примерно до {int(100 // pct)} позиций одновременно)" if lk == "1" else "")))
+                    self.share_lbl.configure(foreground=GREY, text=(
+                        f"одна позиция = {pct * lv:g}% портфеля (формация, ручной вход и «Движение дня» при входе сразу при сигнале); "
+                        f"позиции открываются, пока хватает денег" + (f" — без маржи примерно до {int(100 // pct)} одновременно" if lk == "1" else "")))
                     return
                 mx = int(self.v_spk_max.get())
                 tot = pct * mx * lv
@@ -649,7 +644,7 @@ class App(tk.Tk):
                        + f"; при {mx} позициях до {tot:g}%" + (" × плечо" if lk == "auto" else ""))
                 if lk == "1" and pct * mx > 100:
                     txt += " — больше 100%: без маржи брокер не даст открыть все позиции"
-                self.share_lbl.configure(text=txt, foreground="#b3261e" if (lk == "1" and pct * mx > 100) else "#555")
+                self.share_lbl.configure(text=txt, foreground="#b3261e" if (lk == "1" and pct * mx > 100) else GREY)
             except ValueError:
                 self.share_lbl.configure(text="введите число")
         self.v_spk_share.trace_add("write", _upd_share)
@@ -657,81 +652,7 @@ class App(tk.Tk):
         self.v_lev.trace_add("write", _upd_share)
         _upd_share()
         r += 1
-        tk.Label(g, text="На истории (44 акции индекса, 10.2025–10.2026):\n" + "\n".join(f"  • {at.SPIKE_PRESETS[tf]['bt']}" for tf in (5, 15, 60))
-                 + "\nСтоп — под самой низкой точкой всего отката (с закруглением) с запасом. Размер позиции — % от текущей стоимости портфеля песочницы."
-                 + "\nДва тейка (полпути до хая 50% → б/у и трейлинг, хай — 50% остатка): на 15 мин в плюсе 64% сделок, в среднем +0,08% (трейлинг 1R)"
-                 + " или +0,12% (1,5R); один тейк у хая: в плюсе 53%, в среднем +0,24%.",
-                 justify="left", anchor="w", font=("Segoe UI", 9), fg="#555", bg=bg, wraplength=760).grid(row=r, column=1, sticky="w")
-        # --- движение дня
-        r += 1
-        ttk.Separator(g).grid(row=r, column=0, columnspan=2, sticky="ew", pady=8)
-        r += 1
-        ttk.Label(g, text="2. Движение дня (отдельная стратегия)", font=("Segoe UI", 10, "bold")).grid(row=r, column=0, sticky="w")
-        ttk.Checkbutton(g, text="Робот торгует и по этой стратегии — вход в одно заданное время дня", variable=self.v_day).grid(row=r, column=1, sticky="w")
-        r += 1
-        ttk.Checkbutton(g, text="Только по направлению рынка (акция идёт туда же, куда рынок). Если снять — в обе стороны",
-                        variable=self.v_idx_day).grid(row=r, column=1, sticky="w")
-        r += 1
-        fdm = ttk.Frame(g); fdm.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(fdm, text="Вход:").pack(side="left")
-        ttk.Combobox(fdm, textvariable=self.v_dmode, width=30, state="readonly", values=list(self.DMODE.values())).pack(side="left", padx=6)
-        ttk.Label(fdm, text="«сразу при сигнале» — как только бумага прошла порог от открытия в сторону рынка; "
-                            "размер позиции — «% от портфеля» из настроек формации", foreground="#555").pack(side="left")
-        r += 1
-        fdr = ttk.Frame(g); fdr.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(fdr, text="Движение бумаги считать:").pack(side="left")
-        ttk.Combobox(fdr, textvariable=self.v_dref, width=34, state="readonly", values=list(self.DREF.values())).pack(side="left", padx=6)
-        ttk.Label(fdr, text="(до 10:00 — всегда от 07:00; на истории проверено «от 10:00»)", foreground="#555").pack(side="left")
-        r += 1
-        fdk = ttk.Frame(g); fdk.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(fdk, text="Чем торговать:").grid(row=0, column=0, sticky="nw", padx=(0, 6))
-        for i, (k, name) in enumerate(at.MARKETS):
-            ttk.Checkbutton(fdk, text=name, variable=self.v_dmk[k]).grid(row=i // 3, column=1 + i % 3, sticky="w", padx=(0, 14))
-        ttk.Label(fdk, foreground="#555", text="на истории проверены только акции индекса Мосбиржи; направление рынка — по выбранной настройке"
-                  ).grid(row=3, column=1, columnspan=3, sticky="w")
-        r += 1
-        fdc = ttk.Frame(g); fdc.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(fdc, text="Переносить позиции:").pack(side="left")
-        ttk.Combobox(fdc, textvariable=self.v_dayc, width=20, state="readonly", values=list(self.DAYC.values())).pack(side="left", padx=6)
-        ttk.Label(fdc, text="выход в").pack(side="left")
-        ttk.Combobox(fdc, textvariable=self.v_dexit, width=6, state="readonly", values=sorted(set(at.EXIT_CHOICES))).pack(side="left", padx=4)
-        ttk.Label(fdc, text="(последнего дня; на истории 17:00 лучше), стоп 3% действует всё время", foreground="#555").pack(side="left")
-        r += 1
-        fdt = ttk.Frame(g); fdt.grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(fdt, text="Тейк, %:").pack(side="left")
-        ttk.Combobox(fdt, textvariable=self.v_dtp, width=4, state="readonly", values=["0", "3", "5", "8", "10"]).pack(side="left", padx=4)
-        ttk.Label(fdt, text="закрыть на тейке, %:").pack(side="left")
-        ttk.Combobox(fdt, textvariable=self.v_dhalf, width=4, state="readonly", values=["50", "100"]).pack(side="left", padx=4)
-        ttk.Label(fdt, text="трейлинг-стоп, %:").pack(side="left")
-        ttk.Combobox(fdt, textvariable=self.v_dtrail, width=4, state="readonly", values=["0", "1", "2", "3"]).pack(side="left", padx=4)
-        ttk.Label(fdt, text="трейлинг с +%:").pack(side="left")
-        ttk.Combobox(fdt, textvariable=self.v_dact, width=4, state="readonly", values=["0", "1", "2", "3"]).pack(side="left", padx=4)
-        r += 1
-        ttk.Label(g, foreground="#555", wraplength=760, justify="left", text=(
-            "По истории лучше всего: тейк 8%, закрыть 50%, остаток — стоп в безубыток и трейлинг 2% (0 в «трейлинг с +%» — после тейка). "
-            "Тейк 0 — без тейка; стоп 3% действует всегда.")).grid(row=r, column=1, sticky="w")
-        r += 1
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
-        ttk.Label(f, text="Порог движения акции от открытия, %:").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_thr, width=6, state="readonly",
-                     values=[f"{x:g}" for x in sc.THRESHOLD_CHOICES]).pack(side="left", padx=(4, 0))
-        ttk.Label(f, text="   Время входа этой стратегии:").pack(side="left")
-        ttk.Combobox(f, textvariable=self.v_entry, width=7, state="readonly", values=sc.ENTRY_CHOICES).pack(side="left", padx=(4, 0))
-        r += 1
-        self.bt_lbl = tk.Label(g, text="", justify="left", anchor="w", font=("Segoe UI", 9), bg=bg)
-        self.bt_lbl.grid(row=r, column=1, sticky="w")
-        self.v_thr.trace_add("write", lambda *_: self._show_bt())
-        self.v_entry.trace_add("write", lambda *_: self._show_bt())
-        self._show_bt()
-        r += 1
-        ttk.Checkbutton(g, text="Добирать новые сигналы до 16:30 (на истории хуже: −8…−20% вместо +23…+35%)",
-                        variable=self.v_rescan).grid(row=r, column=1, sticky="w")
-        r += 1
-        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
-        ttk.Checkbutton(f, text="Показывать её сигналы с сигналом звука", variable=self.v_as).pack(side="left")
-        ttk.Checkbutton(f, text="Журнал форвард-теста в 17:20", variable=self.v_aj).pack(side="left", padx=(16, 0))
-        r += 1
-        ttk.Button(g, text="Сохранить настройки", command=self.save).grid(row=r, column=1, sticky="w", pady=12)
+        ttk.Button(g, text="Сохранить настройки", command=self.save).grid(row=r, column=0, columnspan=2, sticky="w", pady=12)
         ttk.Label(t4, text="Без токена данные берутся с сайта Мосбиржи; бесплатные данные там обычно идут с задержкой около 15 минут.\n"
                            "Для журнала форвард-теста это не важно, для сигналов в реальном времени лучше задать токен.",
                   foreground="#555", justify="left").pack(anchor="w", pady=(10, 0))
@@ -892,7 +813,7 @@ class App(tk.Tk):
                       idx_ref={v: k for k, v in self.IDXREF.items()}.get(self.v_idxref.get(), "imoex"),
                       entry_from={v: k for k, v in self.EFROM.items()}.get(self.v_efrom.get(), ""),
                       day_ref={v: k for k, v in self.DREF.items()}.get(self.v_dref.get(), "main"),
-                      idx_flip="all" if self.v_flip_all.get() else "profit" if self.v_flip_profit.get() else "off",
+                      idx_flip={v: k for k, v in self.FLIP.items()}.get(self.v_flip.get(), "off"),
                       day_tp=float(self.v_dtp.get()), day_tp_half=float(self.v_dhalf.get()),
                       day_trail=float(self.v_dtrail.get()), day_act=float(self.v_dact.get()), sound_on=self.v_sound.get(),
                       spike_on=self.v_spk.get(), spike_tfs=[tf for tf, v in self.v_spk_tf.items() if v.get()],
@@ -1449,7 +1370,7 @@ class App(tk.Tk):
         self.v_idxref.set(self.IDXREF.get(s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
         self.v_efrom.set(self.EFROM.get(str(s.get("entry_from") or ""), self.EFROM[""]))
         self.v_dref.set(self.DREF.get(s.get("day_ref", "main"), self.DREF["main"]))
-        self.v_flip_all.set(s.get("idx_flip") == "all"); self.v_flip_profit.set(s.get("idx_flip") == "profit")
+        self.v_flip.set(self.FLIP.get(s.get("idx_flip", "off"), self.FLIP["off"]))
         self.v_dtp.set(f"{float(s.get('day_tp', 8)):g}"); self.v_dhalf.set(f"{float(s.get('day_tp_half', 50)):g}")
         self.v_dtrail.set(f"{float(s.get('day_trail', 2)):g}"); self.v_dact.set(f"{float(s.get('day_act', 0)):g}")
         self.v_trend_on.set(bool(s.get("trend_on", True))); self.v_trend_trade.set(bool(s.get("trend_trade")))
