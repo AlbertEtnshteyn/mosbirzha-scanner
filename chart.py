@@ -57,7 +57,8 @@ class ChartWindow(tk.Toplevel):
         self._build()
         self.load()
         self.after(60000, self._auto)
-        self.after(3000, self._fast)
+        self.after(5000, self._fast)
+        self.after(1000, self._live)
 
     # ------------------------------------------------------------------ интерфейс
     def _build(self):
@@ -223,10 +224,51 @@ class ChartWindow(tk.Toplevel):
             self.load()
         self.after(60000, self._auto)
 
+    def _live(self):
+        """Живая цена раз в секунду: двигает текущую свечу (закрытие, хай, лой) без ожидания свечей."""
+        if not self.winfo_exists():
+            return
+        self.after(1000, self._live)
+        if self.loading or not self.bars or self.offset or getattr(self, "_live_busy", False):
+            return
+        self._live_busy = True
+        tk_ = self.ticker
+        srv = self.app._server() if hasattr(self.app, "_server") else None
+        tok = os.environ.get("TINVEST_TOKEN")
+        env = "sandbox" if self.app.s.get("sandbox_token") else "prod"
+
+        def job():
+            px = None
+            try:
+                if srv:
+                    px = srv.get("/api/last", ticker=tk_).get("price")
+                elif tok:
+                    if getattr(self, "_ti", None) is None:
+                        self._ti = sc.TInvest(tok, env)
+                    px = self._ti.last_prices([tk_]).get(tk_)
+            except Exception:
+                px = None
+            self.after(0, lambda: self._apply_live(tk_, px))
+        threading.Thread(target=job, daemon=True).start()
+
+    def _apply_live(self, tk_, px):
+        self._live_busy = False
+        if not px or tk_ != self.ticker or not self.bars:
+            return
+        b = self.bars[-1]
+        if self.tf < 1440 and datetime.now(sc.MSK).replace(tzinfo=None) >= b["t"].replace(tzinfo=None) + timedelta(minutes=self.tf):
+            return                                  # началась новая свеча — её добавит обновление свечей
+        if b.get("c") == px:
+            return
+        b["c"] = px
+        b["h"] = max(b["h"], px)
+        b["l"] = min(b["l"], px)
+        self.draw()
+
     def _fast(self):
         if not self.winfo_exists():
             return
-        self.after(3000, self._fast)
+        self.after(5000, self._fast)
         if self.loading or not self.bars or getattr(self, "_tail_busy", False):
             return
         self._tail_busy = True

@@ -299,6 +299,23 @@ $("#chPrev").onclick = () => {
   selectTrade(T.length - 1 - (CH.go++ % T.length));
 };
 
+let LIVE_BUSY = false;
+async function chartLive() {
+  if (LIVE_BUSY) return;
+  LIVE_BUSY = true;
+  const tk = CH.ticker;
+  try {
+    const d = await api(`/api/last?ticker=${encodeURIComponent(tk)}`);
+    const B = CH.data && CH.data.bars;
+    if (tk !== CH.ticker || !B || !B.length || !d.price) return;
+    const b = B[B.length - 1];
+    if (CH.tf < 1440 && d.t >= b.t + CH.tf * 60) return;     // началась новая свеча — её добавит обновление свечей
+    if (b.c === d.price) return;
+    b.c = d.price; b.h = Math.max(b.h, d.price); b.l = Math.min(b.l, d.price);
+    CH.candles.update({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c });
+  } catch (e) { /* следующая попытка через секунду */ }
+  finally { LIVE_BUSY = false; }
+}
 let TAIL_BUSY = false;
 async function chartTail() {
   if (TAIL_BUSY) return;
@@ -786,7 +803,8 @@ function start() {
   loadResults(); setInterval(() => { if (!document.hidden) loadResults(); }, 60000);
   loadCalendar(); setInterval(() => { if (!document.hidden) loadCalendar(); }, 30 * 60000);
   setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) loadChart(true); }, 60000);
-  setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) chartTail(); }, 3000);   // последние свечи — каждые 3 с
+  setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) chartTail(); }, 5000);   // последние свечи — каждые 5 с
+  setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) chartLive(); }, 1000);   // живая цена — каждую секунду
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && KEY) poll(); });
 start();

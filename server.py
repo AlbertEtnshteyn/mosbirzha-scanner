@@ -459,6 +459,31 @@ def _ts(t):
 _TAIL_TI = {}
 
 
+def _tail_ti():
+    s = ROBOT.s
+    r = ROBOT.robot if ROBOT.running() else None
+    ti = getattr(getattr(r, "b", None), "ti", None)
+    if ti is None:
+        key = (s.get("token"), bool(s.get("sandbox_token", True)))
+        ti = _TAIL_TI.get(key) or _TAIL_TI.setdefault(key, sc.TInvest(s.get("token"), "sandbox" if key[1] else "prod"))
+    return ti
+
+
+_LAST = {}
+
+
+def last_price(ticker):
+    """Последняя цена сделки (раз в секунду для живого графика); кэш 0,5 с — несколько окон не множат запросы."""
+    now = time.time()
+    c = _LAST.get(ticker)
+    if c and now - c[0] < 0.5:
+        return c[1]
+    px = _tail_ti().last_prices([ticker]).get(ticker)
+    out = {"ticker": ticker, "price": px, "t": calendar.timegm(datetime.now(sc.MSK).replace(tzinfo=None).timetuple())}
+    _LAST[ticker] = (now, out)
+    return out
+
+
 def chart_tail(ticker, tf):
     """Последние 3–4 свечи — для быстрого обновления открытого графика (раз в несколько секунд)."""
     s = ROBOT.s
@@ -690,6 +715,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, rc.attach_formations(market(), (ROBOT.snap or {}).get("spikes", [])))
             if u.path == "/api/settings":
                 return self._send(200, ROBOT.public_settings())
+            if u.path == "/api/last":
+                return self._send(200, last_price(q.get("ticker", "SBER").upper().strip()))
             if u.path == "/api/chart_tail":
                 tf = int(q.get("tf", 15))
                 if tf not in rc.CHART_DEPTH:
