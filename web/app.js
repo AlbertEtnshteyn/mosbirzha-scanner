@@ -149,7 +149,10 @@ function renderState(st) {
       <div class="grid4"><div><span>вход</span><b>${fmt(p.entry)}</b></div><div><span>сейчас</span><b>${fmt(p.last)}</b></div>
         <div><span>стоп</span><b class="down">${fmt(p.stop)}</b></div><div><span>тейк</span><b class="up">${take}</b></div></div>
       <div class="acts"><button class="btn small" data-chart="${esc(p.ticker)}" data-tf="${p.tf || 15}">График</button>
-        <button class="btn small danger" data-close="${esc(p.ticker)}">Закрыть</button></div></div>`;
+        <button class="btn small danger" data-close="${esc(p.ticker)}">Закрыть</button></div>
+      <div class="row" style="margin-top:8px"><span class="small muted">Во время выхода (${p.exit_min ? String(Math.floor(p.exit_min / 60)).padStart(2, "0") + ":" + String(p.exit_min % 60).padStart(2, "0") : "—"}):</span>
+        <div class="seg">${[["", "авто"], ["carry", "перенести"], ["close", "закрыть"]].map(([v, n]) =>
+          `<button data-carry="${esc(p.ticker)}" data-mode="${v}" class="${(p.carry_pick || "") === v ? "on" : ""}">${n}</button>`).join("")}</div></div></div>`;
   };
   const PS = st.pos_summary || { by_strat: {}, total: {} };
   const grpHead = (name, d) => `<div class="grp-h"><span>${name} · ${d.n} поз.</span>
@@ -194,6 +197,12 @@ function renderState(st) {
 document.addEventListener("click", async (ev) => {
   const c = ev.target.closest("[data-chart]");
   if (c) { openChart(c.dataset.chart, +c.dataset.tf || 15); return; }
+  const cr = ev.target.closest("[data-carry]");
+  if (cr) {
+    const r = await api("/api/carry", { ticker: cr.dataset.carry, mode: cr.dataset.mode });
+    toast(r.ok ? `${cr.dataset.carry}: ` + ({ carry: "перенести на следующий день", close: "закрыть во время выхода" }[cr.dataset.mode] || "по настройкам стратегии") : r.msg);
+    poll(); return;
+  }
   const x = ev.target.closest("[data-close]");
   if (x) {
     const tk = x.dataset.close;

@@ -175,6 +175,10 @@ class RemoteRobot:
             self.trade = False
             self._bg(lambda: self.c.post("/api/stop", {"close": False}), "выключить торговлю")
 
+    def request_carry(self, ticker, mode):
+        self._bg(lambda: self.c.post("/api/carry", {"ticker": ticker, "mode": mode}), "перенос позиции")
+        return True
+
     def request_close(self, ticker=None):
         self._bg(lambda: self.c.post("/api/close", {"ticker": ticker}), "закрыть позицию")
 

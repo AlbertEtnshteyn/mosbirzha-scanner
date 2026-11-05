@@ -228,6 +228,9 @@ class App(tk.Tk):
         ttk.Button(pb, text="Закрыть выбранную", command=self.close_selected).pack(side="left")
         ttk.Button(pb, text="Закрыть все", command=self.close_all).pack(side="left", padx=6)
         ttk.Button(pb, text="Закрыть все в плюсе", command=self.close_profit).pack(side="left")
+        ttk.Label(pb, text="   Выбранную во время выхода:").pack(side="left")
+        for txt, mode in (("перенести", "carry"), ("закрыть", "close"), ("авто", "")):
+            ttk.Button(pb, text=txt, width=10, command=lambda m=mode: self.carry_selected(m)).pack(side="left", padx=2)
         ttk.Button(pb, text="График", command=self.chart_selected).pack(side="left", padx=(12, 0))
         ttk.Button(pb, text="В Т-Инвестиции", command=lambda: self.open_tbank(self._sel_ticker(self.pos_tree))).pack(side="left", padx=(6, 0))
         ttk.Label(pb, text="двойной щелчок по бумаге — график", foreground="#777").pack(side="left", padx=8)
@@ -1230,6 +1233,7 @@ class App(tk.Tk):
                 last = p.get("last")
                 res = p["side"] * (last / p["entry"] - 1) if last else None
                 strat = "всплеск" + (" (б/у)" if p.get("took") else "") if p.get("strat") == "spike" else "15:00"
+                strat += {"carry": " · перенести", "close": " · закрыть"}.get(p.get("carry_pick"), "")
                 self.pos_tree.insert("", "end", tags=(("pos" if res > 0 else "neg"),) if res is not None else (), values=(
                     p["ticker"], strat, "лонг" if p["side"] > 0 else "шорт", p["lots"], f"{p['entry']:.4g}", f"{p['stop']:.4g}",
                     (f"{p['take']:.4g}" if p.get("stage", 0) == 0 else (f"т2 {p['take2']:.4g}" if p.get("stage") == 1 and p.get("take2") else "трейл"))
@@ -1799,6 +1803,17 @@ class App(tk.Tk):
         if messagebox.askyesno(APP_TITLE, f"Закрыть позицию {tkr} по рынку?"):
             self.robot.request_close(tkr)
             self.log(f"Запрошено закрытие {tkr}.\n")
+
+    def carry_selected(self, mode):
+        tkr = self._sel_ticker(self.pos_tree)
+        if not tkr:
+            messagebox.showinfo(APP_TITLE, "Выберите позицию в таблице «Открытые позиции».")
+            return
+        if not self.robot_running():
+            messagebox.showinfo(APP_TITLE, "Робот не запущен.")
+            return
+        self.robot.request_carry(tkr, mode)
+        self.log(f"{tkr}: во время выхода — " + {"carry": "перенести на следующий день", "close": "закрыть"}.get(mode, "по настройкам стратегии") + ".\n")
 
     def close_profit(self):
         if not self.robot_running() or not self.robot.positions:

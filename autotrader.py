@@ -869,14 +869,16 @@ class AutoTrader:
             today = now.date().isoformat()
             for p in [p for p in self.positions if secs >= p.get("exit_min", sc.EXIT_MIN) * 60 - 10
                       and p.get("carry_date") != today]:
-                if self._carry_ok(p):
+                pick = p.get("carry_pick")              # выбор для этой позиции вручную: перенести / закрыть / по настройке
+                if pick == "carry" or (pick != "close" and self._carry_ok(p)):
                     p["carried"] = p.get("carried", 0) + 1
                     p["carry_date"] = today
                     self._save()
                     lp = self.prices.get(p["ticker"]) or p["entry"]
                     res = p["side"] * (lp / p["entry"] - 1)
                     self.log(f"  {p['ticker']}: позиция {res * 100:+.2f}%"
-                             + (", тейк1 взят" if p.get("stage", 0) >= 1 else "") + f" — переношу на следующий день "
+                             + (", тейк1 взят" if p.get("stage", 0) >= 1 else "")
+                             + (" (перенос выбран вручную)" if pick == "carry" else "") + f" — переношу на следующий день "
                              f"(перенос №{p['carried']}), стоп {p['stop']:.4g}")
                     self.on_event("carry", {"ticker": p["ticker"], "days": p["carried"], "result": res})
                 else:
@@ -1652,6 +1654,23 @@ class AutoTrader:
         self.close_on_stop = close_positions
         self.stop_event.set()
         self.wake.set()
+
+    def request_carry(self, ticker, mode):
+        """Выборочный перенос: mode = "carry" (переносить), "close" (закрыть во время выхода), "" (по настройкам)."""
+        mode = mode if mode in ("carry", "close") else None
+        with self._lock:
+            hit = [p for p in self.positions if p["ticker"] == ticker]
+            for p in hit:
+                if mode:
+                    p["carry_pick"] = mode
+                else:
+                    p.pop("carry_pick", None)
+        if hit:
+            self._save()
+            self.log(f"  {ticker}: во время выхода — " + {"carry": "перенести на следующий день", "close": "закрыть",
+                                                            None: "по настройкам стратегии"}[mode])
+            self._push()
+        return bool(hit)
 
     def request_close(self, ticker=None):
         """Вызывается из окна: закрыть позицию по рынку (ticker=None — все позиции)."""

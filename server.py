@@ -709,6 +709,11 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/stop":
                 ROBOT.stop_trade(bool(b.get("close")))
                 return self._send(200, {"ok": True})
+            if u.path == "/api/carry":
+                if not ROBOT.running():
+                    return self._send(200, {"ok": False, "msg": "Робот не запущен."})
+                ok = ROBOT.robot.request_carry(b.get("ticker"), b.get("mode") or "")
+                return self._send(200, {"ok": ok, "msg": "" if ok else "Позиция не найдена."})
             if u.path == "/api/close":
                 if not ROBOT.running():
                     return self._send(200, {"ok": False, "msg": "Робот не запущен."})
