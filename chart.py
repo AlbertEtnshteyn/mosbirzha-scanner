@@ -37,6 +37,7 @@ class ChartWindow(tk.Toplevel):
         self.trades = []
         self.n_vis = 120
         self.offset = 0               # сколько последних свечей сдвинуто вправо за край (прокрутка в прошлое)
+        self.ypan, self.yzoom = 0.0, 1.0   # сдвиг цены вверх-вниз (доля диапазона) и масштаб по вертикали
         self.res = queue.Queue()
         self.loading = False
         self.hover = None
@@ -78,7 +79,7 @@ class ChartWindow(tk.Toplevel):
         self.go_btn = tk.Button(legend, text="◀ к формации", relief="flat", bg=GRID, fg=TXT, command=self.goto_trade)
         self.go_btn.pack(side="left", padx=4)
         self._go_i = 0
-        tk.Label(legend, text="колесо мыши — масштаб, перетаскивание — прокрутка", fg="#6b7080", bg=BG).pack(side="right")
+        tk.Label(legend, text="колесо — масштаб · Ctrl+колесо — масштаб по вертикали · тащить — во все стороны · двойной щелчок — авто", fg="#6b7080", bg=BG).pack(side="right")
         self.cv = tk.Canvas(self, bg=BG, highlightthickness=0)
         self.cv.pack(fill="both", expand=True)
         self.cv.bind("<Configure>", lambda _: self.draw())
@@ -88,6 +89,9 @@ class ChartWindow(tk.Toplevel):
         self.cv.bind("<ButtonPress-1>", self._press)
         self.cv.bind("<B1-Motion>", self._drag)
         self.cv.bind("<ButtonRelease-1>", self._release)
+        self.cv.bind("<Double-1>", lambda _: (setattr(self, "ypan", 0.0), setattr(self, "yzoom", 1.0), self.draw()))   # авто-масштаб
+        self.cv.bind("<Control-MouseWheel>", self._ywheel)
+        self.cv.bind("<Shift-MouseWheel>", self._ywheel)
         self._lv_hit, self._lv_drag = [], None             # линии стопа/тейка, которые можно тащить мышью
         self.cv.bind("<Motion>", self._motion)
         self.cv.bind("<Leave>", lambda _: (setattr(self, "hover", None), self.draw()))
@@ -100,14 +104,14 @@ class ChartWindow(tk.Toplevel):
         self.title(f"{self.ticker} · {name} · график")
 
     def set_tf(self, tf):
-        self.tf, self.offset = tf, 0
+        self.tf, self.offset, self.ypan, self.yzoom = tf, 0, 0.0, 1.0
         self._mark_tf()
         self.load()
 
     def set_ticker(self):
         t = self.v_tk.get().strip().upper()
         if t:
-            self.ticker, self.offset = t, 0
+            self.ticker, self.offset, self.ypan, self.yzoom = t, 0, 0.0, 1.0
             self._mark_tf()
             self.load()
 
@@ -204,6 +208,10 @@ class ChartWindow(tk.Toplevel):
         self.after(20000 if self.tf <= 15 else 60000, self._auto)
 
     # ------------------------------------------------------------------ мышь
+    def _ywheel(self, e):
+        self.yzoom = max(0.2, min(10.0, self.yzoom * (1 / 1.15 if e.delta > 0 else 1.15)))
+        self.draw()
+
     def _wheel(self, e):
         self._zoom(-1 if e.delta > 0 else 1)
 
@@ -223,6 +231,7 @@ class ChartWindow(tk.Toplevel):
 
     def _press(self, e):
         self._px, self._off0 = e.x, self.offset
+        self._py, self._pan0 = e.y, self.ypan
         name = self._lv_at(e.y) if getattr(self, "_ymap", None) else None
         self._lv_drag = [name, self._price_at(e.y)] if name else None
 
@@ -248,6 +257,8 @@ class ChartWindow(tk.Toplevel):
             return
         bw = max(1.0, (self.cv.winfo_width() - 70) / self.n_vis)
         self.offset = int(max(0, min(len(self.bars) - 10, self._off0 + (e.x - self._px) / bw)))
+        ph = max(50, getattr(self, "_ymap", (0, 0, 400))[2] - 8)
+        self.ypan = self._pan0 + (e.y - self._py) / ph      # вниз мышью — цена «едет» вниз, видно то, что выше
         self.draw()
 
     def _motion(self, e):
@@ -289,6 +300,10 @@ class ChartWindow(tk.Toplevel):
                     lo, hi = min(lo, lv), max(hi, lv)
         pad = (hi - lo) * 0.06 or hi * 0.01
         lo, hi = lo - pad, hi + pad
+        if self.yzoom != 1.0 or self.ypan:                 # ручной масштаб и сдвиг по вертикали
+            mid, half = (hi + lo) / 2, (hi - lo) / 2 * self.yzoom
+            sh = self.ypan * 2 * half
+            lo, hi = mid - half + sh, mid + half + sh
         y = lambda v: 4 + (hi - v) / (hi - lo) * (price_h - 8)
         self._ymap, self._lv_hit = (hi, lo, price_h), []
         x0 = pw - (len(vis) + pad_r) * bw              # отступ справа
