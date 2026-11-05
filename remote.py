@@ -131,7 +131,8 @@ class RemoteRobot:
                 run = st.get("running")
                 status = (("ТОРГОВЛЯ" if self.trade else "НАБЛЮДЕНИЕ") + f" на сервере {self.where}: " + (st.get("status") or "")) if run \
                     else f"на сервере {self.where}: {st.get('status') or 'робот не запущен'}"
-                self.on_update({"status": status, "market": st.get("market"), "scan": st.get("scan") or [],
+                self.on_update({"status": status, "market": st.get("market"), "market_open": st.get("market_open"),
+                                "idx_ref": st.get("idx_ref"), "scan": st.get("scan") or [],
                                 "spikes": list(reversed(st.get("spikes") or [])), "positions": self.positions,
                                 "last_scan": ls, "threshold": st.get("threshold"), "balance": st.get("balance"), "remote": True})
             except Exception as e:

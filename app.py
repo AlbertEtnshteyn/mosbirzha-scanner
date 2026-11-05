@@ -205,7 +205,7 @@ class App(tk.Tk):
         self.lnb = lnb
         mid.add(lnb, weight=1)
         lf = ttk.Frame(lnb, padding=4)
-        lnb.add(lf, text="Индекс и акции (от открытия 10:00)")
+        lnb.add(lf, text="«Движение дня»: кандидаты")
         sf = ttk.Frame(lnb, padding=4)
         lnb.add(sf, text="Всплески объёма")
         self.spk_tree = self._tree(sf, [("time", "Импульс", 55), ("sig", "Сигнал", 55), ("ticker", "Бумага", 60), ("tf", "ТФ", 35), ("val", "Оборот, млн", 75),
@@ -1215,7 +1215,13 @@ class App(tk.Tk):
         mk = snap.get("market")
         ls = snap.get("last_scan")
         thr = snap.get("threshold") or sc.THRESHOLD
-        self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: рынок {mk * 100:+.2f}%, порог {thr * 100:g}%"
+        early = self.s.get("day_mode") == "signal" or str(self.s.get("entry", "15:00")) < "11:00" or (ls and ls.hour < 10)
+        ref_t = "09:00" if early else "10:00"
+        imx = (snap.get("idx_ref") or self.s.get("idx_ref", "imoex")) == "imoex"
+        mo = snap.get("market_open")
+        mk_txt = (f"рынок по IMOEX (к вчерашнему закрытию) {mk * 100:+.2f}%" + (f", акции индекса с открытия {mo * 100:+.2f}%" if mo is not None else "")
+                  if imx else f"рынок — акции индекса с открытия {ref_t}: {mk * 100:+.2f}%") if mk is not None else ""
+        self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: {mk_txt}; движение бумаг — от открытия {ref_t}; порог {thr * 100:g}%"
                                       if ls and mk is not None else "Данные появятся после 09:01."))
         self.scan_tree.delete(*self.scan_tree.get_children())
         for tk, mv, why in snap["scan"][:60]:
