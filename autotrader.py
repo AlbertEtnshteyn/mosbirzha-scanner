@@ -50,7 +50,7 @@ SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
 MARKETS = [
-    ("all_shares", "Все российские акции"),
+    ("all_shares", "Все российские акции (без 3-го эшелона)"),
     ("blue", "Голубые фишки Мосбиржи"),
     ("imoex", "Акции индекса Мосбиржи"),
     ("third", "Третий эшелон"),
@@ -488,8 +488,9 @@ class SandboxBroker:
             return shares
         for m in markets:
             try:
-                if m == "all_shares":
-                    out |= set(get_shares())
+                if m == "all_shares":           # без 3-го эшелона: акции индекса широкого рынка (MOEXBMI) и индекса Мосбиржи
+                    bmi = sc.index_members("MOEXBMI", None, 50)
+                    out |= (set(get_shares()) & set(bmi)) | set(index_list) if bmi else set(get_shares())
                 elif m == "imoex":
                     out |= set(index_list)
                 elif m == "blue":
