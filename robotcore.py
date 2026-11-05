@@ -17,7 +17,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed",
             "day_tp": 8, "day_tp_half": 50, "day_trail": 2, "day_act": 0,
             "idx_form": True, "idx_day": True, "idx_flip": "off",
-            "day_exit": "18:45", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": ""}
+            "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": ""}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -45,6 +45,13 @@ def save_settings(s, path=SETTINGS, keep_token=None):
     os.replace(tmp, path)
 
 
+def window_key(s):
+    """Окно входов формации с учётом настройки «время входов от…»: "9-19", "9-19@7" (с 07:00), "9-19@10" (с 10:00)."""
+    w = s.get("entry_window", "9-19")
+    ef = str(s.get("entry_from") or "")
+    return f"{w}@{ef}" if ef in ("7", "10") else w
+
+
 def exit_choice(s):
     """Время выхода формации: True — 23:45, False — ранний выход окна (19:25 / 18:45), или строка "18:45"."""
     v = s.get("exit_late", True)
@@ -66,7 +73,8 @@ def spike_cfg(s):
             "leverage": s.get("leverage", "1"),
             "two_takes": bool(s.get("two_takes", True)),
             "trend_on": bool(s.get("trend_on", True)), "trend_trade": bool(s.get("trend_trade", False)),
-            "tier_profile": bool(s.get("tier_profile", True)), "window": s.get("entry_window", "9-19"),
+            "tier_profile": bool(s.get("tier_profile", True)), "window": window_key(s),
+            "entry_from": str(s.get("entry_from") or ""), "day_ref": "market" if s.get("day_ref") == "market" else "main",
             "exit_late": exit_choice(s), "carry_all": carry_choice(s),
             "day_carry": int(s.get("day_carry", 0) or 0), "day_exit": s.get("day_exit", "18:45"),
             "trade_weekends": bool(s.get("trade_weekends", False)),
@@ -112,7 +120,7 @@ def chart_data(token, sandbox, ticker, tf, s):
                     days[r["t"].date()] = days.get(r["t"].date(), 0) + r["val"]
             med = at._median(list(days.values())) if days else 0
             tier = "2" if med >= at.TIER2_TURNOVER else "3"
-        trades = at.history_trades(bars, at.params(chart_sp(s), tf), tf, tier, s.get("entry_window", "9-19"),
+        trades = at.history_trades(bars, at.params(chart_sp(s), tf), tf, tier, window_key(s),
                                    exit_choice(s), carry_choice(s))
     return rows, trades, tier
 

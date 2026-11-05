@@ -45,7 +45,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "day_markets": ["imoex"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "trade_weekends": False, "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "day_markets": ["imoex"], "entry_from": "", "day_ref": "main", "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "trade_weekends": False, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -242,7 +242,13 @@ def trade_profile(tier, tf, kind, window="9-19", late=True):
     """
     if not isinstance(window, str):
         window = "9-19"
+    start = None
+    if "@" in window:                                  # «9-19@7» — начало входов с 07:00 (настройка «время входов от…»)
+        window, start = window.split("@", 1)
     w = dict(WINDOWS.get(window, WINDOWS["9-19"]))
+    if start and start.isdigit():
+        w["from"] = int(start) * 60
+        w["name"] = f"{hm(w['from'])}–{hm(w['to'])}"
     if isinstance(late, str) and ":" in late:          # выбранное время выхода, например "18:45"
         hh, mm = (int(x) for x in late.split(":"))
         w["exit"] = hh * 60 + mm
@@ -904,7 +910,7 @@ class AutoTrader:
             self._day_summary()
         # 2) до открытия основной сессии только ждём (и загружаем историю свечей для EMA20)
         if t < sc.OPEN_MIN + 1:
-            if t >= 9 * 60 - 5 and (self.last_scan is None or (now - self.last_scan).total_seconds() >= SCAN_EVERY - 1):
+            if t >= DAY_START and (self.last_scan is None or (now - self.last_scan).total_seconds() >= SCAN_EVERY - 1):
                 self._scan(now)                           # рынок от открытия утренней сессии — для фильтра индекса и входов с 9:00
             if self._day_signal_mode():
                 self._enter_signal(now)
@@ -1016,23 +1022,23 @@ class AutoTrader:
             if last_try and (now - last_try).total_seconds() < 300:
                 continue
             self.open_tries[tk] = now
-            try:   # с 09:00: открытие утренней сессии — точка отсчёта до 10:00 (по умолчанию свечи берутся только с 09:55)
-                rows = self.b.candles(tk, day, datetime(day.year, day.month, day.day, 9, 0, tzinfo=sc.MSK))
+            try:   # с 07:00: открытие рынка — точка отсчёта до 10:00 (по умолчанию свечи берутся только с 09:55)
+                rows = self.b.candles(tk, day, datetime(day.year, day.month, day.day, 6, 59, tzinfo=sc.MSK))
             except sc.CertError:
                 raise
             except Exception as e:
                 self.log(f"  {tk}: свечи не получены ({e})")
                 continue
-            pre9 = [r for r in rows if sc.minute_of(r["t"]) >= 9 * 60]
+            pre9 = [r for r in rows if sc.minute_of(r["t"]) >= 7 * 60]
             if pre9 and tk not in self.pre_opens:
-                self.pre_opens[tk] = pre9[0]["o"]          # открытие утренней сессии — для индекса до 10:00
+                self.pre_opens[tk] = pre9[0]["o"]          # открытие рынка (07:00) — до 10:00 и в режиме «от открытия рынка»
             first = [r for r in rows if sc.OPEN_MIN <= sc.minute_of(r["t"]) <= sc.OPEN_MIN + 5]
             if first:
                 self.opens[tk] = first[0]["o"]
             elif t > sc.OPEN_MIN + 5:
                 self.opens[tk] = None      # не торговалась в начале сессии — как в бэктесте, пропускаем
-        if self._day_signal_mode() or self._day_early():   # ранний вход (до 11:00) — движение от открытия утренней сессии
-            ref = {tk: o for tk, o in self.pre_opens.items() if o}
+        if self.sp.get("day_ref", "main") == "market" or t < sc.OPEN_MIN + 1:
+            ref = {tk: o for tk, o in self.pre_opens.items() if o}  # от открытия рынка 07:00 (до 10:00 — всегда так)
         else:
             ref = {tk: o for tk, o in self.opens.items() if o}
         live = list(ref)
@@ -1373,6 +1379,11 @@ class AutoTrader:
         except ValueError:
             return DAY_EXIT
 
+    def _sig_from(self):
+        """С какого времени «Движение дня» может входить «сразу при сигнале» (настройка «время входов от…»)."""
+        ef = str(self.sp.get("entry_from") or "")
+        return 7 * 60 if ef == "7" else 10 * 60 if ef == "10" else DAY_SIG_FROM
+
     def _day_early(self):
         return sc.ENTRY_MIN < 11 * 60
 
@@ -1382,7 +1393,7 @@ class AutoTrader:
     def _enter_signal(self, now):
         """«Движение дня» — вход сразу, как только бумага прошла порог в сторону рынка (окно 09:00–19:00), один раз за день."""
         t = now.hour * 60 + now.minute
-        if not self.trade or not (DAY_SIG_FROM <= t < DAY_SIG_TO) or self.market is None:
+        if not self.trade or not (self._sig_from() <= t < DAY_SIG_TO) or self.market is None:
             return
         held = {p["ticker"] for p in self.positions}
         sigs = [(tk, 1 if mv > 0 else -1, mv) for tk, mv, why in self.scan_rows if why == "СИГНАЛ"]

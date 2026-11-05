@@ -182,7 +182,7 @@ function renderState(st) {
       ? (st.day_on === false ? "проходит порог, но «движение дня» выключено" : st.day_mode !== "signal"
         ? `кандидат — робот войдёт в ${esc(st.entry || "15:00")}, если движение сохранится` : "СИГНАЛ — вход сразу")
       : esc(why)}</div></div>`).join("")
-    : `<div class="empty">Данные появятся после 09:01</div>`;
+    : `<div class="empty">Данные появятся после 07:01</div>`;
 
   // формации
   const K = st.spikes || [];
@@ -608,6 +608,10 @@ function renderSettings(s) {
   <div class="grp"><h3>Календарь</h3>
     ${chk("trade_weekends", "Торговать в выходные и праздничные дни (сессии выходного дня Мосбиржи)", "Робот смотрит календарь Мосбиржи: в праздники и выходные без торгов он не работает. Если галочка снята — в сессии выходного дня тоже не торгует (оборот там маленький, на истории не проверено).")}
   </div>
+  <div class="grp"><h3>Время входов (обе стратегии)</h3>
+    ${sel("entry_from", "С какого времени робот может входить в позиции", [["", "как в окне формации / времени входа «Движения дня»"], ["7", "с открытия рынка — 07:00"], ["10", "с начала основной сессии — 10:00"]])}
+    <div class="hint" style="margin-left:0">Формация: начало окна входов (конец — по выбранному окну). «Движение дня»: с этого времени входит режим «сразу при сигнале». На истории проверены только окна 09:00–19:00 и 10:00–18:00.</div>
+  </div>
   <div class="grp"><h3>Направление рынка (обе стратегии)</h3>
     ${sel("idx_ref", "Как робот определяет, растёт рынок или падает", [["imoex", "IMOEX — реальное изменение к вчерашнему дню"], ["imoex_open", "IMOEX — от открытия основной сессии (10:00)"], ["open", "акции индекса с открытия дня (как в проверке на истории)"]])}
     <div class="hint" style="margin-left:0">Влияет на фильтр «только по направлению индекса/рынка» и на закрытие при развороте. По умолчанию — реальный индекс IMOEX. Проверка на истории делалась по второму варианту (акции с открытия дня).</div>
@@ -625,6 +629,8 @@ function renderSettings(s) {
     ${sel("day_tp_half", "Закрыть на тейке", [[50, "50% (остаток — б/у и трейлинг)"], [100, "всю позицию"]])}
     ${sel("day_trail", "Трейлинг-стоп, %", [[0, "нет"], [1, "1%"], [2, "2%"], [3, "3%"]])}
     ${sel("day_act", "Трейлинг включается", [[0, "после тейка"], [1, "с +1%"], [2, "с +2%"], [3, "с +3%"]])}
+    ${sel("day_ref", "Движение бумаги считать", [["main", "от начала основной сессии (10:00)"], ["market", "от открытия рынка (07:00)"]])}
+    <div class="hint" style="margin-left:0">До 10:00 движение всегда считается от 07:00. На истории проверено «от 10:00».</div>
     <div class="f"><span>Чем торговать (на истории проверены только акции индекса)</span>
       ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="dmk_${k}" ${(s.day_markets || ["imoex"]).includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
     ${sel("day_exit", "Время выхода (на истории 17:00 лучше)", [...new Set([...Array(14).keys()].map((i) => String(10 + i).padStart(2, "0") + ":00").concat(["18:45", "19:25", "23:45", SET.day_exit || "18:45"]))].sort().map((t) => [t, t]))}
@@ -692,7 +698,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     day_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("dmk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), idx_ref: v("idx_ref") || "imoex", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), entry_from: v("entry_from") || "", day_ref: v("day_ref") || "main", idx_ref: v("idx_ref") || "imoex", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
     day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),

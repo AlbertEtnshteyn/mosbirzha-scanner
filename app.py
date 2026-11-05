@@ -433,6 +433,11 @@ class App(tk.Tk):
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
+        self.EFROM = {"": "как в окне формации / времени входа «Движения дня»", "7": "с открытия рынка — 07:00",
+                      "10": "с начала основной сессии — 10:00"}
+        self.v_efrom = tk.StringVar(value=self.EFROM.get(str(self.s.get("entry_from") or ""), self.EFROM[""]))
+        self.DREF = {"main": "от начала основной сессии (10:00)", "market": "от открытия рынка (07:00)"}
+        self.v_dref = tk.StringVar(value=self.DREF.get(self.s.get("day_ref", "main"), self.DREF["main"]))
         self.IDXREF = {"imoex": "IMOEX — реальное изменение к вчерашнему дню", "imoex_open": "IMOEX — от открытия основной сессии (10:00)",
                        "open": "акции индекса с открытия дня (как в проверке на истории)"}
         self.v_idxref = tk.StringVar(value=self.IDXREF.get(self.s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
@@ -549,6 +554,9 @@ class App(tk.Tk):
                                 "3-й эшелон и 5 мин — никогда не торгуются, только уведомления", variable=self.v_tier).pack(anchor="w")
         ttk.Checkbutton(f, text="Только по направлению индекса (лонг — когда индекс растёт, шорт — когда падает). "
                                 "Если снять — входит в обе стороны", variable=self.v_idx_form).pack(anchor="w")
+        fef = ttk.Frame(f); fef.pack(anchor="w", pady=2)
+        ttk.Label(fef, text="Время входов в позиции (обе стратегии):").pack(side="left")
+        ttk.Combobox(fef, textvariable=self.v_efrom, width=46, state="readonly", values=list(self.EFROM.values())).pack(side="left", padx=6)
         fir = ttk.Frame(f); fir.pack(anchor="w", pady=2)
         ttk.Label(fir, text="Направление рынка (для фильтра и разворота) считать по:").pack(side="left")
         ttk.Combobox(fir, textvariable=self.v_idxref, width=48, state="readonly", values=list(self.IDXREF.values())).pack(side="left", padx=6)
@@ -655,6 +663,11 @@ class App(tk.Tk):
         ttk.Combobox(fdm, textvariable=self.v_dmode, width=30, state="readonly", values=list(self.DMODE.values())).pack(side="left", padx=6)
         ttk.Label(fdm, text="«сразу при сигнале» — как только бумага прошла порог от открытия в сторону рынка; "
                             "размер позиции — «% от портфеля» из настроек формации", foreground="#555").pack(side="left")
+        r += 1
+        fdr = ttk.Frame(g); fdr.grid(row=r, column=1, sticky="w", pady=2)
+        ttk.Label(fdr, text="Движение бумаги считать:").pack(side="left")
+        ttk.Combobox(fdr, textvariable=self.v_dref, width=34, state="readonly", values=list(self.DREF.values())).pack(side="left", padx=6)
+        ttk.Label(fdr, text="(до 10:00 — всегда от 07:00; на истории проверено «от 10:00»)", foreground="#555").pack(side="left")
         r += 1
         fdk = ttk.Frame(g); fdk.grid(row=r, column=1, sticky="w", pady=2)
         ttk.Label(fdk, text="Чем торговать:").grid(row=0, column=0, sticky="nw", padx=(0, 6))
@@ -863,6 +876,8 @@ class App(tk.Tk):
                       idx_form=self.v_idx_form.get(), idx_day=self.v_idx_day.get(),
                       trade_weekends=self.v_wkend.get(),
                       idx_ref={v: k for k, v in self.IDXREF.items()}.get(self.v_idxref.get(), "imoex"),
+                      entry_from={v: k for k, v in self.EFROM.items()}.get(self.v_efrom.get(), ""),
+                      day_ref={v: k for k, v in self.DREF.items()}.get(self.v_dref.get(), "main"),
                       idx_flip="all" if self.v_flip_all.get() else "profit" if self.v_flip_profit.get() else "off",
                       day_tp=float(self.v_dtp.get()), day_tp_half=float(self.v_dhalf.get()),
                       day_trail=float(self.v_dtrail.get()), day_act=float(self.v_dact.get()), sound_on=self.v_sound.get(),
@@ -1216,8 +1231,8 @@ class App(tk.Tk):
         mk = snap.get("market")
         ls = snap.get("last_scan")
         thr = snap.get("threshold") or sc.THRESHOLD
-        early = self.s.get("day_mode") == "signal" or str(self.s.get("entry", "15:00")) < "11:00" or (ls and ls.hour < 10)
-        ref_t = "09:00" if early else "10:00"
+        early = self.s.get("day_ref", "main") == "market" or (ls and ls.hour < 10)
+        ref_t = "07:00" if early else "10:00"
         ir = snap.get("idx_ref") or self.s.get("idx_ref", "imoex")
         mo = snap.get("market_open")
         extra = f", акции индекса с открытия {mo * 100:+.2f}%" if mo is not None else ""
@@ -1225,7 +1240,7 @@ class App(tk.Tk):
                   (f"рынок по IMOEX (от открытия основной сессии) {mk * 100:+.2f}%" + extra) if ir == "imoex_open" else
                   f"рынок — акции индекса с открытия {ref_t}: {mk * 100:+.2f}%") if mk is not None else ""
         self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: {mk_txt}; движение бумаг — от открытия {ref_t}; порог {thr * 100:g}%"
-                                      if ls and mk is not None else "Данные появятся после 09:01."))
+                                      if ls and mk is not None else "Данные появятся после 07:01."))
         self.scan_tree.delete(*self.scan_tree.get_children())
         for tk, mv, why in snap["scan"][:60]:
             tag = ("pos" if mv > 0 else "neg") if why == "СИГНАЛ" else ()
@@ -1391,7 +1406,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets", "day_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "idx_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
+                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1413,6 +1428,8 @@ class App(tk.Tk):
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
         self.v_wkend.set(bool(s.get("trade_weekends", False)))
         self.v_idxref.set(self.IDXREF.get(s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
+        self.v_efrom.set(self.EFROM.get(str(s.get("entry_from") or ""), self.EFROM[""]))
+        self.v_dref.set(self.DREF.get(s.get("day_ref", "main"), self.DREF["main"]))
         self.v_flip_all.set(s.get("idx_flip") == "all"); self.v_flip_profit.set(s.get("idx_flip") == "profit")
         self.v_dtp.set(f"{float(s.get('day_tp', 8)):g}"); self.v_dhalf.set(f"{float(s.get('day_tp_half', 50)):g}")
         self.v_dtrail.set(f"{float(s.get('day_trail', 2)):g}"); self.v_dact.set(f"{float(s.get('day_act', 0)):g}")
