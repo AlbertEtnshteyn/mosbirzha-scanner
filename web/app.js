@@ -580,8 +580,8 @@ function renderSettings(s) {
     ${chk("trade_weekends", "Торговать в выходные и праздничные дни (сессии выходного дня Мосбиржи)", "Робот смотрит календарь Мосбиржи: в праздники и выходные без торгов он не работает. Если галочка снята — в сессии выходного дня тоже не торгует (оборот там маленький, на истории не проверено).")}
   </div>
   <div class="grp"><h3>Направление рынка (обе стратегии)</h3>
-    ${sel("idx_ref", "Как робот определяет, растёт рынок или падает", [["open", "акции индекса с открытия дня (проверено на истории)"], ["imoex", "индекс IMOEX к вчерашнему закрытию"]])}
-    <div class="hint" style="margin-left:0">Влияет на фильтр «только по направлению индекса/рынка» и на закрытие при развороте. На истории проверен только первый вариант: утром IMOEX часто показывает вчерашний гэп, а не то, куда рынок идёт сегодня.</div>
+    ${sel("idx_ref", "Как робот определяет, растёт рынок или падает", [["imoex", "индекс IMOEX — реальное изменение к вчерашнему закрытию"], ["open", "акции индекса с открытия дня (как в проверке на истории)"]])}
+    <div class="hint" style="margin-left:0">Влияет на фильтр «только по направлению индекса/рынка» и на закрытие при развороте. По умолчанию — реальный индекс IMOEX. Проверка на истории делалась по второму варианту (акции с открытия дня).</div>
   </div>
   <div class="grp"><h3>Разворот индекса (обе стратегии)</h3>
     <label class="c"><input type="checkbox" name="flip_all" ${SET.idx_flip === "all" ? "checked" : ""}><span>При смене направления индекса закрыть все сделки</span></label>
@@ -660,7 +660,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), idx_ref: v("idx_ref") || "open", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), idx_ref: v("idx_ref") || "imoex", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
     day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),

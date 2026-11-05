@@ -367,7 +367,7 @@ class Robot:
         return {"version": VERSION, "time": now_msk().strftime("%d.%m.%Y %H:%M:%S"),
                 "running": bool(r), "trade": bool(r and r.trade), "token_set": self.has_token(),
                 "status": snap.get("status") if r else ("ждёт токен в настройках" if not self.has_token() else "запускается…"),
-                "market": snap.get("market"), "market_open": snap.get("market_open"), "idx_ref": self.s.get("idx_ref", "open"),
+                "market": snap.get("market"), "market_open": snap.get("market_open"), "idx_ref": self.s.get("idx_ref", "imoex"),
                 "last_scan": snap.get("last_scan"),
                 "positions": snap.get("positions", []) if r else [],
                 "spikes": list(reversed(snap.get("spikes", []))), "scan": snap.get("scan", [])[:60],

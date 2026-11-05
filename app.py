@@ -431,8 +431,8 @@ class App(tk.Tk):
         self.v_dayc = tk.StringVar(value=self.DAYC.get(int(self.s.get("day_carry", 0) or 0), self.DAYC[0]))
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
-        self.IDXREF = {"open": "акции индекса с открытия дня (проверено на истории)", "imoex": "индекс IMOEX к вчерашнему закрытию"}
-        self.v_idxref = tk.StringVar(value=self.IDXREF.get(self.s.get("idx_ref", "open"), self.IDXREF["open"]))
+        self.IDXREF = {"imoex": "индекс IMOEX — реальное изменение к вчерашнему закрытию", "open": "акции индекса с открытия дня (как в проверке на истории)"}
+        self.v_idxref = tk.StringVar(value=self.IDXREF.get(self.s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
         self.v_wkend = tk.BooleanVar(value=bool(self.s.get("trade_weekends", False)))
         self.v_flip_all = tk.BooleanVar(value=self.s.get("idx_flip") == "all")
         self.v_flip_profit = tk.BooleanVar(value=self.s.get("idx_flip") == "profit")
@@ -851,7 +851,7 @@ class App(tk.Tk):
                       day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"),
                       idx_form=self.v_idx_form.get(), idx_day=self.v_idx_day.get(),
                       trade_weekends=self.v_wkend.get(),
-                      idx_ref={v: k for k, v in self.IDXREF.items()}.get(self.v_idxref.get(), "open"),
+                      idx_ref={v: k for k, v in self.IDXREF.items()}.get(self.v_idxref.get(), "imoex"),
                       idx_flip="all" if self.v_flip_all.get() else "profit" if self.v_flip_profit.get() else "off",
                       day_tp=float(self.v_dtp.get()), day_tp_half=float(self.v_dhalf.get()),
                       day_trail=float(self.v_dtrail.get()), day_act=float(self.v_dact.get()), sound_on=self.v_sound.get(),
@@ -1391,7 +1391,7 @@ class App(tk.Tk):
         self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
         self.v_wkend.set(bool(s.get("trade_weekends", False)))
-        self.v_idxref.set(self.IDXREF.get(s.get("idx_ref", "open"), self.IDXREF["open"]))
+        self.v_idxref.set(self.IDXREF.get(s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
         self.v_flip_all.set(s.get("idx_flip") == "all"); self.v_flip_profit.set(s.get("idx_flip") == "profit")
         self.v_dtp.set(f"{float(s.get('day_tp', 8)):g}"); self.v_dhalf.set(f"{float(s.get('day_tp_half', 50)):g}")
         self.v_dtrail.set(f"{float(s.get('day_trail', 2)):g}"); self.v_dact.set(f"{float(s.get('day_act', 0)):g}")

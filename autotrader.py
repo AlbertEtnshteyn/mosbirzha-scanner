@@ -45,7 +45,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "open", "trade_weekends": False, "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "trade_weekends": False, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -737,7 +737,7 @@ class AutoTrader:
             except Exception:
                 pass
         self.on_update({"status": self.status, "market": self.market, "market_open": getattr(self, "market_open", None),
-                        "idx_ref": self.sp.get("idx_ref", "open"), "scan": list(self.scan_rows),
+                        "idx_ref": self.sp.get("idx_ref", "imoex"), "scan": list(self.scan_rows),
                         "spikes": list(self.spikes[-50:]),
                         "positions": [self._pos_view(p) for p in self.positions],
                         "last_scan": self.last_scan, "balance": self.balance})
@@ -950,7 +950,7 @@ class AutoTrader:
         """Направление рынка для фильтров: по умолчанию — среднее движение бумаг индекса от открытия дня (как в
         проверке на истории); с настройкой idx_ref="imoex" — реальное изменение индекса IMOEX к вчерашнему закрытию."""
         self.market_open = own
-        if self.sp.get("idx_ref", "open") != "imoex":
+        if self.sp.get("idx_ref", "imoex") != "imoex":
             return own
         now = time.time()
         if not getattr(self, "_ixq", None) or now - self._ixq[0] > 30:
