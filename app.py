@@ -1971,9 +1971,8 @@ class App(tk.Tk):
             self.after(300, lambda: setattr(self, "_menu_open", False))
 
     def _close_ticker(self, tkr):
-        if messagebox.askyesno(APP_TITLE, f"Закрыть позицию {tkr} по рынку?"):
-            self.robot.request_close(tkr)
-            self.log(f"Запрошено закрытие {tkr}.\n")
+        self.robot.request_close(tkr)                  # из меню правой кнопки — сразу, без подтверждения
+        self.log(f"Запрошено закрытие {tkr}.\n")
 
     def open_tbank(self, ticker):
         """Страница бумаги в Т-Инвестициях или веб-терминал — в браузере по умолчанию."""
