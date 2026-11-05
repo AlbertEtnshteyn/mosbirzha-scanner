@@ -1770,6 +1770,36 @@ class AutoTrader:
         self.stop_event.set()
         self.wake.set()
 
+    def request_levels(self, ticker, stop=None, take=None, take2=None):
+        """Изменить стоп / тейк открытой позиции вручную (из меню или перетаскиванием на графике)."""
+        msgs = []
+        with self._lock:
+            for p in self.positions:
+                if p["ticker"] != ticker:
+                    continue
+                s = p["side"]
+                if stop:
+                    p["stop"] = float(stop)
+                    p["R"] = abs(p["entry"] - p["stop"]) or p.get("R", 0)
+                    msgs.append(f"стоп {float(stop):.5g}")
+                if take:
+                    take = float(take)
+                    if p.get("strat") in ("15", "manual") and (p.get("dtp") or p.get("dtrail")):
+                        p["dtp"] = abs(take / p["entry"] - 1) if (take - p["entry"]) * s > 0 else p.get("dtp")
+                        p["dtook"] = False
+                    elif p.get("stage", 0) >= 1 and p.get("take2"):
+                        p["take2"] = take
+                    p["take"] = take
+                    msgs.append(f"тейк {take:.5g}")
+                if take2:
+                    p["take2"] = float(take2)
+                    msgs.append(f"тейк2 {float(take2):.5g}")
+        if msgs:
+            self._save()
+            self.log(f"  {ticker}: изменено вручную — " + ", ".join(msgs))
+            self._push()
+        return bool(msgs)
+
     def request_carry(self, ticker, mode):
         """Выборочный перенос: mode = "carry" (переносить), "close" (закрыть во время выхода), "" (по настройкам)."""
         mode = mode if mode in ("carry", "close") else None

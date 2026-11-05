@@ -723,6 +723,12 @@ class Handler(BaseHTTPRequestHandler):
                                          bool(b.get("by_form", True)))
                 log(f"Запрошено открытие вручную: {tk} {'лонг' if b.get('side', 'long') == 'long' else 'шорт'}.")
                 return self._send(200, {"ok": True, "msg": f"Открытие {tk} запрошено — результат в журнале действий."})
+            if u.path == "/api/levels":
+                if not ROBOT.running():
+                    return self._send(200, {"ok": False, "msg": "Робот не запущен."})
+                g = lambda k: float(str(b[k]).replace(",", ".")) if b.get(k) not in (None, "") else None
+                ok = ROBOT.robot.request_levels(b.get("ticker"), g("stop"), g("take"), g("take2"))
+                return self._send(200, {"ok": ok, "msg": "Изменено." if ok else "Позиция не найдена."})
             if u.path == "/api/carry":
                 if not ROBOT.running():
                     return self._send(200, {"ok": False, "msg": "Робот не запущен."})

@@ -153,6 +153,7 @@ function renderState(st) {
       <div class="grid4"><div><span>вход</span><b>${fmt(p.entry)}</b></div><div><span>сейчас</span><b>${fmt(p.last)}</b></div>
         <div><span>стоп</span><b class="down">${fmt(p.stop)}</b></div><div><span>тейк</span><b class="up">${take}</b></div></div>
       <div class="acts"><button class="btn small" data-chart="${esc(p.ticker)}" data-tf="${p.tf || 15}">График</button>
+        <button class="btn small" data-lv="${esc(p.ticker)}" data-stop="${p.stop || ""}" data-take="${p.take || ""}">Стоп/тейк</button>
         <button class="btn small danger" data-close="${esc(p.ticker)}">Закрыть</button></div>
       <div class="row" style="margin-top:8px"><span class="small muted">Во время выхода (${p.exit_min ? String(Math.floor(p.exit_min / 60)).padStart(2, "0") + ":" + String(p.exit_min % 60).padStart(2, "0") : "—"}):</span>
         <div class="seg">${[["", "авто"], ["carry", "перенести"], ["close", "закрыть"]].map(([v, n]) =>
@@ -201,6 +202,22 @@ function renderState(st) {
 document.addEventListener("click", async (ev) => {
   const c = ev.target.closest("[data-chart]");
   if (c) { openChart(c.dataset.chart, +c.dataset.tf || 15); return; }
+  const lv = ev.target.closest("[data-lv]");
+  if (lv) {
+    $("#modalText").innerHTML = `<b>${esc(lv.dataset.lv)}</b> — новые уровни<div class="col" style="margin-top:10px">
+      <label class="col small"><span class="muted">Стоп</span><input id="lvStop" type="number" step="any" inputmode="decimal" value="${lv.dataset.stop}" style="padding:9px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--fg);font:inherit"></label>
+      <label class="col small"><span class="muted">Тейк</span><input id="lvTake" type="number" step="any" inputmode="decimal" value="${lv.dataset.take}" style="padding:9px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--fg);font:inherit"></label></div>`;
+    const box = $("#modalBtns"); box.innerHTML = "";
+    const ok = document.createElement("button"); ok.className = "btn primary"; ok.textContent = "Сохранить";
+    const no = document.createElement("button"); no.className = "btn"; no.textContent = "Отмена";
+    no.onclick = () => { $("#modal").hidden = true; };
+    ok.onclick = async () => {
+      const st = $("#lvStop").value, tk = $("#lvTake").value; $("#modal").hidden = true;
+      const r = await api("/api/levels", { ticker: lv.dataset.lv, stop: st, take: tk });
+      toast(r.msg || "Готово"); poll();
+    };
+    box.append(ok, no); $("#modal").hidden = false; return;
+  }
   const cr = ev.target.closest("[data-carry]");
   if (cr) {
     const r = await api("/api/carry", { ticker: cr.dataset.carry, mode: cr.dataset.mode });

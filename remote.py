@@ -183,6 +183,15 @@ class RemoteRobot:
                                                    "stop": pc(stop_pct), "take": pc(take_pct), "trail": pc(trail_pct),
                                                    "exit_at": exit_at, "carry": carry, "by_form": by_form}), "открыть позицию")
 
+    def request_levels(self, ticker, stop=None, take=None, take2=None):
+        self._bg(lambda: self.c.post("/api/levels", {"ticker": ticker, "stop": stop, "take": take, "take2": take2}), "стоп/тейк")
+        for p in self.positions:                       # сразу показать на экране, сервер подтвердит при обновлении
+            if p["ticker"] == ticker:
+                if stop: p["stop"] = stop
+                if take: p["take"] = take
+                if take2: p["take2"] = take2
+        return True
+
     def request_carry(self, ticker, mode):
         self._bg(lambda: self.c.post("/api/carry", {"ticker": ticker, "mode": mode}), "перенос позиции")
         return True

@@ -87,6 +87,8 @@ class ChartWindow(tk.Toplevel):
         self.cv.bind("<Button-5>", lambda e: self._zoom(1))
         self.cv.bind("<ButtonPress-1>", self._press)
         self.cv.bind("<B1-Motion>", self._drag)
+        self.cv.bind("<ButtonRelease-1>", self._release)
+        self._lv_hit, self._lv_drag = [], None             # линии стопа/тейка, которые можно тащить мышью
         self.cv.bind("<Motion>", self._motion)
         self.cv.bind("<Leave>", lambda _: (setattr(self, "hover", None), self.draw()))
         self._mark_tf()
@@ -209,15 +211,47 @@ class ChartWindow(tk.Toplevel):
         self.n_vis = int(max(30, min(600, self.n_vis * (1.15 if d > 0 else 1 / 1.15))))
         self.draw()
 
+    def _lv_at(self, yy):
+        for name, ly in self._lv_hit:
+            if abs(ly - yy) <= 6:
+                return name
+        return None
+
+    def _price_at(self, yy):
+        hi, lo, ph = self._ymap
+        return hi - (yy - 4) / (ph - 8) * (hi - lo)
+
     def _press(self, e):
         self._px, self._off0 = e.x, self.offset
+        name = self._lv_at(e.y) if getattr(self, "_ymap", None) else None
+        self._lv_drag = [name, self._price_at(e.y)] if name else None
+
+    def _release(self, e):
+        if not self._lv_drag:
+            return
+        name, val = self._lv_drag
+        self._lv_drag = None
+        robot = getattr(self.app, "robot", None)
+        if robot and hasattr(robot, "request_levels"):
+            key = {"стоп": "stop", "тейк1": "take", "тейк2": "take2"}[name]
+            robot.request_levels(self.ticker, **{key: round(val, 6)})
+            try:
+                self.app.log(f"{self.ticker}: {name} перенесён на {_fmt(val)} (с графика).\n")
+            except Exception:
+                pass
+        self.draw()
 
     def _drag(self, e):
+        if self._lv_drag:
+            self._lv_drag[1] = self._price_at(e.y)
+            self.draw()
+            return
         bw = max(1.0, (self.cv.winfo_width() - 70) / self.n_vis)
         self.offset = int(max(0, min(len(self.bars) - 10, self._off0 + (e.x - self._px) / bw)))
         self.draw()
 
     def _motion(self, e):
+        self.cv.configure(cursor="sb_v_double_arrow" if self._lv_at(e.y) else "")
         self.hover = (e.x, e.y)
         self.draw()
 
@@ -256,6 +290,7 @@ class ChartWindow(tk.Toplevel):
         pad = (hi - lo) * 0.06 or hi * 0.01
         lo, hi = lo - pad, hi + pad
         y = lambda v: 4 + (hi - v) / (hi - lo) * (price_h - 8)
+        self._ymap, self._lv_hit = (hi, lo, price_h), []
         x0 = pw - (len(vis) + pad_r) * bw              # отступ справа
         # сетка и шкала цен
         step = _nice((hi - lo) / 6)
@@ -332,9 +367,15 @@ class ChartWindow(tk.Toplevel):
             for lv, col, name in ((p.get("entry"), "#9598a1", "вход"), (p.get("stop"), DOWN, "стоп"),
                                   (None if p.get("stage", 0) >= 1 else p.get("take"), UP, "тейк1"),
                                   (None if p.get("stage", 0) >= 2 else p.get("take2"), UP, "тейк2")):
+                if self._lv_drag and self._lv_drag[0] == name and lv:
+                    lv = self._lv_drag[1]                       # тащим мышью — рисуем на новом месте
                 if lv:
-                    cv.create_line(0, y(lv), pw, y(lv), fill=col, dash=(6, 4))
-                    cv.create_text(6, y(lv) - 8, text=f"{name} {_fmt(lv)}", fill=col, anchor="w", font=("Consolas", 9))
+                    wid = 2 if name != "вход" else 1
+                    cv.create_line(0, y(lv), pw, y(lv), fill=col, dash=(6, 4), width=wid)
+                    cv.create_text(6, y(lv) - 8, text=f"{name} {_fmt(lv)}" + ("  ⇕" if name != "вход" else ""), fill=col,
+                                   anchor="w", font=("Consolas", 9))
+                    if name != "вход":
+                        self._lv_hit.append((name, y(lv)))
         # последняя цена
         lc = vis[-1]["c"]
         col = UP if vis[-1]["c"] >= vis[-1]["o"] else DOWN

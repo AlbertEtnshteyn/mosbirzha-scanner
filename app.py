@@ -1978,6 +1978,7 @@ class App(tk.Tk):
                 sub.add_command(label=txt, command=lambda md=mode, t=txt: (self.robot.request_carry(tkr, md),
                                                                              self.log(f"{tkr}: во время выхода — {t}.\n")))
             m.add_cascade(label="Во время выхода…", menu=sub)
+            m.add_command(label="Изменить стоп / тейк…", command=lambda: self._edit_levels(tkr))
             m.add_separator()
         m.add_command(label=f"График {tkr}", command=lambda: self._chart_from(tv, col))
         m.add_command(label=f"Открыть {tkr} в Т-Инвестициях", command=lambda: self.open_tbank(tkr))
@@ -1988,6 +1989,37 @@ class App(tk.Tk):
         finally:
             m.grab_release()
             self.after(300, lambda: setattr(self, "_menu_open", False))
+
+    def _edit_levels(self, tkr):
+        p = next((x for x in self.robot.positions if x["ticker"] == tkr), None)
+        if not p:
+            return
+        w = tk.Toplevel(self); w.title(f"{tkr}: стоп и тейк"); w.transient(self)
+        f = ttk.Frame(w, padding=12); f.pack()
+        vs = tk.StringVar(value=f"{p.get('stop', 0):.6g}" if p.get("stop") else "")
+        vt = tk.StringVar(value=f"{p.get('take', 0):.6g}" if p.get("take") else "")
+        ttk.Label(f, text=f"{tkr} {'лонг' if p['side'] > 0 else 'шорт'}, вход {p['entry']:.6g}").grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(f, text="Стоп:").grid(row=1, column=0, sticky="w", pady=4)
+        es = ttk.Entry(f, textvariable=vs, width=12); es.grid(row=1, column=1, sticky="w")
+        ttk.Label(f, text="Тейк:").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(f, textvariable=vt, width=12).grid(row=2, column=1, sticky="w")
+        es.focus_set()
+
+        def num(v):
+            try:
+                return float(v.get().replace(",", ".")) if v.get().strip() else None
+            except ValueError:
+                return None
+
+        def go(_=None):
+            self.robot.request_levels(tkr, num(vs), num(vt))
+            self.log(f"{tkr}: стоп {vs.get() or '—'}, тейк {vt.get() or '—'} — отправлено.\n")
+            w.destroy()
+        b = ttk.Frame(f); b.grid(row=3, column=0, columnspan=2, pady=(8, 0), sticky="w")
+        ttk.Button(b, text="Сохранить", command=go).pack(side="left")
+        ttk.Button(b, text="Отмена", command=w.destroy).pack(side="left", padx=6)
+        ttk.Label(f, foreground="#555", text="Уровни можно и перетащить мышью на графике.").grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        w.bind("<Return>", go)
 
     def _close_ticker(self, tkr):
         self.robot.request_close(tkr)                  # из меню правой кнопки — сразу, без подтверждения
