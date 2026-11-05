@@ -942,6 +942,18 @@ class AutoTrader:
             self._set_status(f"ТОРГОВЛЯ: {mk}входы на сегодня закончены — мониторинг до {hm(DAY_END)}")
 
     # ------------------------------------------------------------------ сканирование
+    def _rank(self, moves):
+        rows = []
+        for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1])):
+            if abs(mv) < sc.THRESHOLD:
+                why = "меньше порога"
+            elif self.sp.get("idx_day", True) and (self.market == 0 or (mv > 0) != (self.market > 0)):
+                why = "против рынка"
+            else:
+                why = "СИГНАЛ"
+            rows.append((tk, mv, why))
+        return rows
+
     def _scan(self, now):
         day = now.date()
         t = now.hour * 60 + now.minute
@@ -979,10 +991,11 @@ class AutoTrader:
                     self.prices.update(self.b.last_prices(pre))
                 except Exception:
                     return
-                mv = [self.prices[tk] / self.pre_opens[tk] - 1 for tk in pre if self.prices.get(tk)]
-                if mv:
-                    self.market = sum(mv) / len(mv)
+                mvs = {tk: self.prices[tk] / self.pre_opens[tk] - 1 for tk in pre if self.prices.get(tk)}
+                if mvs:
+                    self.market = sum(mvs.values()) / len(mvs)
                     self._idx_flip("утро")
+                    self.scan_rows = self._rank(mvs)        # кандидаты с 09:01 — движение от открытия утренней сессии
                     self.last_scan = now
                     self._push()
             return
@@ -992,16 +1005,7 @@ class AutoTrader:
             return
         self.market = sum(moves.values()) / len(moves)
         self._idx_flip("сигнал" if self._day_signal_mode() else "день")
-        rows = []
-        for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1])):
-            if abs(mv) < sc.THRESHOLD:
-                why = "меньше порога"
-            elif self.sp.get("idx_day", True) and (self.market == 0 or (mv > 0) != (self.market > 0)):
-                why = "против рынка"
-            else:
-                why = "СИГНАЛ"
-            rows.append((tk, mv, why))
-        self.scan_rows = rows
+        self.scan_rows = self._rank(moves)
         self.last_scan = now
         self._push()
 

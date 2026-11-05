@@ -175,7 +175,7 @@ function renderState(st) {
       ? (st.day_on === false ? "проходит порог, но «движение дня» выключено" : st.day_mode !== "signal"
         ? `кандидат — робот войдёт в ${esc(st.entry || "15:00")}, если движение сохранится` : "СИГНАЛ — вход сразу")
       : esc(why)}</div></div>`).join("")
-    : `<div class="empty">Данные появятся после 10:01</div>`;
+    : `<div class="empty">Данные появятся после 09:01</div>`;
 
   // формации
   const K = st.spikes || [];

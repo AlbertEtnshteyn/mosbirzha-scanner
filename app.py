@@ -1197,7 +1197,7 @@ class App(tk.Tk):
         ls = snap.get("last_scan")
         thr = snap.get("threshold") or sc.THRESHOLD
         self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: рынок {mk * 100:+.2f}%, порог {thr * 100:g}%"
-                                      if ls and mk is not None else "Данные появятся после 10:01."))
+                                      if ls and mk is not None else "Данные появятся после 09:01."))
         self.scan_tree.delete(*self.scan_tree.get_children())
         for tk, mv, why in snap["scan"][:60]:
             tag = ("pos" if mv > 0 else "neg") if why == "СИГНАЛ" else ()
