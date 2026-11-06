@@ -600,7 +600,10 @@ class App(tk.Tk):
         self.MREF = {"7": "от открытия рынка 07:00", "10": "от открытия основной сессии 10:00 (лучше на истории)"}
         self.v_mref = tk.StringVar(value=self.MREF.get(str(self.s.get("mid_ref", "7")), self.MREF["7"]))
         self.v_mmulti = tk.BooleanVar(value=bool(self.s.get("mid_multi", True)))
-        self.MDIR = {"long": "только лонг (рост → покупка)", "short": "только шорт (падение → шорт; на истории в минусе)", "both": "в обе стороны"}
+        self.MDIR = {"index": "по индексу: IMOEX растёт — лонг, падает — шорт",
+                     "both": "в обе стороны при любом индексе",
+                     "long": "только лонг при любом индексе",
+                     "short": "только шорт при любом индексе"}
         self.v_mdir = tk.StringVar(value=self.MDIR.get(self.s.get("mid_dir", "long"), self.MDIR["long"]))
         self.MCARRY = {"none": "закрыть все позиции", "all": "переносить все (до стопа или тейка)", "profit": "переносить только позиции в плюсе"}
         self.v_mcarry = tk.StringVar(value=self.MCARRY.get(self.s.get("mid_carry", "none"), self.MCARRY["none"]))
@@ -608,12 +611,13 @@ class App(tk.Tk):
         ent = lambda var, w: (lambda fr: ttk.Entry(fr, textvariable=var, width=w))
         b2 = box("Стратегия «Движение дня» — покупка на середине между EMA10 и EMA20")
         row(b2, "Бумага выросла от открытия на, %:", ent(self.v_mthr, 5), "EMA по графикам:",
-            *[ck(n, self.v_mtfs[k]) for k, n in self.MTF.items()], ck("торговать по индексу (IMOEX растёт — только лонг, падает — только шорт)", self.v_midx))
+            *[ck(n, self.v_mtfs[k]) for k, n in self.MTF.items()])
         markets(b2, self.v_dmk)
         row(b2, "Рост считать:", cb(self.v_mref, list(self.MREF.values()), 46),
             ck("несколько входов по бумаге за день (на истории хуже)", self.v_mmulti))
         row(b2, "Режим торговли:", cb(self.v_mdir, list(self.MDIR.values()), 46),
-            ("hint", "шорт — зеркально: бумага упала на порог → шорт на середине EMA, стоп за хаем дня, тейк на лое дня"))
+            ("hint", "шорт — зеркально: бумага упала на порог → шорт на середине EMA, стоп за хаем дня, тейк на лое дня. "
+                     "На истории: лонг +0,37%, по индексу +0,16%, обе стороны +0,14%, шорт −0,04% на сделку"))
         row(b2, "Покупки с", ent(self.v_mfrom, 6), "до", ent(self.v_mto, 6), "   выход в", ent(self.v_mexit, 6),
             ("hint", "время вписывается вручную, ЧЧ:ММ"))
         row(b2, "Во время выхода:", cb(self.v_mcarry, list(self.MCARRY.values()), 36), "не дольше, дней:", ent(self.v_mcdays, 4),
@@ -808,7 +812,7 @@ class App(tk.Tk):
                 return
             times[k] = f"{m // 60:02d}:{m % 60:02d}"
             var.set(times[k])
-        self.s.update(mid_thr=mthr, mid_share=mshare, mid_idx=self.v_midx.get(),
+        self.s.update(mid_thr=mthr, mid_share=mshare,
                       mid_tfs=[k for k, v in self.v_mtfs.items() if v.get()] or [60],
                       mid_ref={v: k for k, v in self.MREF.items()}.get(self.v_mref.get(), "7"), mid_multi=self.v_mmulti.get(), mid_dir={v: k for k, v in self.MDIR.items()}.get(self.v_mdir.get(), "long"),
                       mid_carry={v: k for k, v in self.MCARRY.items()}.get(self.v_mcarry.get(), "none"),
@@ -1431,11 +1435,11 @@ class App(tk.Tk):
         m = rc.mid_cfg(self.s)
         tfs = ", ".join({5: "5 мин", 15: "15 мин", 60: "1 час", 1440: "1 день"}[x] for x in m["tfs"])
         self.robot_help.configure(text=(
-            f"Стратегия «Движение дня» ({ {'long': 'только лонг', 'short': 'только шорт — зеркально', 'both': 'лонг и шорт'}[m['dir']] }): бумага выросла от {at.hm(m['ref'])} на {m['thr'] * 100:g}% → робот следит → цена опустилась до середины "
+            f"Стратегия «Движение дня» ({ {'long': 'только лонг', 'short': 'только шорт — зеркально', 'both': 'лонг и шорт', 'index': 'по индексу: IMOEX растёт — лонг, падает — шорт'}[m['mode']] }): бумага выросла от {at.hm(m['ref'])} на {m['thr'] * 100:g}% → робот следит → цена опустилась до середины "
             f"между EMA10 и EMA20 ({tfs}) → покупка {m['share'] * 100:g}% счёта; стоп чуть ниже лоя дня, тейк на хае дня. "
             f"Покупки {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}"
             + {"none": "", "all": " (позиции переносятся до стопа или тейка)", "profit": " (позиции в плюсе переносятся)"}[m["carry"]]
-            + (", по индексу (IMOEX растёт — лонг, падает — шорт)" if m["idx"] else "")
+            
             + ". «Старт торговли» — робот покупает и продаёт сам; «Стоп торговли» — только наблюдение. Всё меняется во вкладке «Настройки»."))
 
     def show_robot(self, snap):

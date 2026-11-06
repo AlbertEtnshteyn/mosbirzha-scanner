@@ -202,7 +202,7 @@ function renderState(st) {
   $("#status").textContent = st.status || "";
   $("#market").innerHTML = ix ? `<span class="${cls(ix.pct)}">${pct(ix.pct)}</span>` : "—";     // реальное изменение к вчерашнему закрытию
   const mo = st.idx_ref === "imoex" ? null : (st.market_open != null ? st.market_open : st.market);
-  $("#marketOpen").textContent = (typeof SET !== "undefined" && SET && SET.mid_idx) ? "торговля по индексу: IMOEX растёт — лонг, падает — шорт" : "";
+  $("#marketOpen").textContent = (typeof SET !== "undefined" && SET && SET.mid_dir === "index") ? "торговля по индексу: IMOEX растёт — лонг, падает — шорт" : "";
   const sb = $("#startBtn");
   if (st.trade) { sb.textContent = "Стоп"; sb.className = "btn stop"; }
   else { sb.textContent = "Старт"; sb.className = "btn start"; }
@@ -210,7 +210,7 @@ function renderState(st) {
   const pairTxt = pr && pr.enabled ? ` Пара серверов: торгует ${pr.active ? "этот" : "второй"} сервер (${pr.active ? "" : pr.peer_host + ", "}этот — ${pr.role === "primary" ? "основной" : "резервный"}); второй ${pr.peer_ok ? "на связи" : "не отвечает с " + pr.peer_last_ok}.` : "";
   const MS = SET || {};
   const tfs = (MS.mid_tfs || [MS.mid_tf || 60]).map((x) => ({ 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" })[x] || x).join(", ");
-  $("#robotHint").textContent = (st.trade ? `«Движение дня» (${({ long: "лонг", short: "шорт", both: "лонг и шорт" })[MS.mid_dir || "long"]}): бумага выросла на ${MS.mid_thr || 2.5}% от ${String(MS.mid_ref || "7") === "10" ? "10:00" : "07:00"} → покупка на середине EMA10/EMA20 (${tfs}), стоп за лоем дня, тейк на хае дня; покупки ${MS.mid_from || "10:00"}–${MS.mid_to || "18:00"}, выход ${MS.mid_exit || "23:45"}. «Стоп» — выключить новые сделки.`
+  $("#robotHint").textContent = (st.trade ? `«Движение дня» (${({ long: "только лонг", short: "только шорт", both: "лонг и шорт", index: "по индексу" })[MS.mid_dir || "long"]}): бумага выросла на ${MS.mid_thr || 2.5}% от ${String(MS.mid_ref || "7") === "10" ? "10:00" : "07:00"} → покупка на середине EMA10/EMA20 (${tfs}), стоп за лоем дня, тейк на хае дня; покупки ${MS.mid_from || "10:00"}–${MS.mid_to || "18:00"}, выход ${MS.mid_exit || "23:45"}. «Стоп» — выключить новые сделки.`
     : st.token_set ? "Робот следит за рынком, но не покупает. «Старт» — включить торговлю."
       : "Введите токен песочницы Т-Инвестиций во вкладке «Настройки».") + pairTxt +
     (st.broker === "finam" ? " Брокер: Финам." : st.broker === "tinvest_real" ? " Брокер: РЕАЛЬНЫЙ счёт Т-Инвестиций." : " Брокер: песочница Т-Инвестиций.");
@@ -735,12 +735,11 @@ function renderSettings(s) {
     ${inp("finam_account", "Номер счёта Финама (пусто — первый доступный токену)")}
   </div>
   <div class="grp"><h3>Стратегия «Движение дня»</h3>
-    ${sel("mid_dir", "Режим торговли", [["long", "только лонг (рост → покупка)"], ["short", "только шорт (падение → шорт; на истории в минусе)"], ["both", "в обе стороны"]])}
+    ${sel("mid_dir", "Режим торговли", [["index", "по индексу: IMOEX растёт — лонг, падает — шорт"], ["both", "в обе стороны при любом индексе"], ["long", "только лонг при любом индексе"], ["short", "только шорт при любом индексе"]])}
     <div class="hint" style="margin-left:0">Лонг: бумага выросла от открытия на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка. Стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Шорт — зеркально: упала → шорт на середине, стоп за хаем дня, тейк на лое. С галочкой «несколько покупок» — после закрытия позиции снова, когда цена отойдёт выше середины и вернётся к ней.</div>
     ${inp("mid_thr", "Бумага выросла от открытия на, %", "number", 'step="0.1" inputmode="decimal"')}
     <div class="f"><span>EMA10 / EMA20 по графикам (можно несколько — покупка на том, где цена первой дошла до середины)</span>
       ${[[5, "5 мин"], [15, "15 мин"], [60, "1 час (лучше на истории)"], [1440, "1 день"]].map(([k, n]) => `<label class="c"><input type="checkbox" name="mtf_${k}" ${(SET.mid_tfs || [SET.mid_tf || 60]).map(Number).includes(k) ? "checked" : ""}><span>${n}</span></label>`).join("")}</div>
-    ${chk("mid_idx", "Торговать по индексу", "IMOEX растёт — робот только лонгует, падает — только шортит (в пределах выбранного режима). Без галочки индекс не учитывается.")}
     <div class="f"><span>Чем торговать</span>
       ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="dmk_${k}" ${(s.day_markets || ["imoex"]).includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
     ${inp("mid_from", "Покупки с (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="10:00"')}
@@ -795,7 +794,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     finam_secret: (v("finam_secret") || "").trim(), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
     day_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("dmk_" + k)),
     leverage: v("leverage"), trade_weekends: c("trade_weekends"),
-    mid_thr: parseFloat(String(v("mid_thr")).replace(",", ".")) || 2.5, mid_tfs: [5, 15, 60, 1440].filter((k) => c("mtf_" + k)), mid_idx: c("mid_idx"),
+    mid_thr: parseFloat(String(v("mid_thr")).replace(",", ".")) || 2.5, mid_tfs: [5, 15, 60, 1440].filter((k) => c("mtf_" + k)),
     mid_from: (v("mid_from") || "10:00").trim(), mid_to: (v("mid_to") || "18:00").trim(), mid_exit: (v("mid_exit") || "23:45").trim(),
     mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10, mid_ref: v("mid_ref") || "7", mid_multi: c("mid_multi"), mid_carry: v("mid_carry") || "none", mid_dir: v("mid_dir") || "long", mid_carry_days: parseInt(v("mid_carry_days")) || 0,
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),

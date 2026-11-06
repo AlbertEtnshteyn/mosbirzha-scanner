@@ -105,11 +105,12 @@ def mid_cfg(s):
     return {"thr": float(s.get("mid_thr", 2.5) or 2.5) / 100,
             "from": hhmm(s.get("mid_from", "10:00"), 600), "to": hhmm(s.get("mid_to", "18:00"), 1080),
             "exit": hhmm(s.get("mid_exit", "23:45"), 1425), "tfs": sorted(set(tfs), reverse=True),
-            "idx": bool(s.get("mid_idx", False)), "share": float(s.get("mid_share", 10) or 10) / 100,
+            "idx": s.get("mid_dir") == "index", "share": float(s.get("mid_share", 10) or 10) / 100,
             "ref": 600 if str(s.get("mid_ref", "7")) == "10" else 420, "multi": bool(s.get("mid_multi", True)),
             "carry": s.get("mid_carry") if s.get("mid_carry") in ("all", "profit") else "none",
             "carry_days": int(s.get("mid_carry_days", 0) or 0),
-            "dir": s.get("mid_dir") if s.get("mid_dir") in ("long", "short", "both") else "long"}
+            "dir": "both" if s.get("mid_dir") == "index" else s.get("mid_dir") if s.get("mid_dir") in ("long", "short", "both") else "long",
+            "mode": s.get("mid_dir") if s.get("mid_dir") in ("index", "long", "short", "both") else "long"}
 
 
 def chart_sp(s):
@@ -860,9 +861,8 @@ class Backtest:
                 "period": f"{since:%d.%m.%Y} — {datetime.now(sc.MSK):%d.%m.%Y}",
                 "settings": (f"движение {m['thr'] * 100:g}% от {at.hm(m['ref'])}, EMA {', '.join(tfn[x] for x in m['tfs'])}, "
                              f"входы {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}, "
-                             + {"long": "только лонг", "short": "только шорт", "both": "лонг и шорт"}[m["dir"]] + ", "
+                             + {"long": "только лонг", "short": "только шорт", "both": "лонг и шорт", "index": "по индексу (IMOEX растёт — лонг, падает — шорт)"}[m["mode"]] + ", "
                              f"{'несколько входов' if m['multi'] else 'один вход'} в день"
-                             + (", только когда IMOEX в ту же сторону" if m["idx"] else "")
                              + {"none": ", во время выхода всё закрыть", "all": ", перенос всех позиций", "profit": ", перенос позиций в плюсе"}[m["carry"]]
                              + (f" (до {m['carry_days']} дн.)" if m["carry"] != "none" and m["carry_days"] else "")
                              + f", {m['share'] * 100:g}% счёта на сделку; "
