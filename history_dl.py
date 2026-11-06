@@ -55,7 +55,7 @@ def tinvest_year(token, uid, year, lot, agg, since):
         if sc.STOP_EVENT.is_set():
             return True
         r = sc.http().get(HIST_URL, params={"instrumentId": uid, "year": year},
-                          headers={"Authorization": f"Bearer {token}"}, timeout=120)
+                          headers={"Authorization": f"Bearer {token}"}, timeout=(15, 90))
         if r.status_code == 429:
             wait = float(r.headers.get("x-ratelimit-reset", 20) or 20)
             print(f"    лимит запросов архива — жду {wait:.0f} с")

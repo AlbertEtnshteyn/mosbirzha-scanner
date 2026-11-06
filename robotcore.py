@@ -535,6 +535,7 @@ def reset_trading(token, capital, log=print, broker="tinvest"):
 # ====================================================================== проверка «Движения дня» на истории
 import csv as _csv
 import threading as _th
+import time
 from datetime import date as _date
 
 BT_DIR = os.path.join(sc.HERE, "history_bt")          # кэш 5-мин свечей для проверки на истории
@@ -564,7 +565,7 @@ def _bt_write(path, rows):
     os.replace(tmp, path)
 
 
-def bt_bars(ti, token, ticker, since, log=print):
+def bt_bars(ti, token, ticker, since, log=print, prog=None):
     """5-мин свечи бумаги с даты since: кэш на диске + архив Т-Инвестиций (один запрос на год), запасной путь — Мосбиржа."""
     import history_dl as hd
     os.makedirs(BT_DIR, exist_ok=True)
@@ -582,19 +583,31 @@ def bt_bars(ti, token, ticker, since, log=print):
         keep = [r for r in old if r[0].date() < _date(today.year, 1, 1)]
     else:
         keep = []
+    prog = prog or (lambda txt: None)
     agg = hd.Agg5()
     ok = False
     try:
         sh = ti.share(ticker)
         for y in years:
+            prog(f"архив {y}")
             hd.tinvest_year(token, sh["uid"], y, float(sh.get("lot") or 1), agg, since if y == since.year else _date(y, 1, 1))
         ok = True
     except Exception as e:
-        log(f"  {ticker}: архив Т-Инвестиций не ответил ({e}) — беру с сайта Мосбиржи")
-    if not ok:
-        agg = hd.Agg5()
-        hd.iss_range(ticker, _date(years[0], 1, 1) if keep else since, today, agg)
-    new = [(k, b[0], b[1], b[2], b[3]) for k, b in sorted(agg.bars.items())]
+        log(f"  {ticker}: архив Т-Инвестиций не ответил ({e}) — беру 5-минутки через API")
+    if ok:
+        new = [(k, b[0], b[1], b[2], b[3]) for k, b in sorted(agg.bars.items())]
+    else:                                              # запасной путь: 5-мин свечи API по неделям, не дольше 3 минут на бумагу
+        new, d0, t_end = [], (_date(years[0], 1, 1) if keep else since), time.time() + 180
+        d = d0
+        while d <= today:
+            if time.time() > t_end:
+                raise RuntimeError("история не скачалась за 3 минуты")
+            prog(f"свечи API с {d:%d.%m.%Y}")
+            a_ = datetime(d.year, d.month, d.day, tzinfo=sc.MSK)
+            for r in ti.candles_range(ticker, a_, min(a_ + timedelta(days=7), datetime.now(sc.MSK)), 5):
+                new.append((r["t"], r["o"], r["h"], r["l"], r["c"]))
+            d += timedelta(days=7)
+        new.sort()
     lo = new[0][0] if new else None
     rows = [r for r in keep if not lo or r[0] < lo] + new
     # сегодняшний день из архива ещё не пришёл — добрать свечами API
@@ -936,8 +949,9 @@ class Backtest:
                 if self._stop.is_set():
                     raise RuntimeError("остановлено")
                 self.state.update(progress=f"свечи {tk} ({n}/{len(tickers)})", pct=int(n / len(tickers) * 90))
+                pr = lambda txt, tk=tk, n=n: self.state.update(progress=f"свечи {tk} ({n}/{len(tickers)}): {txt}")
                 try:
-                    data[tk] = bt_bars(ti, token, tk, since, log)
+                    data[tk] = bt_bars(ti, token, tk, since, log, pr)
                 except Exception as e:
                     fails.append(tk)
                     log(f"  {tk}: история не получена ({e})")
