@@ -2020,17 +2020,25 @@ class AutoTrader:
         share = float(r.get("share") or self.sp.get("share", 0.10))
         stop = float(r["stop"]) if r.get("stop") else sc.STOP
         s = r["side"]
-        lf = (self.st.get("last_form") or {}).get(tk) if r.get("by_form") else None
-        if lf and lf["side"] == s and (px - lf["stop"]) * s > 0 and (lf["take"] - px) * s >= 0.5 * abs(px - lf["stop"]):
-            stop = abs(px / lf["stop"] - 1)              # стоп за лоем (хаем) отката формации
-            r["take"] = abs(lf["take"] / px - 1)        # тейк — на хай (лой) импульса
-            r["trail"] = 0.0
-            r["stop_level"], r["take_level"] = lf["stop"], lf["take"]
-            r["tf"] = {"5м": 5, "15м": 15, "1ч": 60}.get(lf["tf"], 5)
-            self.log(f"  {tk}: стоп и тейк по формации {lf['tf']} ({lf['t']}): стоп {lf['stop']:.4g}, тейк {lf['take']:.4g}")
+        lv = None
+        if r.get("by_form"):                         # стоп за лоем дня, тейк на хае дня (для шорта — наоборот)
+            try:
+                lv = self._mid_levels(tk, self.clock(), 60)
+            except Exception as e:
+                self.log(f"  {tk}: свечи дня не получены ({e})")
+        if lv:
+            _, lo, hi = lv
+            st_l, tk_l = (lo * (1 - MID_STOP_BUF), hi) if s > 0 else (hi * (1 + MID_STOP_BUF), lo)
+            if (px - st_l) * s > 0 and (tk_l - px) * s > 0:
+                stop = abs(px / st_l - 1)
+                r["take"] = abs(tk_l / px - 1)
+                r["trail"] = 0.0
+                r["stop_level"], r["take_level"] = st_l, tk_l
+                self.log(f"  {tk}: стоп {st_l:.4g} ({'лой' if s > 0 else 'хай'} дня), тейк {tk_l:.4g} ({'хай' if s > 0 else 'лой'} дня)")
+            else:
+                self.log(f"  {tk}: цена уже у {'хая' if (tk_l - px) * s <= 0 else 'лоя'} дня — стоп и тейк в % из окна")
         elif r.get("by_form"):
-            self.log(f"  {tk}: подходящей формации сегодня нет" + (" (цена уже далеко от неё: до тейка меньше половины расстояния до стопа)" if lf and lf["side"] == s else "")
-                     + " — стоп и тейк в % из окна")
+            self.log(f"  {tk}: уровней дня нет — стоп и тейк в % из окна")
         try:
             hh, mm = (int(x) for x in str(r.get("exit_at") or "").split(":"))
             exit_min = hh * 60 + mm

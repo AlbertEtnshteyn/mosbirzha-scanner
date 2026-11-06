@@ -128,3 +128,5 @@ nav.bottom button { font-size: 10.5px; }
 .fb.l { color: var(--up); border-color: rgba(38,166,154,.45); } .fb.s { color: var(--down); border-color: rgba(239,83,80,.45); }
 #openForm input, #openForm select { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card2); color: var(--fg); font: inherit; }
 .fb.in { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+.mkc { height: 170px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }

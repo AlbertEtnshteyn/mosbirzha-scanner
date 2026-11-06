@@ -202,16 +202,16 @@ function renderState(st) {
   $("#status").textContent = st.status || "";
   $("#market").innerHTML = ix ? `<span class="${cls(ix.pct)}">${pct(ix.pct)}</span>` : "—";     // реальное изменение к вчерашнему закрытию
   const mo = st.idx_ref === "imoex" ? null : (st.market_open != null ? st.market_open : st.market);
-  $("#marketOpen").textContent = st.idx_ref === "imoex_open" ? `для робота: IMOEX от открытия основной сессии ${st.market != null ? pct(st.market * 100) : "—"}`
-    : st.idx_ref === "imoex" ? "направление для робота — по индексу IMOEX к вчерашнему дню"
-    : mo == null ? "" : `для робота: акции индекса с открытия дня ${pct(mo * 100)}`;
+  $("#marketOpen").textContent = (typeof SET !== "undefined" && SET && SET.mid_idx) ? "робот покупает, только когда IMOEX в плюсе" : "";
   const sb = $("#startBtn");
   if (st.trade) { sb.textContent = "Стоп"; sb.className = "btn stop"; }
   else { sb.textContent = "Старт"; sb.className = "btn start"; }
   const pr = st.pair;
   const pairTxt = pr && pr.enabled ? ` Пара серверов: торгует ${pr.active ? "этот" : "второй"} сервер (${pr.active ? "" : pr.peer_host + ", "}этот — ${pr.role === "primary" ? "основной" : "резервный"}); второй ${pr.peer_ok ? "на связи" : "не отвечает с " + pr.peer_last_ok}.` : "";
-  $("#robotHint").textContent = (st.trade ? "Робот сам входит и выходит по стратегиям. «Стоп» — выключить новые сделки."
-    : st.token_set ? "Робот следит за рынком и шлёт формации, но не торгует. «Старт» — включить торговлю."
+  const MS = SET || {};
+  const tfs = (MS.mid_tfs || [MS.mid_tf || 60]).map((x) => ({ 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" })[x] || x).join(", ");
+  $("#robotHint").textContent = (st.trade ? `«Движение дня»: бумага выросла на ${MS.mid_thr || 2.5}% от ${String(MS.mid_ref || "7") === "10" ? "10:00" : "07:00"} → покупка на середине EMA10/EMA20 (${tfs}), стоп за лоем дня, тейк на хае дня; покупки ${MS.mid_from || "10:00"}–${MS.mid_to || "18:00"}, выход ${MS.mid_exit || "23:45"}. «Стоп» — выключить новые сделки.`
+    : st.token_set ? "Робот следит за рынком, но не покупает. «Старт» — включить торговлю."
       : "Введите токен песочницы Т-Инвестиций во вкладке «Настройки».") + pairTxt +
     (st.broker === "finam" ? " Брокер: Финам." : st.broker === "tinvest_real" ? " Брокер: РЕАЛЬНЫЙ счёт Т-Инвестиций." : " Брокер: песочница Т-Инвестиций.");
 
@@ -459,16 +459,8 @@ async function loadChart(quiet) {
 }
 
 function summary(d) {
-  let s = "";
-  if (![5, 15, 60].includes(d.tf)) s = "сделки робота показываются на 15м и 1ч";
-  else if (d.tf === 5) s = "проверка по истории — на 15м и 1ч; настоящие сделки робота отмечены и здесь";
-  else if (d.tier === "3") s = "3-й эшелон — робот не торгует";
-  else if (!d.trades.length) s = `сделок робота за ${d.days} дн. нет`;
-  else {
-    const done = d.trades.filter((t) => !t.open), w = done.filter((t) => t.result > 0).length;
-    const sum = done.reduce((a, t) => a + t.result, 0) * 100;
-    s = `${{ index: "индекс", 2: "2-й эшелон" }[d.tier] || ""}: сделок за ${d.days} дн. ${d.trades.length}, в плюсе ${w}, сумма <b class="${cls(sum)}">${pct(sum)}</b>`;
-  }
+  const R = d.real || [], w = R.filter((r) => (r.result_pct || 0) > 0).length, sum = R.reduce((a, r) => a + (r.result_pct || 0), 0);
+  let s = R.length ? `сделок робота по бумаге: ${R.length}, в плюсе ${w}, сумма <b class="${cls(sum)}">${pct(sum)}</b> (отмечены на графике)` : "сделок робота по бумаге ещё не было";
   $("#chartInfo").innerHTML = `${esc(d.ticker)} ${TFNAME[d.tf]} · ${s}`;
   $("#chTrades").innerHTML = d.trades.slice().reverse().map((t, k) => {
     const i = d.trades.length - 1 - k;
@@ -554,7 +546,6 @@ $$("#mkType button").forEach((b) => (b.onclick = () => { MK.type = b.dataset.v; 
 $$("#mkTier button").forEach((b) => (b.onclick = () => { MK.tier = b.dataset.v; $$("#mkTier button").forEach((x) => x.classList.toggle("on", x === b)); renderMarket(); }));
 $("#mkSearch").addEventListener("input", (e) => { MK.q = e.target.value.trim().toUpperCase(); renderMarket(); });
 $("#mkSort").onchange = (e) => { MK.sort = e.target.value; renderMarket(); };
-$("#mkForm").onchange = (e) => { MK.formOnly = e.target.checked; renderMarket(); };
 const formBadge = (f) => `<span class="fb ${f.status === "вход" ? "in" : f.side > 0 ? "l" : "s"}" title="${esc(f.full)}">EMA20 ${esc(f.tf)} ${f.side > 0 ? "▲" : "▼"} ${esc(f.status)}</span>`;
 async function loadMarket() {
   try { MK.data = await api("/api/market"); renderMarket(); }
@@ -572,15 +563,15 @@ function renderMarket() {
     : k === "abs" ? Math.abs(b.pct || 0) - Math.abs(a.pct || 0) : k === "value" ? (b.value || 0) - (a.value || 0) : String(a.name).localeCompare(String(b.name), "ru"));
   const s = d.summary || {};
   $("#mkSum").innerHTML = `Акции: растут <b class="up">${s.up || 0}</b>, падают <b class="down">${s.down || 0}</b>, оборот ${bigRub(s.value)} ₽ ·
-    ${s.live ? "цены акций — в реальном времени (Т-Инвестиции)" : "данные Мосбиржи (могут быть с задержкой)"} · обновлено ${esc(d.time.slice(11))} · показано ${R.length} · с формацией EMA20 сегодня: ${d.forms_n || 0}`
+    ${s.live ? "цены акций — в реальном времени (Т-Инвестиции)" : "данные Мосбиржи (могут быть с задержкой)"} · обновлено ${esc(d.time.slice(11))} · показано ${R.length} · нажмите на бумагу — 4 графика`
     + (d.errors && d.errors.length ? `<br><span class="down">${esc(d.errors.join("; "))}</span>` : "");
   const tierName = { index: "индекс", 2: "2-й эш.", 3: "3-й эш." };
-  $("#mkList").innerHTML = R.length ? R.slice(0, 400).map((r) => `<div class="item tap" ${r.type === "share" ? `data-chart="${esc(r.ticker)}" data-tf="15"` : ""}>
+  $("#mkList").innerHTML = R.length ? R.slice(0, 400).map((r) => `<div class="item tap" data-mk="${esc(r.ticker)}">
     <div class="hd"><span><b>${esc(r.ticker)}</b> <span class="muted small">${esc(r.name)}</span></span>
       <b class="${cls(r.pct)}">${pct(r.pct)}</b></div>
     <div class="meta">${fmt(r.price)}${r.live ? " ●" : ""} · оборот ${bigRub(r.value)} · ${esc(r.time || "—")}
       ${r.type === "share" ? " · " + (r.blue ? "голубая фишка · " : "") + (tierName[r.tier] || "") : ""}</div>
-    ${r.forms && r.forms.length ? `<div class="fbs">${r.forms.map(formBadge).join("")}</div>` : ""}</div>`).join("")
+    </div>`).join("")
     : `<div class="empty">Ничего не найдено</div>`;
 }
 setInterval(() => { if (!document.hidden && TAB === "market") loadMarket(); }, 30000);
@@ -768,10 +759,7 @@ function renderSettings(s) {
       <input type="password" name="tg_token" placeholder="${s.tg_token_set ? "••••••••" : "123456:ABC…"}" autocomplete="off"></label>
     ${inp("tg_chat", "ID чата")}
     <div class="row"><button type="button" class="btn small" id="tgFind">Найти чат</button><button type="button" class="btn small" id="tgTest">Тест</button></div>
-    ${chk("tg_form", "Все найденные формации")}
-    ${chk("tg_trend", "Трендовые откаты")}
-    ${chk("tg_trades", "Входы и выходы робота")}
-    ${chk("tg_imp", "Всплески объёма (импульсы)")}
+    ${chk("tg_trades", "Покупки и продажи робота")}
   </div>
   <div class="grp"><h3>Этот телефон</h3>
     <label class="c"><input type="checkbox" id="phSound" ${store("sound") === "0" ? "" : "checked"}><span>Звук при входе и выходе (пока открыт пульт)</span></label>
@@ -902,3 +890,39 @@ $("#btGo").onclick = async () => {
   loadBT();
 };
 $("#btStop").onclick = async () => { try { await api("/api/backtest", { stop: true }); } catch (e) { } loadBT(); };
+
+// ---------------------------------------------------------------- рынки: 4 графика выбранной бумаги
+const MKC = { tk: null, ch: {} };
+function mkChart(el) {
+  const c = LightweightCharts.createChart(el, { width: el.clientWidth, height: el.clientHeight, layout: { background: { color: "#131722" }, textColor: "#b2b5be", fontSize: 9 },
+    grid: { vertLines: { color: "#1f2433" }, horzLines: { color: "#1f2433" } }, rightPriceScale: { borderColor: "#2a2e39" },
+    timeScale: { borderColor: "#2a2e39", timeVisible: true }, handleScroll: false, handleScale: false, crosshair: { mode: 0 } });
+  return { c, k: c.addCandlestickSeries({ upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, wickUpColor: "#26a69a", wickDownColor: "#ef5350" }),
+    e10: c.addLineSeries({ color: "#e8e8e8", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
+    e20: c.addLineSeries({ color: "#2962ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }) };
+}
+async function mkCharts(tk) {
+  MKC.tk = tk; $("#mkCharts").hidden = false; $("#mkChTk").textContent = tk;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  for (const el of $$("#mkCharts .mkc")) {
+    const tf = +el.dataset.tf;
+    if (!MKC.ch[tf]) MKC.ch[tf] = mkChart(el);
+    const C = MKC.ch[tf];
+    C.c.applyOptions({ width: el.clientWidth });
+    api(`/api/chart?ticker=${encodeURIComponent(tk)}&tf=${tf}`).then((d) => {
+      if (MKC.tk !== tk) return;
+      const B = d.bars.slice(-90), o = d.bars.length - B.length;
+      C.k.setData(B.map((b) => ({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c })));
+      C.e10.setData(B.map((b, i) => ({ time: b.t, value: d.ema10[o + i] })));
+      C.e20.setData(B.map((b, i) => ({ time: b.t, value: d.ema20[o + i] })));
+      C.c.timeScale().fitContent();
+    }).catch(() => {});
+  }
+}
+$("#mkList").addEventListener("click", (e) => { const it = e.target.closest("[data-mk]"); if (it) mkCharts(it.dataset.mk); });
+$("#mkChClose").onclick = () => { $("#mkCharts").hidden = true; MKC.tk = null; };
+$("#mkChOpen").onclick = () => { if (MKC.tk) { CH.ticker = MKC.tk; $("#chTicker").value = MKC.tk; CH.tf = 60; showTab("chart"); loadChart(); } };
+
+// настройки нужны и на вкладке «Робот» (описание стратегии) — подгрузить заранее
+(function preloadSet(n) { setTimeout(() => { if (SET) return; if (!KEY) { if (n < 20) preloadSet(n + 1); return; }
+  api("/api/settings").then((x) => { SET = SET || x; }).catch(() => { if (n < 20) preloadSet(n + 1); }); }, 1500); })(0);

@@ -56,7 +56,7 @@
         <div class="grid4" style="grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px">
           <label class="col small"><span class="muted">% портфеля</span><input name="share" type="number" inputmode="decimal" step="any"></label>
           <label class="col small" style="grid-column:1/-1"><span class="muted">Стоп и тейк</span><select name="by_form">
-            <option value="1">по формации: стоп за лоем отката, тейк на хай (если формации нет — в %)</option><option value="0">в % (поля ниже)</option></select></label>
+            <option value="1">по дню: стоп за лоем дня, тейк на хае дня (для шорта наоборот)</option><option value="0">в % (поля ниже)</option></select></label>
           <label class="col small"><span class="muted">Стоп, % от входа</span><input name="stop" type="number" inputmode="decimal" step="any" value="3"></label>
           <label class="col small"><span class="muted">Тейк, % (0 — нет)</span><input name="take" type="number" inputmode="decimal" step="any" value="0"></label>
           <label class="col small"><span class="muted">Трейлинг, % (0 — нет)</span><input name="trail" type="number" inputmode="decimal" step="any" value="0"></label>
@@ -70,8 +70,8 @@
       <button class="btn danger wide" id="closeAllBtn" hidden>Закрыть все позиции</button>
       <button class="btn ghost wide" id="closeProfitBtn" hidden>Закрыть все позиции в плюсе</button>
 
-      <details class="card">
-        <summary>«Движение дня»: кандидаты <span id="scanInfo" class="muted small"></span></summary>
+      <details class="card" open>
+        <summary>Кандидаты «Движения дня» <span id="scanInfo" class="muted small"></span></summary>
         <div id="scan" class="list compact"></div>
       </details>
 
@@ -120,8 +120,8 @@
         </div>
       </div>
       <div class="chart-bar2">
-        <label class="chk"><input type="checkbox" id="chHist" checked> сделки на истории</label>
-        <button class="btn small" id="chPrev">◀ к формации</button>
+        <label class="chk" hidden><input type="checkbox" id="chHist"> сделки на истории</label>
+        <button class="btn small" id="chPrev" hidden>◀ к формации</button>
         <button class="btn small" id="chFit">⤢ по цене</button>
         <a class="btn small ghost" id="chTbank" target="_blank" rel="noopener">Т-Инвест</a>
       </div>
@@ -150,24 +150,32 @@
           <option value="value">Оборот ↓</option><option value="name">По названию</option>
         </select>
       </div>
-      <label class="chk" style="margin:0 2px 8px"><input type="checkbox" id="mkForm"> только с формацией EMA20 (сегодня)</label>
+      <div id="mkCharts" hidden>
+        <div class="row between" style="margin:4px 2px"><b id="mkChTk"></b><span class="row" style="gap:6px"><button class="btn small" id="mkChOpen">Открыть график</button><button class="btn small ghost" id="mkChClose">✕</button></span></div>
+        <div class="grid4" style="grid-template-columns:1fr 1fr;gap:4px">
+          <div><div class="muted small">5 мин</div><div class="mkc" data-tf="5"></div></div>
+          <div><div class="muted small">15 мин</div><div class="mkc" data-tf="15"></div></div>
+          <div><div class="muted small">1 час</div><div class="mkc" data-tf="60"></div></div>
+          <div><div class="muted small">1 день</div><div class="mkc" data-tf="1440"></div></div>
+        </div>
+      </div>
       <div id="mkList" class="list compact"></div>
     </section>
 
     <!-- Сделки -->
     <section id="tab-trades" class="tab" hidden>
       <div class="seg wide" id="trSeg">
-        <button data-v="results" class="on">Результаты</button><button data-v="robot">Сделки</button><button data-v="journal">Журнал 15:00</button>
+        <button data-v="results" class="on">Результаты</button><button data-v="robot">Сделки</button>
       </div>
       <div id="resBox">
         <div class="card"><div class="label">Баланс счёта</div><div id="resBal" class="big">—</div><div id="resTime" class="muted small"></div></div>
         <div id="resChart" style="height:220px;border-radius:12px;overflow:hidden;border:1px solid var(--line)"></div>
         <div style="overflow-x:auto"><table class="tbl" id="resTbl"></table></div>
         <p class="muted small">Изменение баланса — по стоимости портфеля песочницы (пополнения счёта вычитаются), с учётом открытых позиций.
-          Сделки и «итог сделок, ₽» — по закрытым сделкам обеих стратегий (₽ считаются со сделок этой версии, без комиссий).</p>
+          Сделки и «итог сделок, ₽» — по закрытым сделкам (₽ считаются со сделок этой версии, без комиссий).</p>
         <button class="btn danger wide" id="resetBtn">Сбросить баланс и начать сначала</button>
         <p class="muted small">Закрывает демо-счёт со всеми позициями, открывает новый на сумму капитала из настроек
-          и очищает историю сделок и баланса. Журнал 15:00 и найденные сегодня формации остаются.</p>
+          и очищает историю сделок и баланса.</p>
       </div>
       <div id="trSum" class="card small"></div>
       <div id="trJournalFill" class="row" hidden>

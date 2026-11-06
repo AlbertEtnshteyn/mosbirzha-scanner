@@ -98,13 +98,11 @@ class _ChartBase:
         tk.Label(legend, text="━ EMA 20", fg=EMA20_C, bg=BG).pack(side="left", padx=10)
         tk.Label(legend, text="━ EMA 200", fg=EMA200_C, bg=BG).pack(side="left")
         tk.Label(legend, text="━ SMA 200", fg=SMA200_C, bg=BG).pack(side="left", padx=10)
-        self.v_hist = tk.BooleanVar(value=True)
-        tk.Checkbutton(legend, text="сделки робота на истории", variable=self.v_hist, command=self.draw,
-                       bg=BG, fg=TXT, selectcolor=GRID, activebackground=BG, activeforeground=TXT).pack(side="left", padx=10)
+        self.v_hist = tk.BooleanVar(value=False)          # сделки прежней стратегии (формация) больше не рисуются
         self.sum_lbl = tk.Label(legend, text="", fg=TXT, bg=BG)
         self.sum_lbl.pack(side="left", padx=6)
         self.go_btn = tk.Button(legend, text="◀ к формации", relief="flat", bg=GRID, fg=TXT, command=self.goto_trade)
-        self.go_btn.pack(side="left", padx=4)
+        # кнопка «к формации» — от прежней стратегии, не показывается
         self._go_i = 0
         tk.Label(legend, text="колесо — масштаб · Ctrl+колесо — масштаб по вертикали · тащить — во все стороны · двойной щелчок — авто", fg="#6b7080", bg=BG).pack(side="right")
         self.cv = tk.Canvas(self, bg=BG, highlightthickness=0)
@@ -203,26 +201,12 @@ class _ChartBase:
         return sp
 
     def _summary(self):
-        if self.tf not in (5, 15, 60):
-            self.sum_lbl.configure(text="сделки робота показываются на 15м и 1ч")
+        R = getattr(self, "real", None) or []
+        if not R:
+            self.sum_lbl.configure(text="сделок робота по бумаге ещё не было")
             return
-        if self.tf == 5:
-            self.sum_lbl.configure(text="сделок робота на истории 5 мин нет" if self.app.s.get("trade_5m")
-                                   else "на 5 мин робот не торгует (включается в настройках) — сделок нет")
-            return
-        if getattr(self, "tier", "") == "3":
-            self.sum_lbl.configure(text="3-й эшелон — по профилю только уведомления" if self.app.s.get("tier_profile", True)
-                                   else "3-й эшелон — профиль эшелонов выключен, робот торгует")
-            return
-        done = [t for t in self.trades if not t["open"]]
-        if not self.trades:
-            self.sum_lbl.configure(text=f"сделок робота за {DEPTH[self.tf]} дн. нет")
-            return
-        wins = sum(1 for t in done if t["result"] > 0)
-        tot = sum(t["result"] for t in done) * 100
-        dates = ""
-        tier = {"index": "индекс", "2": "2-й эшелон"}.get(getattr(self, "tier", ""), "")
-        self.sum_lbl.configure(text=f"{tier}: сделок за {DEPTH[self.tf]} дн. {len(self.trades)}, в плюсе {wins}, сумма {tot:+.2f}%")
+        res = [x.get("result_pct") or 0 for x in R]
+        self.sum_lbl.configure(text=f"сделок робота по бумаге: {len(R)}, в плюсе {sum(1 for x in res if x > 0)}, сумма {sum(res):+.2f}% — отмечены на графике")
         self._go_i = 0
 
     def goto_trade(self):

@@ -1309,7 +1309,8 @@ class App(tk.Tk):
             try:
                 st = self._bt_state()
             except Exception as e:
-                st = {"error": f"нет связи с сервером: {e}"}
+                st = {"error": "программа на сервере старая — нажмите «Обновить сервер без пароля (оба)» на вкладке «Сервер и телефон»"
+                      if "404" in str(e) else f"нет связи с сервером: {e}"}
             self.after(0, lambda: self._bt_show(st))
         if self.nb.select() == str(self.bt_go.master.master) or getattr(self, "_bt_running", False) or self._bt_res is None:
             threading.Thread(target=work, daemon=True).start()
@@ -2066,9 +2067,9 @@ class App(tk.Tk):
         f = ttk.Frame(w, padding=12); f.pack(fill="both")
         v = {k: tk.StringVar(value=d) for k, d in (("ticker", ""), ("side", "лонг"), ("share", f"{float(self.s.get('spike_share', 10)):g}"),
                                                     ("stop", "3"), ("take", "0"), ("trail", "0"), ("exit", self.s.get("day_exit", "18:45")),
-                                                    ("carry", "перенести"), ("form", "по формации (стоп за лоем отката, тейк на хай)"))}
+                                                    ("carry", "перенести"), ("form", "по дню (стоп за лоем дня, тейк на хае дня)"))}
         rows = [("Тикер", ttk.Entry(f, textvariable=v["ticker"], width=12)),
-                ("Стоп и тейк", ttk.Combobox(f, textvariable=v["form"], values=["по формации (стоп за лоем отката, тейк на хай)",
+                ("Стоп и тейк", ttk.Combobox(f, textvariable=v["form"], values=["по дню (стоп за лоем дня, тейк на хае дня)",
                                                                                  "в % (поля ниже)"], state="readonly", width=44)),
                 ("Направление", ttk.Combobox(f, textvariable=v["side"], values=["лонг", "шорт"], state="readonly", width=10)),
                 ("% портфеля", ttk.Entry(f, textvariable=v["share"], width=8)),
@@ -2098,7 +2099,7 @@ class App(tk.Tk):
                                                   f"стоп {v['stop'].get()}%?", parent=w):
                 return
             self.robot.request_open(t, side, num("share") or None, num("stop") or None, num("take"), num("trail"),
-                                    v["exit"].get(), v["carry"].get() == "перенести", v["form"].get().startswith("по формации"))
+                                    v["exit"].get(), v["carry"].get() == "перенести", v["form"].get().startswith("по дню"))
             self.log(f"Запрошено открытие вручную: {t} {'лонг' if side > 0 else 'шорт'} — результат в журнале.\n")
             w.destroy()
         b = ttk.Frame(f); b.grid(row=len(rows), column=0, columnspan=2, pady=(10, 0), sticky="w")
