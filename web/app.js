@@ -899,6 +899,12 @@ $("#btGo").onclick = async () => {
   } catch (e) { toast("Ошибка: " + e.message); }
   loadBT();
 };
+$("#btReset").onclick = async () => {
+  try { await api("/api/backtest", { reset: true }); } catch (e) { }
+  BT_DONE = null;
+  for (const id of ["#btSet", "#btSum", "#btMon", "#btTr"]) $(id).innerHTML = "";
+  drawBTCurve([]); toast("Проверка сброшена"); loadBT();
+};
 $("#btStop").onclick = async () => { try { await api("/api/backtest", { stop: true }); } catch (e) { } loadBT(); };
 
 // ---------------------------------------------------------------- рынки: 4 графика выбранной бумаги

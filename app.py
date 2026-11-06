@@ -1261,6 +1261,7 @@ class App(tk.Tk):
         self.bt_go = ttk.Button(bar, text="▶  Прогнать на истории", style="Start.TButton", command=self.bt_start)
         self.bt_go.pack(side="left")
         ttk.Button(bar, text="Стоп", command=self.bt_stop).pack(side="left", padx=6)
+        ttk.Button(bar, text="Сбросить", command=self.bt_reset).pack(side="left")
         self.bt_pb = ttk.Progressbar(bar, length=220, maximum=100)
         self.bt_pb.pack(side="left", padx=(12, 6))
         self.bt_st = ttk.Label(bar, text="", foreground="#555")
@@ -1320,6 +1321,21 @@ class App(tk.Tk):
                               log=lambda m: self.q.put(("log", m + "\n")), capital=cap)
         self.bt_st.configure(text="запускаю…")
         self._bt_res = None
+
+    def bt_reset(self):
+        cl = self._server()
+        if cl is not None:
+            threading.Thread(target=lambda: cl.post("/api/backtest", {"reset": True}), daemon=True).start()
+        else:
+            rc.BACKTEST.reset()
+        self._bt_res = None
+        self.bt_set.configure(text="")
+        self.bt_sum.configure(text="Результатов пока нет — нажмите «Прогнать на истории».", fg="black")
+        self.bt_mon.delete(*self.bt_mon.get_children())
+        self.bt_tr.delete(*self.bt_tr.get_children())
+        self.bt_pb.configure(value=0)
+        self.bt_st.configure(text="сброшено")
+        self._bt_curve()
 
     def bt_stop(self):
         cl = self._server()

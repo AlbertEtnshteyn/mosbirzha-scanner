@@ -904,6 +904,16 @@ class Backtest:
         if self._proc is not None and self._proc.poll() is None:
             self._proc.terminate()
 
+    def reset(self):
+        """Сброс: остановить, если идёт, и убрать результат (скачанная история остаётся — следующий прогон быстрый)."""
+        self.stop()
+        self._proc = None
+        self._state = {"running": False, "progress": "", "pct": 0, "result": None, "error": None}
+        try:
+            os.remove(self._sp)
+        except Exception:
+            pass
+
     def _run(self, token, sandbox, s, months, tickers, log, capital=1_000_000):
         try:
             if not token:
