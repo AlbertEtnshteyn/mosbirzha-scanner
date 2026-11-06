@@ -1220,38 +1220,34 @@ class AutoTrader:
                     self._pullback_signal(tk, sig)
         self._push()
 
-    # 5 мин учитываются, только если робот на них торгует: на истории (152 акции, год) пропуск 15м/1ч из-за более ранней
-    # формации на 5 мин срезал результат вдвое (+0,27% → +0,04% на сделку), а без 5 мин — без потерь, повторные ≈ 0%.
-    FIRST_FORM_TFS = (15, 60)
-
     def _earlier_form(self, tk, sig, b5):
-        """Была ли уже формация в ту же сторону после начала этого всплеска (на любом ТФ) — вернуть «ТФ ЧЧ:ММ» или None.
+        """Была ли уже формация в ту же сторону после начала этого всплеска на том же ТФ — вернуть «ТФ ЧЧ:ММ» или None.
+        Формации на других ТФ не мешают (5 мин → потом 15 мин → потом 1 час — каждая торгуется).
         Ищется по свечам заново, так что учитываются и формации до запуска робота."""
-        s, tf0 = sig["side"], sig["tf"]
-        cur_close = sig["confirm"]["t"] + timedelta(minutes=tf0)
+        s, tf = sig["side"], sig["tf"]
+        cur_close = sig["confirm"]["t"] + timedelta(minutes=tf)
         imp_start = sig["impulse"]["t"]
         tier = self._tier(tk, b5)
-        for tf in ((5,) if self.sp.get("trade_5m") else ()) + self.FIRST_FORM_TFS:
-            bars = [b for b in aggregate([dict(b) for b in b5], tf) if b["t"] + timedelta(minutes=tf) < cur_close]
-            if len(bars) < 25:
-                continue
-            p = params(self.sp, tf)
-            if tier == "2" and tf == 60:
-                p["min_value"] = 15e6
-            if tf == 60:
-                p["slot_mult"] = 2.0
-            add_slot(bars)
-            closes = [b["c"] for b in bars]
-            emas = [ema(closes)] + ([ema(closes, 10)] if self.sp.get("ema10_touch") else [])
-            for j in range(len(bars) - 1, 24, -1):
-                bj = bars[j]
-                end = bj["t"] + timedelta(minutes=tf)
-                if bj["t"].date() != cur_close.date() or end <= imp_start:
-                    break
-                for e_ in emas:
-                    f = find_pullback(bars, p, e_, last=j)
-                    if f and f["side"] == s:
-                        return f"{self._tf_name(tf)} {end:%H:%M}"
+        bars = [b for b in aggregate([dict(b) for b in b5], tf) if b["t"] + timedelta(minutes=tf) < cur_close]
+        if len(bars) < 25:
+            return None
+        p = params(self.sp, tf)
+        if tier == "2" and tf == 60:
+            p["min_value"] = 15e6
+        if tf == 60:
+            p["slot_mult"] = 2.0
+        add_slot(bars)
+        closes = [b["c"] for b in bars]
+        emas = [ema(closes)] + ([ema(closes, 10)] if self.sp.get("ema10_touch") else [])
+        for j in range(len(bars) - 1, 24, -1):
+            bj = bars[j]
+            end = bj["t"] + timedelta(minutes=tf)
+            if bj["t"].date() != cur_close.date() or end <= imp_start:
+                break
+            for e_ in emas:
+                f = find_pullback(bars, p, e_, last=j)
+                if f and f["side"] == s:
+                    return f"{self._tf_name(tf)} {end:%H:%M}"
         return None
 
     @staticmethod
@@ -1372,7 +1368,7 @@ class AutoTrader:
         elif not sig.get("tradeable", (not trend) or sp.get("trend_trade", False)):
             why = sig.get("why_no") or "трендовый откат (объём был раньше) — только уведомление, на истории такие входы в минусе"
         elif sig.get("repeat"):
-            why = (f"повторная формация после того же всплеска (первая — {sig['repeat']}); повторные на истории хуже — только уведомление")
+            why = (f"повторная формация после того же всплеска на этом же ТФ (первая — {sig['repeat']}); повторные на истории хуже — только уведомление")
         elif sig.get("late"):
             why = (f"поздний откат ({sig['age']} свечей после импульса, на истории в этом случае хуже) — только уведомление")
         elif not (prof["from"] <= tc < prof["to"]) or ti < prof["from"]:
