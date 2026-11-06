@@ -800,10 +800,40 @@ def bt_summary(trades, share, capital=1_000_000):
 
 
 class Backtest:
-    """Фоновая проверка на истории: одна за раз; состояние читают экран программы и телефон."""
+    """Фоновая проверка на истории: одна за раз; состояние читают экран программы и телефон.
+    На сервере (Linux) считается в отдельном процессе с низким приоритетом — робот и связь с телефоном не тормозят."""
     def __init__(self):
-        self.state = {"running": False, "progress": "", "pct": 0, "result": None, "error": None}
+        self._state = {"running": False, "progress": "", "pct": 0, "result": None, "error": None}
         self._stop = _th.Event()
+        self._proc = None
+        self._sp = os.path.join(BT_DIR, "_state.json")
+
+    @property
+    def state(self):
+        p = self._proc
+        if p is not None:
+            try:
+                with open(self._sp, encoding="utf-8") as f:
+                    st = json.load(f)
+            except Exception:
+                st = None
+            if p.poll() is None:
+                if st:
+                    st["running"] = True
+                    self._state = st
+            else:
+                self._proc = None
+                if st:
+                    self._state = st
+                self._state["running"] = False
+                if not st or st.get("progress") not in ("готово", "ошибка"):
+                    self._state.setdefault("error", None)
+                    self._state["error"] = self._state.get("error") or "проверка прервалась"
+        return self._state
+
+    @state.setter
+    def state(self, v):
+        self._state = v
 
     def start(self, token, sandbox, s, months, tickers=None, log=print, capital=None):
         if self.state["running"]:
@@ -812,11 +842,42 @@ class Backtest:
         self.state = {"running": True, "progress": "начинаю…", "pct": 0, "result": None, "error": None,
                       "started": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
         cap = float(capital or s.get("capital") or 1_000_000)
+        import sys as _sys
+        if os.name != "nt" and not getattr(_sys, "frozen", False):
+            return self._start_proc(token, sandbox, dict(s), int(months), tickers, log, cap)
         _th.Thread(target=self._run, args=(token, sandbox, dict(s), int(months), tickers, log, cap), daemon=True).start()
+        return True
+
+    def _start_proc(self, token, sandbox, s, months, tickers, log, cap):
+        import subprocess, sys as _sys
+        os.makedirs(BT_DIR, exist_ok=True)
+        job = os.path.join(BT_DIR, "_job.json")
+        with open(job, "w", encoding="utf-8") as f:
+            json.dump({"token": token, "sandbox": sandbox, "s": s, "months": months, "tickers": tickers, "capital": cap,
+                       "state": self._sp}, f, ensure_ascii=False)
+        try:
+            os.chmod(job, 0o600)
+        except Exception:
+            pass
+        with open(self._sp, "w", encoding="utf-8") as f:
+            json.dump(self._state, f, ensure_ascii=False)
+        self._proc = subprocess.Popen([_sys.executable, "-c", f"import robotcore as rc; rc._bt_child({job!r})"], cwd=sc.HERE,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                                      preexec_fn=lambda: os.nice(15))
+        pr = self._proc
+
+        def pump():
+            for line in pr.stdout:
+                line = line.rstrip()
+                if line:
+                    log(line)
+        _th.Thread(target=pump, daemon=True).start()
         return True
 
     def stop(self):
         self._stop.set()
+        if self._proc is not None and self._proc.poll() is None:
+            self._proc.terminate()
 
     def _run(self, token, sandbox, s, months, tickers, log, capital=1_000_000):
         try:
@@ -876,3 +937,35 @@ class Backtest:
 
 
 BACKTEST = Backtest()
+
+
+def _bt_child(job_path):
+    """Отдельный процесс проверки: читает задание, считает, раз в секунду пишет состояние в файл."""
+    with open(job_path, encoding="utf-8") as f:
+        job = json.load(f)
+    try:
+        os.remove(job_path)                          # там токен — сразу удалить
+    except Exception:
+        pass
+    bt = Backtest()
+    bt._state = {"running": True, "progress": "начинаю…", "pct": 0, "result": None, "error": None,
+                 "started": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
+    done = _th.Event()
+
+    def writer():
+        while True:
+            try:
+                tmp = job["state"] + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(bt._state, f, ensure_ascii=False)
+                os.replace(tmp, job["state"])
+            except Exception:
+                pass
+            if done.is_set():
+                return
+            done.wait(1)
+    w = _th.Thread(target=writer, daemon=True)
+    w.start()
+    bt._run(job["token"], job["sandbox"], job["s"], job["months"], job.get("tickers"), lambda m: print(m, flush=True), job["capital"])
+    done.set()
+    w.join(5)
