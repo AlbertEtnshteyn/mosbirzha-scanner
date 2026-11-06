@@ -571,7 +571,8 @@ class App(tk.Tk):
         # --- единственная стратегия: «Движение дня» — покупка на середине EMA10/EMA20
         self.MTF = {5: "5 мин", 15: "15 мин", 60: "1 час", 1440: "1 день"}
         self.v_mthr = tk.StringVar(value=f"{float(self.s.get('mid_thr', 2.5)):g}")
-        self.v_mtf = tk.StringVar(value=self.MTF.get(int(self.s.get("mid_tf", 60) or 60), "1 час"))
+        _mtfs = [int(x) for x in (self.s.get("mid_tfs") or [self.s.get("mid_tf", 60) or 60])]
+        self.v_mtfs = {k: tk.BooleanVar(value=k in _mtfs) for k in self.MTF}
         self.v_midx = tk.BooleanVar(value=bool(self.s.get("mid_idx", False)))
         self.v_mfrom = tk.StringVar(value=str(self.s.get("mid_from", "10:00")))
         self.v_mto = tk.StringVar(value=str(self.s.get("mid_to", "18:00")))
@@ -579,15 +580,15 @@ class App(tk.Tk):
         self.v_mshare = tk.StringVar(value=f"{float(self.s.get('mid_share', 10)):g}")
         ent = lambda var, w: (lambda fr: ttk.Entry(fr, textvariable=var, width=w))
         b2 = box("Стратегия «Движение дня» — покупка на середине между EMA10 и EMA20")
-        row(b2, "Бумага выросла от открытия на, %:", ent(self.v_mthr, 5), "EMA по графику:", cb(self.v_mtf, list(self.MTF.values()), 8),
-            ck("покупать только когда IMOEX в плюсе", self.v_midx))
+        row(b2, "Бумага выросла от открытия на, %:", ent(self.v_mthr, 5), "EMA по графикам:",
+            *[ck(n, self.v_mtfs[k]) for k, n in self.MTF.items()], ck("покупать только когда IMOEX в плюсе", self.v_midx))
         markets(b2, self.v_dmk)
         row(b2, "Покупки с", ent(self.v_mfrom, 6), "до", ent(self.v_mto, 6), "   выход в", ent(self.v_mexit, 6),
             ("hint", "время вписывается вручную, ЧЧ:ММ; рост считается от открытия рынка 07:00"))
         row(b2, "На сделку, % счёта:", ent(self.v_mshare, 5), cb(self.v_lev, list(LEV.values()), 32),
             ck("торговать в выходные и праздники", self.v_wkend))
         tk.Label(b2, text="Только покупки. Бумага выросла на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка; "
-                          "стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени.\n"
+                          "стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Если отмечено несколько графиков — покупка на том, где цена первой дошла до середины.\n"
                           "Покупок за день может быть несколько: после закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней.\n"
                           "На истории (10.2025–10.2026, после затрат): акции индекса, 2,5%, EMA по 1 часу, с 10:00, выход 23:45 — "
                           "277 сделок, 60% в плюсе, +0,39% на сделку, просадка −1,8%; выход 18:45 — вдвое хуже; EMA по 5 мин — около нуля.",
@@ -779,7 +780,7 @@ class App(tk.Tk):
             times[k] = f"{m // 60:02d}:{m % 60:02d}"
             var.set(times[k])
         self.s.update(mid_thr=mthr, mid_share=mshare, mid_idx=self.v_midx.get(),
-                      mid_tf={v: k for k, v in self.MTF.items()}.get(self.v_mtf.get(), 60), **times)
+                      mid_tfs=[k for k, v in self.v_mtfs.items() if v.get()] or [60], **times)
         self.s.update(threshold=float(self.v_thr.get()), entry=self.v_entry.get(), capital=cap,
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
@@ -1401,7 +1402,7 @@ class App(tk.Tk):
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
                    "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal",
-                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_idx", "mid_share"]
+                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1426,7 +1427,9 @@ class App(tk.Tk):
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
         self.v_wkend.set(bool(s.get("trade_weekends", False)))
         self.v_mthr.set(f"{float(s.get('mid_thr', 2.5)):g}"); self.v_mshare.set(f"{float(s.get('mid_share', 10)):g}")
-        self.v_mtf.set(self.MTF.get(int(s.get("mid_tf", 60) or 60), "1 час")); self.v_midx.set(bool(s.get("mid_idx", False)))
+        for k, v in self.v_mtfs.items():
+            v.set(k in [int(x) for x in (s.get("mid_tfs") or [s.get("mid_tf", 60) or 60])])
+        self.v_midx.set(bool(s.get("mid_idx", False)))
         self.v_mfrom.set(str(s.get("mid_from", "10:00"))); self.v_mto.set(str(s.get("mid_to", "18:00"))); self.v_mexit.set(str(s.get("mid_exit", "23:45")))
         self.v_idxref.set(self.IDXREF.get(s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
         self.v_efrom.set(self.EFROM.get(str(s.get("entry_from") or ""), self.EFROM[""]))

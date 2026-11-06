@@ -19,7 +19,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
-            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_idx": False, "mid_share": 10}
+            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -101,10 +101,10 @@ def hhmm(v, default):
 
 def mid_cfg(s):
     """Настройки «Движения дня»: покупка на середине EMA10/EMA20."""
-    tf = int(s.get("mid_tf", 60) or 60)
+    tfs = [int(x) for x in (s.get("mid_tfs") or [s.get("mid_tf", 60) or 60]) if int(x) in (5, 15, 60, 1440)] or [60]
     return {"thr": float(s.get("mid_thr", 2.5) or 2.5) / 100,
             "from": hhmm(s.get("mid_from", "10:00"), 600), "to": hhmm(s.get("mid_to", "18:00"), 1080),
-            "exit": hhmm(s.get("mid_exit", "23:45"), 1425), "tf": tf if tf in (5, 15, 60, 1440) else 60,
+            "exit": hhmm(s.get("mid_exit", "23:45"), 1425), "tfs": sorted(set(tfs), reverse=True),
             "idx": bool(s.get("mid_idx", False)), "share": float(s.get("mid_share", 10) or 10) / 100}
 
 

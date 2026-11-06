@@ -814,7 +814,7 @@ class AutoTrader:
         m = self._mid()
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Стратегия одна — «Движение дня»: "
                  f"бумага выросла на {m['thr'] * 100:g}% от открытия → покупка, как только цена дошла до середины между EMA10 и EMA20 "
-                 f"({self._tf_name(m['tf'])}); стоп за лоем дня, тейк на хае дня. Покупки {hm(m['from'])}–{hm(m['to'])}, выход {hm(m['exit'])}"
+                 f"({', '.join(self._tf_name(x) for x in m['tfs'])}); стоп за лоем дня, тейк на хае дня. Покупки {hm(m['from'])}–{hm(m['to'])}, выход {hm(m['exit'])}"
                  + (", только когда IMOEX в плюсе" if m["idx"] else "") + f", на сделку {m['share'] * 100:g}% счёта. Только покупки.")
         if self.positions:
             self.log(f"Открытые позиции с прошлого запуска: {', '.join(p['ticker'] for p in self.positions)} — продолжаю сопровождать.")
@@ -943,14 +943,14 @@ class AutoTrader:
             self._set_status(f"ТОРГОВЛЯ: {mk}покупки на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
 
     # ------------------------------------------------------------------ «Движение дня»: покупка на середине EMA10/EMA20
-    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tf": 60, "idx": False, "share": 0.10}
+    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10}
 
     def _mid(self):
         return dict(self.MID_DEFAULT, **(self.sp.get("mid") or {}))
 
     def _mid_levels(self, tk, now, tf):
         """(середина EMA10/EMA20 по последней закрытой свече ТФ, лой дня, хай дня) — пересчёт не чаще раза в минуту."""
-        c = getattr(self, "_mid_cache", {}).get(tk)
+        c = getattr(self, "_mid_cache", {}).get((tk, tf))
         if c and (now - c[0]).total_seconds() < 60:
             return c[1]
         self._mid_cache = getattr(self, "_mid_cache", {})
@@ -967,12 +967,12 @@ class AutoTrader:
             bars = [b for b in aggregate([dict(b) for b in b5], tf) if b["t"] + timedelta(minutes=tf) <= naive]
         day = [b for b in b5 if b["t"].date() == naive.date() and b["t"].hour >= 7]
         if len(bars) < 21 or not day:
-            self._mid_cache[tk] = (now, None)
+            self._mid_cache[(tk, tf)] = (now, None)
             return None
         closes = [b["c"] for b in bars]
         mid = (ema(closes, 10)[-1] + ema(closes, 20)[-1]) / 2
         lv = (mid, min(b["l"] for b in day), max(b["h"] for b in day))
-        self._mid_cache[tk] = (now, lv)
+        self._mid_cache[(tk, tf)] = (now, lv)
         return lv
 
     def _mid_step(self, now):
@@ -988,7 +988,7 @@ class AutoTrader:
         for tk, mv, why in self.scan_rows:
             if why == "СИГНАЛ" and tk not in q:
                 q[tk] = now.strftime("%H:%M")
-                self.log(f"«Движение дня»: {tk} {mv * 100:+.2f}% от 07:00 — слежу, покупка на середине EMA10/EMA20 ({self._tf_name(m['tf'])}).")
+                self.log(f"«Движение дня»: {tk} {mv * 100:+.2f}% от 07:00 — слежу, покупка на середине EMA10/EMA20 ({', '.join(self._tf_name(x) for x in m['tfs'])}).")
                 self._save()
         watch = [tk for tk in q if tk not in held]
         if not watch:
@@ -1003,27 +1003,34 @@ class AutoTrader:
         self.mid_view = getattr(self, "mid_view", {})
         for tk in watch:
             px = lp.get(tk)
-            try:
-                lv = self._mid_levels(tk, now, m["tf"])
-            except sc.CertError:
-                raise
-            except Exception as e:
-                self.log(f"  {tk}: свечи для EMA не получены ({e})")
+            if not px:
                 continue
-            if not px or not lv:
-                continue
-            mid, lo, hi = lv
-            self.mid_view[tk] = mid
-            if px > mid:
-                if not arm.get(tk):
-                    arm[tk] = True                       # цена выше середины — следующее касание будет покупкой
-                    self._save()
-                continue
-            if not arm.get(tk):
+            hit = None                                   # ТФ, на котором цена дошла до середины EMA (старший из сработавших)
+            for tf in m["tfs"]:
+                try:
+                    lv = self._mid_levels(tk, now, tf)
+                except sc.CertError:
+                    raise
+                except Exception as e:
+                    self.log(f"  {tk}: свечи для EMA ({self._tf_name(tf)}) не получены ({e})")
+                    continue
+                if not lv:
+                    continue
+                key = f"{tk}|{tf}"
+                self.mid_view[key] = lv[0]
+                if px > lv[0]:
+                    if not arm.get(key):
+                        arm[key] = True                  # цена выше середины — следующее касание будет покупкой
+                        self._save()
+                elif arm.get(key) and hit is None:
+                    hit = (tf, lv)
+            if not hit:
                 continue
             if m["idx"] and not (self.market is not None and self.market > 0):
                 continue                                  # ждём, пока IMOEX в плюсе
-            arm[tk] = False
+            tf, (mid, lo, hi) = hit
+            for x in m["tfs"]:
+                arm[f"{tk}|{x}"] = False
             self._save()
             stop, take = lo * (1 - MID_STOP_BUF), hi
             if not (stop < px < take):
@@ -1037,10 +1044,10 @@ class AutoTrader:
                 pass
             n = sum(1 for x in self.st["traded"] if x == tk) + 1
             self.st["traded"].append(tk)
-            self.log(f"«Движение дня»: {tk} дошла до середины EMA10/EMA20 ({mid:.4g}), цена {px:.4g} — ПОКУПКА"
+            self.log(f"«Движение дня»: {tk} дошла до середины EMA10/EMA20 на {self._tf_name(tf)} ({mid:.4g}), цена {px:.4g} — ПОКУПКА"
                      + (f" №{n} за день" if n > 1 else "") + f" ({m['share'] * 100:g}% счёта), стоп {stop:.4g} (лой дня), "
                      f"тейк {take:.4g} (хай дня), выход {hm(m['exit'])}.")
-            self._open(tk, 1, base * m["share"], strat="mid", stop_level=stop, t1=take, exit_min=m["exit"], tf=m["tf"])
+            self._open(tk, 1, base * m["share"], strat="mid", stop_level=stop, t1=take, exit_min=m["exit"], tf=tf)
 
     # ------------------------------------------------------------------ сканирование
     def _real_index(self, own):

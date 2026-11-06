@@ -746,7 +746,8 @@ function renderSettings(s) {
   <div class="grp"><h3>Стратегия «Движение дня»</h3>
     <div class="hint" style="margin-left:0">Только покупки. Бумага выросла от открытия на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка. Стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Покупок за день может быть несколько: после закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней.</div>
     ${inp("mid_thr", "Бумага выросла от открытия на, %", "number", 'step="0.1" inputmode="decimal"')}
-    ${sel("mid_tf", "EMA10 / EMA20 по графику", [[60, "1 час (лучше на истории)"], [15, "15 мин"], [5, "5 мин"], [1440, "1 день"]])}
+    <div class="f"><span>EMA10 / EMA20 по графикам (можно несколько — покупка на том, где цена первой дошла до середины)</span>
+      ${[[5, "5 мин"], [15, "15 мин"], [60, "1 час (лучше на истории)"], [1440, "1 день"]].map(([k, n]) => `<label class="c"><input type="checkbox" name="mtf_${k}" ${(SET.mid_tfs || [SET.mid_tf || 60]).map(Number).includes(k) ? "checked" : ""}><span>${n}</span></label>`).join("")}</div>
     ${chk("mid_idx", "Покупать только когда IMOEX в плюсе")}
     <div class="f"><span>Чем торговать</span>
       ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="dmk_${k}" ${(s.day_markets || ["imoex"]).includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
@@ -801,11 +802,12 @@ $("#setForm").addEventListener("submit", async (e) => {
     finam_secret: (v("finam_secret") || "").trim(), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
     day_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("dmk_" + k)),
     leverage: v("leverage"), trade_weekends: c("trade_weekends"),
-    mid_thr: parseFloat(String(v("mid_thr")).replace(",", ".")) || 2.5, mid_tf: +v("mid_tf") || 60, mid_idx: c("mid_idx"),
+    mid_thr: parseFloat(String(v("mid_thr")).replace(",", ".")) || 2.5, mid_tfs: [5, 15, 60, 1440].filter((k) => c("mtf_" + k)), mid_idx: c("mid_idx"),
     mid_from: (v("mid_from") || "10:00").trim(), mid_to: (v("mid_to") || "18:00").trim(), mid_exit: (v("mid_exit") || "23:45").trim(),
     mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10,
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };
+  if (!out.mid_tfs.length) out.mid_tfs = [60];
   const okT = (x) => /^([01]?\d|2[0-3])([:.][0-5]\d)?$/.test(x);
   for (const k of ["mid_from", "mid_to", "mid_exit"]) if (!okT(out[k])) { toast(`Время «${out[k]}» — впишите как ЧЧ:ММ, например 10:00`, 5000); return; }
   if (!out.day_markets.length) out.day_markets = ["imoex"];
