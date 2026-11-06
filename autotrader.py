@@ -808,10 +808,10 @@ class AutoTrader:
                 lv = [(tf, mv_.get(f"{tk}|{tf}")) for tf in m["tfs"]]
                 lv = [f"{self._tf_name(tf)} {x:.4g}" + (f" ({(x / px - 1) * 100:+.1f}%)" if px else "") for tf, x in lv if x]
                 n = sum(1 for x in self.st.get("traded", []) if x == tk)
-                txt = ("СЛЕЖУ с " + q[tk] + (" · покупок " + str(n) if n else "") + " · середина EMA: " + (", ".join(lv) or "считаю")
-                       if t < m["to"] else "покупки на сегодня закончены")
+                txt = (("СЛЕЖУ (шорт) с " if self.st.get("mid_side", {}).get(tk) == -1 else "СЛЕЖУ с ") + q[tk] + (" · покупок " + str(n) if n else "") + " · середина EMA: " + (", ".join(lv) or "считаю")
+                       if t < m["to"] else "входы на сегодня закончены")
             elif why == "СИГНАЛ":
-                txt = f"порог есть — покупки с {hm(m['from'])}" if t < m["from"] else "порог есть"
+                txt = f"порог есть — входы с {hm(m['from'])}" if t < m["from"] else "порог есть"
             else:
                 txt = why
             out.append((tk, mv, txt))
@@ -852,7 +852,8 @@ class AutoTrader:
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Стратегия одна — «Движение дня»: "
                  f"бумага выросла на {m['thr'] * 100:g}% от открытия → покупка, как только цена дошла до середины между EMA10 и EMA20 "
                  f"({', '.join(self._tf_name(x) for x in m['tfs'])}); стоп за лоем дня, тейк на хае дня. Покупки {hm(m['from'])}–{hm(m['to'])}, выход {hm(m['exit'])}"
-                 + (", только когда IMOEX в плюсе" if m["idx"] else "") + f", на сделку {m['share'] * 100:g}% счёта. Только покупки.")
+                 + (", по индексу (IMOEX растёт — лонг, падает — шорт)" if m["idx"] else "") + f", на сделку {m['share'] * 100:g}% счёта. "
+                 + {"long": "Только покупки.", "short": "Только шорт (бумага упала → шорт на середине EMA, стоп за хаем дня, тейк на лое).", "both": "Лонг и шорт."}[m["dir"]])
         if self.positions:
             self.log(f"Открытые позиции с прошлого запуска: {', '.join(p['ticker'] for p in self.positions)} — продолжаю сопровождать.")
         prepared_for = None
@@ -972,15 +973,15 @@ class AutoTrader:
             self._set_status(f"НАБЛЮДЕНИЕ: {mk}кандидаты дня до {hm(DAY_END)} — для торговли нажмите «Старт»"
                              + (f" · ведёт позиции: {len(self.positions)}" if self.positions else ""))
         elif t < m["from"]:
-            self._set_status(f"ТОРГОВЛЯ: {mk}покупки с {hm(m['from'])}" + (f" · в позициях: {len(self.positions)}" if self.positions else ""))
+            self._set_status(f"ТОРГОВЛЯ: {mk}входы с {hm(m['from'])}" + (f" · в позициях: {len(self.positions)}" if self.positions else ""))
         elif t < m["to"]:
             self._set_status(f"ТОРГОВЛЯ: {mk}жду середины EMA10/EMA20" + (f" — {', '.join(wait[:6])}" if wait else "")
                              + (f" · в позициях: {len(self.positions)}" if self.positions else ""))
         else:
-            self._set_status(f"ТОРГОВЛЯ: {mk}покупки на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
+            self._set_status(f"ТОРГОВЛЯ: {mk}входы на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
 
     # ------------------------------------------------------------------ «Движение дня»: покупка на середине EMA10/EMA20
-    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0}
+    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0, "dir": "long"}
 
     def _mid(self):
         return dict(self.MID_DEFAULT, **(self.sp.get("mid") or {}))
@@ -1013,19 +1014,23 @@ class AutoTrader:
         return lv
 
     def _mid_step(self, now):
-        """Бумага выросла на порог от 07:00 → следим; цена побывала выше середины EMA10/EMA20 и дошла до неё → покупка.
-        Покупок за день по бумаге может быть несколько (пока тренд идёт), но одна позиция по бумаге за раз."""
+        """Бумага ушла на порог от открытия (вверх — для лонга, вниз — для шорта) → следим; цена побывала за серединой
+        EMA10/EMA20 и вернулась к ней → вход. Лонг: стоп за лоем дня, тейк на хае; шорт: стоп за хаем, тейк на лое.
+        Входов за день по бумаге может быть несколько (настройка), но одна позиция по бумаге за раз."""
         m = self._mid()
         t = now.hour * 60 + now.minute
         if not self.trade or not (m["from"] <= t < m["to"]):
             return
         q = self.st.setdefault("mid_q", {})
+        qs = self.st.setdefault("mid_side", {})
         arm = self.st.setdefault("mid_arm", {})
         held = {p["ticker"] for p in self.positions}
         for tk, mv, why in self.scan_rows:
             if why == "СИГНАЛ" and tk not in q:
                 q[tk] = now.strftime("%H:%M")
-                self.log(f"«Движение дня»: {tk} {mv * 100:+.2f}% от {hm(m['ref'])} — слежу, покупка на середине EMA10/EMA20 ({', '.join(self._tf_name(x) for x in m['tfs'])}).")
+                qs[tk] = 1 if mv > 0 else -1
+                self.log(f"«Движение дня»: {tk} {mv * 100:+.2f}% от {hm(m['ref'])} — слежу, "
+                         f"{'покупка' if mv > 0 else 'шорт'} на середине EMA10/EMA20 ({', '.join(self._tf_name(x) for x in m['tfs'])}).")
                 self._save()
         watch = [tk for tk in q if tk not in held and (m["multi"] or tk not in self.st["traded"])]
         if not watch:
@@ -1042,6 +1047,7 @@ class AutoTrader:
             px = lp.get(tk)
             if not px:
                 continue
+            side = qs.get(tk, 1)
             hit = None                                   # ТФ, на котором цена дошла до середины EMA (старший из сработавших)
             for tf in m["tfs"]:
                 try:
@@ -1055,24 +1061,28 @@ class AutoTrader:
                     continue
                 key = f"{tk}|{tf}"
                 self.mid_view[key] = lv[0]
-                if px > lv[0]:
+                if (px - lv[0]) * side > 0:
                     if not arm.get(key):
-                        arm[key] = True                  # цена выше середины — следующее касание будет покупкой
+                        arm[key] = True                  # цена за серединой — следующее касание будет входом
                         self._save()
                 elif arm.get(key) and hit is None:
                     hit = (tf, lv)
             if not hit:
                 continue
-            if m["idx"] and not (self.market is not None and self.market > 0):
-                continue                                  # ждём, пока IMOEX в плюсе
+            if m["idx"] and not (self.market is not None and self.market * side > 0):
+                continue                                  # ждём, пока IMOEX в ту же сторону
             tf, (mid, lo, hi) = hit
             for x in m["tfs"]:
                 arm[f"{tk}|{x}"] = False
             self._save()
-            stop, take = lo * (1 - MID_STOP_BUF), hi
-            if not (stop < px < take):
+            if side > 0:
+                stop, take = lo * (1 - MID_STOP_BUF), hi
+            else:
+                stop, take = hi * (1 + MID_STOP_BUF), lo
+            what = "ПОКУПКА" if side > 0 else "ШОРТ"
+            if not ((px - stop) * side > 0 and (take - px) * side > 0):
                 self.log(f"«Движение дня»: {tk} дошла до середины EMA ({px:.4g}), но цена уже "
-                         + ("у лоя дня" if px <= stop else "у хая дня") + " — не покупаю.")
+                         + ("у стопа" if (px - stop) * side <= 0 else "у тейка") + f" — {what.lower()} не делаю.")
                 continue
             base = self.capital
             try:
@@ -1081,10 +1091,11 @@ class AutoTrader:
                 pass
             n = sum(1 for x in self.st["traded"] if x == tk) + 1
             self.st["traded"].append(tk)
-            self.log(f"«Движение дня»: {tk} дошла до середины EMA10/EMA20 на {self._tf_name(tf)} ({mid:.4g}), цена {px:.4g} — ПОКУПКА"
-                     + (f" №{n} за день" if n > 1 else "") + f" ({m['share'] * 100:g}% счёта), стоп {stop:.4g} (лой дня), "
-                     f"тейк {take:.4g} (хай дня), выход {hm(m['exit'])}.")
-            self._open(tk, 1, base * m["share"], strat="mid", stop_level=stop, t1=take, exit_min=m["exit"], tf=tf)
+            lo_n, hi_n = ("лой", "хай") if side > 0 else ("хай", "лой")
+            self.log(f"«Движение дня»: {tk} дошла до середины EMA10/EMA20 на {self._tf_name(tf)} ({mid:.4g}), цена {px:.4g} — {what}"
+                     + (f" №{n} за день" if n > 1 else "") + f" ({m['share'] * 100:g}% счёта), стоп {stop:.4g} ({lo_n} дня), "
+                     f"тейк {take:.4g} ({hi_n} дня), выход {hm(m['exit'])}.")
+            self._open(tk, side, base * m["share"], strat="mid", stop_level=stop, t1=take, exit_min=m["exit"], tf=tf)
 
     # ------------------------------------------------------------------ сканирование
     def _real_index(self, own):
@@ -1128,11 +1139,15 @@ class AutoTrader:
     def _rank(self, moves):
         rows = []
         m = self._mid()
-        for tk, mv in sorted(moves.items(), key=lambda x: -x[1]):
-            if mv < m["thr"]:
-                why = "меньше порога" if mv >= 0 else "падает — только покупки"
-            elif m["idx"] and not (self.market is not None and self.market > 0):
-                why = "IMOEX не в плюсе"
+        d = m.get("dir", "long")
+        for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1]) if d == "both" else (-x[1] if d == "long" else x[1])):
+            s_ = 1 if mv > 0 else -1
+            if abs(mv) < m["thr"]:
+                why = "меньше порога"
+            elif (s_ > 0 and d == "short") or (s_ < 0 and d == "long"):
+                why = "растёт — только шорт" if s_ > 0 else "падает — только покупки"
+            elif m["idx"] and not (self.market is not None and self.market * s_ > 0):
+                why = "IMOEX " + ("не в плюсе" if s_ > 0 else "не в минусе")
             else:
                 why = "СИГНАЛ"
             rows.append((tk, mv, why))
