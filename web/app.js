@@ -560,7 +560,7 @@ function renderMarket() {
   if (MK.q) R = R.filter((r) => r.ticker.toUpperCase().includes(MK.q) || String(r.name).toUpperCase().includes(MK.q));
   const k = MK.sort, pv = (r) => r.pct == null ? -1e9 : r.pct;
   R.sort((a, b) => k === "pct_desc" ? pv(b) - pv(a) : k === "pct_asc" ? (a.pct ?? 1e9) - (b.pct ?? 1e9)
-    : k === "abs" ? Math.abs(b.pct || 0) - Math.abs(a.pct || 0) : k === "value" ? (b.value || 0) - (a.value || 0) : String(a.name).localeCompare(String(b.name), "ru"));
+    : k === "abs" ? Math.abs(b.pct || 0) - Math.abs(a.pct || 0) : k === "value" ? (b.value || 0) - (a.value || 0) : k === "avg" ? (b.avg_value || 0) - (a.avg_value || 0) : String(a.name).localeCompare(String(b.name), "ru"));
   const s = d.summary || {};
   $("#mkSum").innerHTML = `Акции: растут <b class="up">${s.up || 0}</b>, падают <b class="down">${s.down || 0}</b>, оборот ${bigRub(s.value)} ₽ ·
     ${s.live ? "цены акций — в реальном времени (Т-Инвестиции)" : "данные Мосбиржи (могут быть с задержкой)"} · обновлено ${esc(d.time.slice(11))} · показано ${R.length} · нажмите на бумагу — 4 графика`
@@ -569,7 +569,7 @@ function renderMarket() {
   $("#mkList").innerHTML = R.length ? R.slice(0, 400).map((r) => `<div class="item tap" data-mk="${esc(r.ticker)}">
     <div class="hd"><span><b>${esc(r.ticker)}</b> <span class="muted small">${esc(r.name)}</span></span>
       <b class="${cls(r.pct)}">${pct(r.pct)}</b></div>
-    <div class="meta">${fmt(r.price)}${r.live ? " ●" : ""} · оборот ${bigRub(r.value)} · ${esc(r.time || "—")}
+    <div class="meta">${fmt(r.price)}${r.live ? " ●" : ""} · оборот ${bigRub(r.value)}${r.avg_value ? " · в день ≈" + bigRub(r.avg_value) : ""} · ${esc(r.time || "—")}
       ${r.type === "share" ? " · " + (r.blue ? "голубая фишка · " : "") + (tierName[r.tier] || "") : ""}</div>
     </div>`).join("")
     : `<div class="empty">Ничего не найдено</div>`;

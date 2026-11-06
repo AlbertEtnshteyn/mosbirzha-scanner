@@ -355,6 +355,59 @@ def _hhmm(*vals):
     return ""
 
 
+_AVG_TURN = {"date": None, "data": {}, "busy": False}
+
+
+def avg_turnover(days=10):
+    """Средний дневной оборот акций (₽) за прошлые торговые дни по итогам торгов Мосбиржи — {тикер: ₽}.
+    Считается раз в день в фоне (около 30 запросов к Мосбирже); пока не готово — пустой словарь."""
+    import threading as _t
+    today = datetime.now(sc.MSK).date()
+    if _AVG_TURN["date"] == today or _AVG_TURN["busy"]:
+        return _AVG_TURN["data"]
+    path = os.path.join(sc.HERE, "avg_turnover.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            js = json.load(f)
+        if js.get("date") == today.isoformat():
+            _AVG_TURN.update(date=today, data=js["data"])
+            return _AVG_TURN["data"]
+    except Exception:
+        pass
+
+    def job():
+        tot, cnt, d, got = {}, {}, today - timedelta(days=1), 0
+        try:
+            while got < days and d > today - timedelta(days=days * 3):
+                start, n_rows = 0, 0
+                while True:
+                    js = sc.iss_get("/history/engines/stock/markets/shares/boards/TQBR/securities.json",
+                                    {"date": d.isoformat(), "start": start, "iss.only": "history", "history.columns": "SECID,VALUE"}, retries=2)
+                    h = js.get("history") or {}
+                    rows = h.get("data") or []
+                    for sec, val in rows:
+                        if val:
+                            tot[sec] = tot.get(sec, 0) + float(val); cnt[sec] = cnt.get(sec, 0) + 1
+                    n_rows += len(rows)
+                    start += len(rows)
+                    if len(rows) < 100:
+                        break
+                if n_rows:
+                    got += 1
+                d -= timedelta(days=1)
+            data = {k: round(tot[k] / cnt[k]) for k in tot}
+            _AVG_TURN.update(date=today, data=data)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"date": today.isoformat(), "days": got, "data": data}, f)
+        except Exception:
+            pass
+        finally:
+            _AVG_TURN["busy"] = False
+    _AVG_TURN["busy"] = True
+    _t.Thread(target=job, daemon=True).start()
+    return _AVG_TURN["data"]
+
+
 def market_overview(tier_map=None, live_prices=None):
     """Состояние рынка по данным Мосбиржи: цена, изменение за день, оборот, время. Акции, индексы, валюта, фьючерсы.
     live_prices(tickers) -> {тикер: цена} — цены акций в реальном времени из Т-Инвестиций (если есть токен)."""
@@ -375,6 +428,9 @@ def market_overview(tier_map=None, live_prices=None):
                          "tier": tier, "blue": tk in sc.BLUE_CHIPS})
     except Exception as e:
         errors.append(f"акции: {e}")
+    avg = avg_turnover()
+    for r in rows:
+        r["avg_value"] = avg.get(r["ticker"])
     if live_prices:                                       # цены в реальном времени (данные Мосбиржи без подписки — с задержкой)
         try:
             lp = live_prices([r["ticker"] for r in rows if r["price"]])

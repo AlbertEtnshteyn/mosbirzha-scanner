@@ -282,10 +282,10 @@ class App(tk.Tk):
         tk.Label(self.mk_charts_fr, text="Выберите бумагу в таблице слева — здесь появятся графики 5 мин, 15 мин, 1 час и 1 день.",
                  bg="#131722", fg="#b2b5be").grid(row=0, column=0, columnspan=2, rowspan=2)
         self.mk_tree = self._tree(left8, [("ticker", "Тикер", 90), ("name", "Название", 200), ("price", "Цена", 90), ("pct", "Изм. за день", 100),
-                                       ("value", "Оборот, млн ₽", 110), ("time", "Время", 70), ("tier", "Эшелон", 110),
+                                       ("value", "Оборот сегодня, млн ₽", 110), ("avg", "Оборот в день, млн ₽", 110), ("time", "Время", 70), ("tier", "Эшелон", 110),
                                        ("form", "Формация EMA20 (сегодня)", 260)])
-        self.mk_tree["displaycolumns"] = ("ticker", "name", "price", "pct", "value", "time", "tier")
-        for c_, w_ in (("ticker", 70), ("name", 160), ("price", 75), ("pct", 85), ("value", 95), ("time", 55), ("tier", 95)):
+        self.mk_tree["displaycolumns"] = ("ticker", "name", "price", "pct", "value", "avg", "time", "tier")
+        for c_, w_ in (("ticker", 65), ("name", 140), ("price", 70), ("pct", 80), ("value", 105), ("avg", 105), ("time", 50), ("tier", 90)):
             self.mk_tree.column(c_, width=w_)
         def _sash():
             try:
@@ -294,7 +294,7 @@ class App(tk.Tk):
                 pass
         nb.bind("<<NotebookTabChanged>>", lambda _: self.after(50, _sash) if nb.select() == str(t8) and not self.mk_charts else None, add="+")
         self.mk_sort = ("pct", True)
-        for col in ("ticker", "name", "price", "pct", "value", "time", "tier", "form"):
+        for col in ("ticker", "name", "price", "pct", "value", "avg", "time", "tier", "form"):
             self.mk_tree.heading(col, command=lambda c=col: self._mk_sort_by(c))
         for v in (self.mk_type, self.mk_tier, self.mk_q):
             v.trace_add("write", lambda *_: self._render_market())
@@ -1804,7 +1804,7 @@ class App(tk.Tk):
         if q:
             R = [r for r in R if q in r["ticker"].upper() or q in str(r["name"]).upper()]
         col, rev = self.mk_sort
-        keyf = {"pct": lambda r: r.get("pct") if r.get("pct") is not None else -1e9, "value": lambda r: r.get("value") or 0,
+        keyf = {"pct": lambda r: r.get("pct") if r.get("pct") is not None else -1e9, "value": lambda r: r.get("value") or 0, "avg": lambda r: r.get("avg_value") or 0,
                 "price": lambda r: r.get("price") or 0, "time": lambda r: r.get("time") or "",
                 "tier": lambda r: str(r.get("tier") or ""), "ticker": lambda r: r["ticker"], "name": lambda r: str(r["name"]),
                 "form": lambda r: len(r.get("forms") or [])}[col]
@@ -1816,12 +1816,13 @@ class App(tk.Tk):
             self.mk_tree.insert("", "end", tags=(("pos" if p > 0 else "neg"),) if p else (), values=(
                 r["ticker"], r["name"], f"{r['price']:.6g}" + (" ●" if r.get("live") else ""),
                 f"{p:+.2f}%" if p is not None else "—", f"{(r.get('value') or 0) / 1e6:,.0f}".replace(",", " "),
+                (f"{r['avg_value'] / 1e6:,.1f}".replace(",", " ") if r.get("avg_value") else "—"),
                 r.get("time") or "—", ("голубая · " if r.get("blue") else "") + tn.get(r.get("tier"), "") if typ == "share" else "",
                 "; ".join(f"{f['tf']} {'▲' if f['side'] > 0 else '▼'} {f['status']}" for f in r.get("forms") or [])))
         s = d.get("summary", {})
         self.mk_sum.configure(text=(f"Акции: растут {s.get('up', 0)}, падают {s.get('down', 0)}, оборот {s.get('value', 0) / 1e9:.1f} млрд ₽ · "
                                     + ("цены акций в реальном времени (● — Т-Инвестиции)" if s.get("live") else "данные Мосбиржи (могут быть с задержкой)")
-                                    + f" · обновлено {d.get('time', '')[11:]} · показано {len(R)} · с формацией EMA20: {d.get('forms_n', 0)} · щелчок по заголовку — сортировка, двойной по строке — график"
+                                    + f" · обновлено {d.get('time', '')[11:]} · показано {len(R)} · «оборот в день» — средний за 10 торговых дней · щелчок по заголовку — сортировка, двойной по строке — график"
                                     + (f" · ошибки: {'; '.join(d['errors'])}" if d.get("errors") else "")))
 
     # --- результаты
