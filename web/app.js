@@ -294,6 +294,13 @@ $$("#tfSeg button").forEach((b) => (b.onclick = () => { CH.tf = +b.dataset.tf; l
 $("#chTicker").addEventListener("change", () => { CH.ticker = $("#chTicker").value.trim().toUpperCase(); loadChart(); });
 $("#chTicker").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
 $("#chHist").onchange = () => drawTrades();
+function fitPrice() {
+  if (!CH.chart) return;
+  CH.chart.priceScale("right").applyOptions({ autoScale: true });
+  const B = CH.data && CH.data.bars;
+  if (B && B.length) CH.chart.timeScale().setVisibleLogicalRange({ from: B.length - 120, to: B.length + 12 });
+}
+$("#chFit").onclick = fitPrice;
 $("#chPrev").onclick = () => {
   const T = CH.data && CH.data.trades; if (!T || !T.length) return;
   selectTrade(T.length - 1 - (CH.go++ % T.length));
