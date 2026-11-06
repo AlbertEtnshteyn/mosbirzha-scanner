@@ -345,6 +345,7 @@ async function loadChart(quiet) {
     const keepRange = quiet && CH.data && CH.data.bars.length ? CH.chart.timeScale().getVisibleLogicalRange() : null;
     CH.data = d;
     const B = d.bars;
+    if (!quiet) CH.chart.priceScale("right").applyOptions({ autoScale: true });   // новая бумага/ТФ — цена снова по размеру свечей
     CH.candles.setData(B.map((b) => ({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c })));
     CH.vol.setData(B.map((b) => ({ time: b.t, value: b.v, color: b.c >= b.o ? "rgba(38,166,154,.45)" : "rgba(239,83,80,.45)" })));
     CH.e10.setData(B.map((b, i) => ({ time: b.t, value: d.ema10[i] })));
@@ -366,7 +367,7 @@ async function loadChart(quiet) {
 function summary(d) {
   let s = "";
   if (![5, 15, 60].includes(d.tf)) s = "сделки робота показываются на 15м и 1ч";
-  else if (d.tf === 5) s = "на 5 мин робот не торгует — переключите на 15м или 1ч";
+  else if (d.tf === 5) s = "проверка по истории — на 15м и 1ч; настоящие сделки робота отмечены и здесь";
   else if (d.tier === "3") s = "3-й эшелон — робот не торгует";
   else if (!d.trades.length) s = `сделок робота за ${d.days} дн. нет`;
   else {
