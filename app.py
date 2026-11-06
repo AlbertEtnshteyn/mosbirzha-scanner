@@ -597,6 +597,8 @@ class App(tk.Tk):
         self.v_mto = tk.StringVar(value=str(self.s.get("mid_to", "18:00")))
         self.v_mexit = tk.StringVar(value=str(self.s.get("mid_exit", "23:45")))
         self.v_mshare = tk.StringVar(value=f"{float(self.s.get('mid_share', 10)):g}")
+        self.v_mliq = tk.StringVar(value=f"{float(self.s.get('mid_liq', 1.0)):g}")
+        self.v_mminv = tk.StringVar(value=f"{float(self.s.get('mid_min_turn', 0)):g}")
         self.MREF = {"7": "от открытия рынка 07:00", "10": "от открытия основной сессии 10:00 (лучше на истории)"}
         self.v_mref = tk.StringVar(value=self.MREF.get(str(self.s.get("mid_ref", "7")), self.MREF["7"]))
         self.v_mmulti = tk.BooleanVar(value=bool(self.s.get("mid_multi", True)))
@@ -623,6 +625,10 @@ class App(tk.Tk):
             ("hint", "0 — без ограничения; стоп и тейк остаются; у каждой позиции можно выбрать вручную (правая кнопка)"))
         row(b2, "На сделку, % счёта:", ent(self.v_mshare, 5), cb(self.v_lev, list(LEV.values()), 32),
             ck("торговать в выходные и праздники", self.v_wkend))
+        row(b2, "Но не больше, % дневного оборота бумаги:", ent(self.v_mliq, 5), "   не торговать бумаги с оборотом меньше, млн ₽ в день:", ent(self.v_mminv, 6),
+            ("hint", "0 — без ограничения; оборот — средний за прошлые дни"))
+        row(b2, ("hint", "чтобы не застрять в неликвиде: позиция уменьшается до этой доли оборота. На истории (152 акции, с переносом): без ограничения +89%, "
+                         "1% оборота +80% (просадка меньше), от 20 млн ₽/день +65%"))
         tk.Label(b2, text="Лонг: бумага выросла на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка; "
                           "стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Если отмечено несколько графиков — покупка на том, где цена первой дошла до середины.\n"
                           "С галочкой «несколько покупок» — после закрытия позиции снова, когда цена отойдёт выше середины и вернётся к ней.\n"
@@ -812,6 +818,7 @@ class App(tk.Tk):
             times[k] = f"{m // 60:02d}:{m % 60:02d}"
             var.set(times[k])
         self.s.update(mid_thr=mthr, mid_share=mshare,
+                      mid_liq=self._num(self.v_mliq.get(), 1.0), mid_min_turn=self._num(self.v_mminv.get(), 0),
                       mid_tfs=[k for k, v in self.v_mtfs.items() if v.get()] or [60],
                       mid_ref={v: k for k, v in self.MREF.items()}.get(self.v_mref.get(), "7"), mid_multi=self.v_mmulti.get(), mid_modes=[k for k, _ in rc.MID_MODES if self.v_mmodes[k].get()] or ["long"],
                       mid_carry={v: k for k, v in self.MCARRY.items()}.get(self.v_mcarry.get(), "none"),
@@ -1284,7 +1291,7 @@ class App(tk.Tk):
         right = ttk.LabelFrame(pw, text="Сделки (двойной щелчок — график)", padding=4); pw.add(right, weight=2)
         self.bt_tr = self._tree(right, [("date", "Дата", 85), ("time", "Вход", 50), ("ticker", "Бумага", 65), ("tf", "EMA", 45), ("entry", "Цена входа", 80),
                                         ("stop", "Стоп", 75), ("take", "Тейк", 75), ("exit", "Выход", 75), ("xt", "Время выхода", 95),
-                                        ("reason", "Причина", 70), ("pct", "Итог %", 65), ("rub", "Итог, ₽", 85)])
+                                        ("stake", "Сумма, ₽", 85), ("reason", "Причина", 70), ("pct", "Итог %", 65), ("rub", "Итог, ₽", 85)])
         self.bt_tr.bind("<Double-1>", lambda e: self._bt_chart())
         self._bt_res = None
         self.after(1500, self._bt_poll)
@@ -1387,7 +1394,7 @@ class App(tk.Tk):
         for x in reversed(res.get("trades", [])):
             self.bt_tr.insert("", "end", tags=("pos" if x["pct"] > 0 else "neg",),
                               values=(x["date"], x["time"], x["ticker"], tfn.get(x["tf"], x["tf"]) + (" ▼шорт" if x.get("side") == -1 else ""), f"{x['entry']:.6g}", f"{x['stop']:.6g}",
-                                      f"{x['take']:.6g}", f"{x['exit']:.6g}", x["exit_time"], x["reason"], f"{x['pct']:+.2f}",
+                                      f"{x['take']:.6g}", f"{x['exit']:.6g}", x["exit_time"], (f"{x.get('stake', 0):,.0f}").replace(",", " "), x["reason"], f"{x['pct']:+.2f}",
                                       (f"{x.get('rub', 0):+,.0f}").replace(",", " ")))
         self._bt_curve()
 
@@ -1445,6 +1452,13 @@ class App(tk.Tk):
             p.set_ticker()
         if hasattr(self, "live_watch"):
             self.live_watch([w.ticker for w in getattr(self, "charts", [])])
+
+    @staticmethod
+    def _num(v, default):
+        try:
+            return max(0.0, float(str(v).replace(",", ".").replace(" ", "")))
+        except ValueError:
+            return default
 
     def _robot_help(self):
         m = rc.mid_cfg(self.s)
@@ -1647,7 +1661,7 @@ class App(tk.Tk):
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
                    "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal",
-                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi", "mid_carry", "mid_carry_days", "mid_dir", "mid_modes"]
+                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi", "mid_carry", "mid_carry_days", "mid_dir", "mid_modes", "mid_liq", "mid_min_turn"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1672,6 +1686,7 @@ class App(tk.Tk):
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
         self.v_wkend.set(bool(s.get("trade_weekends", False)))
         self.v_mthr.set(f"{float(s.get('mid_thr', 2.5)):g}"); self.v_mshare.set(f"{float(s.get('mid_share', 10)):g}")
+        self.v_mliq.set(f"{float(s.get('mid_liq', 1.0)):g}"); self.v_mminv.set(f"{float(s.get('mid_min_turn', 0)):g}")
         for k, v in self.v_mtfs.items():
             v.set(k in [int(x) for x in (s.get("mid_tfs") or [s.get("mid_tf", 60) or 60])])
         self.v_mref.set(self.MREF.get(str(s.get("mid_ref", "7")), self.MREF["7"])); self.v_mmulti.set(bool(s.get("mid_multi", True)))

@@ -19,7 +19,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
-            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"]}
+            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"], "mid_liq": 1.0, "mid_min_turn": 0}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -109,7 +109,9 @@ def mid_cfg(s):
             "ref": 600 if str(s.get("mid_ref", "7")) == "10" else 420, "multi": bool(s.get("mid_multi", True)),
             "carry": s.get("mid_carry") if s.get("mid_carry") in ("all", "profit") else "none",
             "carry_days": int(s.get("mid_carry_days", 0) or 0),
-            "modes": mid_modes(s)}
+            "modes": mid_modes(s),
+            "liq": float(s.get("mid_liq", 1.0) or 0) / 100,          # не больше этой доли среднего дневного оборота бумаги
+            "min_turn": float(s.get("mid_min_turn", 0) or 0) * 1e6}  # не торговать бумаги с оборотом меньше, ₽ в день
 
 
 MID_MODES = [("idx_long", "индекс идёт вверх — лонг"), ("idx_short", "индекс идёт вниз — шорт"),
@@ -549,7 +551,8 @@ def _bt_read(path):
         next(r, None)
         for row in r:
             try:
-                out.append((datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S"), float(row[1]), float(row[2]), float(row[3]), float(row[4])))
+                out.append((datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S"), float(row[1]), float(row[2]), float(row[3]), float(row[4]),
+                            float(row[5]) if len(row) > 5 and row[5] else 0.0))
             except (ValueError, IndexError):
                 pass
     return out
@@ -559,9 +562,9 @@ def _bt_write(path, rows):
     tmp = path + ".tmp"
     with open(tmp, "w", newline="", encoding="utf-8") as f:
         w = _csv.writer(f)
-        w.writerow(["begin", "open", "high", "low", "close"])
-        for t, o, h, l, c in rows:
-            w.writerow([t.strftime("%Y-%m-%d %H:%M:%S"), o, h, l, c])
+        w.writerow(["begin", "open", "high", "low", "close", "value"])
+        for r in rows:
+            w.writerow([r[0].strftime("%Y-%m-%d %H:%M:%S"), r[1], r[2], r[3], r[4], round(r[5], 2) if len(r) > 5 else 0])
     os.replace(tmp, path)
 
 
@@ -572,6 +575,8 @@ def bt_bars(ti, token, ticker, since, log=print, prog=None):
     path = os.path.join(BT_DIR, f"{ticker}.csv")
     today = datetime.now(sc.MSK).date()
     old = _bt_read(path) if os.path.exists(path) else []
+    if old and not any(r[5] for r in old[-500:]):
+        old = []                                       # кэш старого вида (без оборота) — скачать заново
     fresh = old and datetime.fromtimestamp(os.path.getmtime(path)).date() == today
     if fresh and old[0][0].date() <= since + timedelta(days=7):
         return [r for r in old if r[0].date() >= since]
@@ -595,9 +600,10 @@ def bt_bars(ti, token, ticker, since, log=print, prog=None):
     except Exception as e:
         log(f"  {ticker}: архив Т-Инвестиций не ответил ({e}) — беру 5-минутки через API")
     if ok:
-        new = [(k, b[0], b[1], b[2], b[3]) for k, b in sorted(agg.bars.items())]
+        new = [(k, b[0], b[1], b[2], b[3], b[4]) for k, b in sorted(agg.bars.items())]
     else:                                              # запасной путь: 5-мин свечи API по неделям, не дольше 3 минут на бумагу
         new, d0, t_end = [], (_date(years[0], 1, 1) if keep else since), time.time() + 180
+        lot = float(ti.share(ticker).get("lot") or 1)
         d = d0
         while d <= today:
             if time.time() > t_end:
@@ -605,7 +611,7 @@ def bt_bars(ti, token, ticker, since, log=print, prog=None):
             prog(f"свечи API с {d:%d.%m.%Y}")
             a_ = datetime(d.year, d.month, d.day, tzinfo=sc.MSK)
             for r in ti.candles_range(ticker, a_, min(a_ + timedelta(days=7), datetime.now(sc.MSK)), 5):
-                new.append((r["t"], r["o"], r["h"], r["l"], r["c"]))
+                new.append((r["t"], r["o"], r["h"], r["l"], r["c"], r.get("v", 0) * lot * r["c"]))
             d += timedelta(days=7)
         new.sort()
     lo = new[0][0] if new else None
@@ -618,7 +624,7 @@ def bt_bars(ti, token, ticker, since, log=print, prog=None):
             if d.weekday() < 5 or d == today:
                 for r in ti.candles(ticker, d, datetime(d.year, d.month, d.day, 6, 50, tzinfo=sc.MSK),
                                     datetime(d.year, d.month, d.day, 23, 59, tzinfo=sc.MSK), 5):
-                    rows.append((r["t"], r["o"], r["h"], r["l"], r["c"]))
+                    rows.append((r["t"], r["o"], r["h"], r["l"], r["c"], r.get("v", 0) * float(ti.share(ticker).get("lot") or 1) * r["c"]))
             d += timedelta(days=1)
     except Exception:
         pass
@@ -648,7 +654,7 @@ def bt_imoex(since, log=print):
         if rows:
             _bt_write(path, rows)
     out, prev_close, day, last = {}, None, None, None
-    for t, o, h, l, c in rows:
+    for t, o, h, l, c, *_ in rows:
         if t.date() != day:
             prev_close, day = last, t.date()
         if prev_close:
@@ -663,7 +669,7 @@ def _bt_mids(rows, tf):
     e10 = e20 = None
     out = [None] * len(rows)
     cur_key, cur_close, mid = None, None, None
-    for i, (t, o, h, l, c) in enumerate(rows):
+    for i, (t, o, h, l, c, *_) in enumerate(rows):
         m = t.hour * 60 + t.minute
         key = t.date() if tf >= 1440 else (t.date(), m // tf)
         if key != cur_key:
@@ -696,8 +702,13 @@ def bt_run(data, m, imoex=None):
                 for j in range(start, i):
                     didx[j] = len(days)
                 days.append((start, i)); start = i
+        dval = [sum(rows[j][5] if len(rows[j]) > 5 else 0 for j in range(a_, z_)) for a_, z_ in days]
         busy = -1                                     # строка, до которой по бумаге открыта (перенесённая) позиция
         for di, (a, z) in enumerate(days):
+            prev = [v for v in dval[max(0, di - 10):di] if v > 0]
+            liq = sum(prev) / len(prev) if prev else 0.0          # средний дневной оборот за 10 прошлых дней, ₽
+            if m.get("min_turn") and liq and liq < m["min_turn"]:
+                continue
             tm = [r[0].hour * 60 + r[0].minute for r in rows[a:z]]
             ii = [k for k, x in enumerate(tm) if x >= m["ref"]]
             if not ii or tm[ii[0]] > m["ref"] + 5:
@@ -723,7 +734,7 @@ def bt_run(data, m, imoex=None):
             arm = {tf: (mids[tf][q] is not None and (rows[q][4] - mids[tf][q]) * sd > 0) for tf in m["tfs"]}
             r = q + 1
             while r < z and tm[r - a] < m["to"]:
-                t, o, h, l, c = rows[r]
+                t, o, h, l, c = rows[r][:5]
                 hit = None
                 for tf in m["tfs"]:
                     md = mids[tf][r]
@@ -790,6 +801,7 @@ def bt_run(data, m, imoex=None):
                 xp = px * (1 + sd * res)
                 busy = xr
                 trades.append({"date": t.strftime("%Y-%m-%d"), "time": t.strftime("%H:%M"), "ticker": tk, "tf": tf, "side": sd,
+                               "liq": round(liq), "cap": round(liq * m["liq"]) if m.get("liq") and liq else None,
                                "entry": round(px, 6), "stop": round(stop, 6), "take": round(take, 6), "exit": round(xp, 6),
                                "exit_time": rows[xr][0].strftime("%d.%m %H:%M"), "reason": why, "pct": round((res - BT_COST) * 100, 3)})
                 if not m["multi"] or why not in ("стоп", "тейк") or xr >= z:
@@ -815,7 +827,11 @@ def bt_summary(trades, share, capital=1_000_000):
         start = eq
         mo = months.setdefault(d[:7], {"m": d[:7], "n": 0, "sum": 0.0, "start": start, "rub": 0.0})
         for t in by_day[d]:
-            t["rub"] = round(start * share * t["pct"] / 100, 2)
+            stake = start * share
+            if t.get("cap"):
+                stake = min(stake, t["cap"])                       # не больше доли дневного оборота бумаги
+            t["stake"] = round(stake)
+            t["rub"] = round(stake * t["pct"] / 100, 2)
             eq += t["rub"]
             mo["n"] += 1
             mo["sum"] += t["pct"]
@@ -980,7 +996,9 @@ class Backtest:
                              f"{'несколько входов' if m['multi'] else 'один вход'} в день"
                              + {"none": ", во время выхода всё закрыть", "all": ", перенос всех позиций", "profit": ", перенос позиций в плюсе"}[m["carry"]]
                              + (f" (до {m['carry_days']} дн.)" if m["carry"] != "none" and m["carry_days"] else "")
-                             + f", {m['share'] * 100:g}% счёта на сделку; "
+                             + f", {m['share'] * 100:g}% счёта на сделку"
+                             + (f", но не больше {m['liq'] * 100:g}% дневного оборота бумаги" if m["liq"] else "")
+                             + (f", оборот не меньше {m['min_turn'] / 1e6:g} млн ₽/день" if m["min_turn"] else "") + "; "
                              f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}"),
                 "done": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
             self.state.update(progress="готово", pct=100)

@@ -1002,7 +1002,7 @@ class AutoTrader:
             self._set_status(f"ТОРГОВЛЯ: {mk}входы на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
 
     # ------------------------------------------------------------------ «Движение дня»: покупка на середине EMA10/EMA20
-    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0, "modes": ["long"]}
+    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0, "modes": ["long"], "liq": 0.01, "min_turn": 0}
 
     def _mid(self):
         return dict(self.MID_DEFAULT, **(self.sp.get("mid") or {}))
@@ -1033,6 +1033,21 @@ class AutoTrader:
         lv = (mid, min(b["l"] for b in day), max(b["h"] for b in day))
         self._mid_cache[(tk, tf)] = (now, lv)
         return lv
+
+    def _liq(self, tk, now):
+        """Средний дневной оборот бумаги, ₽, за прошлые дни из загруженной истории 5 мин (раз в день)."""
+        c = getattr(self, "_liq_cache", {})
+        if c.get(tk, (None,))[0] == now.date():
+            return c[tk][1]
+        days = {}
+        for b in self._bars5(tk, now):
+            if b["t"].date() < now.date():
+                days[b["t"].date()] = days.get(b["t"].date(), 0) + b.get("val", 0)
+        vals = [v for v in days.values() if v > 0]
+        v = sum(vals) / len(vals) if vals else 0.0
+        c[tk] = (now.date(), v)
+        self._liq_cache = c
+        return v
 
     def _mid_step(self, now):
         """Бумага ушла на порог от открытия (вверх — для лонга, вниз — для шорта) → следим; цена побывала за серединой
@@ -1110,13 +1125,26 @@ class AutoTrader:
                 base = self.b.portfolio_value() or self.capital
             except Exception:
                 pass
+            alloc = base * m["share"]
+            try:
+                liq = self._liq(tk, now)
+            except Exception:
+                liq = 0.0
+            if m["min_turn"] and liq and liq < m["min_turn"]:
+                self.st["traded"].append(tk)
+                self.log(f"«Движение дня»: {tk} — оборот {liq / 1e6:.1f} млн ₽ в день меньше {m['min_turn'] / 1e6:g} млн — не вхожу.")
+                continue
+            if m["liq"] and liq and alloc > liq * m["liq"]:
+                self.log(f"  {tk}: средний оборот {liq / 1e6:.1f} млн ₽ в день — позиция уменьшена до {m['liq'] * 100:g}% оборота: "
+                         f"{liq * m['liq']:,.0f} ₽ вместо {alloc:,.0f} ₽".replace(",", " "))
+                alloc = liq * m["liq"]
             n = sum(1 for x in self.st["traded"] if x == tk) + 1
             self.st["traded"].append(tk)
             lo_n, hi_n = ("лой", "хай") if side > 0 else ("хай", "лой")
             self.log(f"«Движение дня»: {tk} дошла до середины EMA10/EMA20 на {self._tf_name(tf)} ({mid:.4g}), цена {px:.4g} — {what}"
-                     + (f" №{n} за день" if n > 1 else "") + f" ({m['share'] * 100:g}% счёта), стоп {stop:.4g} ({lo_n} дня), "
+                     + (f" №{n} за день" if n > 1 else "") + f" (на {alloc:,.0f} ₽)".replace(",", " ") + f", стоп {stop:.4g} ({lo_n} дня), "
                      f"тейк {take:.4g} ({hi_n} дня), выход {hm(m['exit'])}.")
-            self._open(tk, side, base * m["share"], strat="mid", stop_level=stop, t1=take, exit_min=m["exit"], tf=tf)
+            self._open(tk, side, alloc, strat="mid", stop_level=stop, t1=take, exit_min=m["exit"], tf=tf)
 
     # ------------------------------------------------------------------ сканирование
     def _real_index(self, own):
