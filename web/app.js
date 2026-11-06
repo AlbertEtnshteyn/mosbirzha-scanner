@@ -78,6 +78,7 @@ function showTab(t) {
   if (t === "trades") loadTrades();
   if (t === "market") loadMarket();
   if (t === "settings") loadSettings();
+  if (t === "history") loadBT();
   if (t === "chart") { if (!CH.chart) loadChart(); else CH.chart.applyOptions({ width: $("#chart").clientWidth }); }
   window.scrollTo(0, 0);
 }
@@ -256,13 +257,12 @@ function renderState(st) {
 
   // кандидаты «движения дня»
   const S = st.scan || [];
-  $("#scanInfo").textContent = st.last_scan ? `порог ${(st.threshold * 100).toFixed(1)}%` : "";
-  $("#scan").innerHTML = S.length ? S.map(([tk, mv, why]) =>
-    `<div class="item tap" data-chart="${esc(tk)}" data-tf="5"><div class="hd"><span class="tk" style="font-size:14px">${esc(tk)}</span>
-      <span class="${why === "СИГНАЛ" ? cls(mv) : "muted"}">${pct(mv * 100)}</span></div><div class="meta">${why === "СИГНАЛ"
-      ? (st.day_on === false ? "проходит порог, но «движение дня» выключено" : st.day_mode !== "signal"
-        ? `кандидат — робот войдёт в ${esc(st.entry || "15:00")}, если движение сохранится` : "СИГНАЛ — вход сразу")
-      : esc(why)}</div></div>`).join("")
+  $("#scanInfo").textContent = st.last_scan ? `рост от ${String((SET && SET.mid_ref) || "7") === "10" ? "10:00" : "07:00"}, порог ${((SET && SET.mid_thr) || 2.5)}%` : "";
+  $("#scan").innerHTML = S.length ? S.map(([tk, mv, why]) => {
+    const on = /^(СЛЕЖУ|В ПОЗИЦИИ|порог есть)/.test(why);
+    return `<div class="item tap" data-chart="${esc(tk)}" data-tf="60"><div class="hd"><span class="tk" style="font-size:14px">${esc(tk)}</span>
+      <span class="${on ? cls(mv) : "muted"}">${pct(mv * 100)}</span></div><div class="meta">${on ? "<b>" + esc(why) + "</b>" : esc(why)}</div></div>`;
+  }).join("")
     : `<div class="empty">Данные появятся после 07:01</div>`;
 
   // формации
@@ -744,7 +744,7 @@ function renderSettings(s) {
     ${inp("finam_account", "Номер счёта Финама (пусто — первый доступный токену)")}
   </div>
   <div class="grp"><h3>Стратегия «Движение дня»</h3>
-    <div class="hint" style="margin-left:0">Только покупки. Бумага выросла от открытия на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка. Стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Покупок за день может быть несколько: после закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней.</div>
+    <div class="hint" style="margin-left:0">Только покупки. Бумага выросла от открытия на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка. Стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. С галочкой «несколько покупок» — после закрытия позиции снова, когда цена отойдёт выше середины и вернётся к ней.</div>
     ${inp("mid_thr", "Бумага выросла от открытия на, %", "number", 'step="0.1" inputmode="decimal"')}
     <div class="f"><span>EMA10 / EMA20 по графикам (можно несколько — покупка на том, где цена первой дошла до середины)</span>
       ${[[5, "5 мин"], [15, "15 мин"], [60, "1 час (лучше на истории)"], [1440, "1 день"]].map(([k, n]) => `<label class="c"><input type="checkbox" name="mtf_${k}" ${(SET.mid_tfs || [SET.mid_tf || 60]).map(Number).includes(k) ? "checked" : ""}><span>${n}</span></label>`).join("")}</div>
@@ -754,10 +754,11 @@ function renderSettings(s) {
     ${inp("mid_from", "Покупки с (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="10:00"')}
     ${inp("mid_to", "Покупки до (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="18:00"')}
     ${inp("mid_exit", "Выход в (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="23:45"')}
-    <div class="hint" style="margin-left:0">Рост считается от открытия рынка 07:00.</div>
+    ${sel("mid_ref", "Рост считать", [["7", "от открытия рынка 07:00"], ["10", "от открытия основной сессии 10:00 (лучше на истории)"]])}
+    ${chk("mid_multi", "Несколько покупок по бумаге за день", "После закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней. На истории хуже одной покупки.")}
     ${inp("mid_share", "На сделку, % счёта", "number", 'step="1" inputmode="decimal"')}
     ${sel("leverage", "Маржа", Object.entries(LEV))}
-    <div class="hint" style="margin-left:0">На истории (10.2025–10.2026, после затрат): акции индекса, 2,5%, EMA по 1 часу, с 10:00, выход 23:45 — 277 сделок, 60% в плюсе, +0,39% на сделку, просадка −1,8%. Выход 18:45 — вдвое хуже, EMA по 5 мин — около нуля.</div>
+    <div class="hint" style="margin-left:0">На истории (10.2025–10.2026, после затрат, акции индекса, 2,5%, EMA 1ч, выход 23:45): рост от 10:00 и одна покупка — +0,39% на сделку, просадка −1,5%; от 07:00 — +0,09%; от 07:00 и несколько покупок — +0,02%; EMA по дневке — −0,06%; выход 18:45 — вдвое хуже. Свои настройки — во вкладке «История».</div>
   </div>
   <div class="grp"><h3>Календарь</h3>
     ${chk("trade_weekends", "Торговать в выходные и праздничные дни (сессии выходного дня Мосбиржи)", "Робот смотрит календарь Мосбиржи: в праздники и выходные без торгов он не работает. Если галочка снята — в сессии выходного дня тоже не торгует (оборот там маленький, на истории не проверено).")}
@@ -804,7 +805,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     leverage: v("leverage"), trade_weekends: c("trade_weekends"),
     mid_thr: parseFloat(String(v("mid_thr")).replace(",", ".")) || 2.5, mid_tfs: [5, 15, 60, 1440].filter((k) => c("mtf_" + k)), mid_idx: c("mid_idx"),
     mid_from: (v("mid_from") || "10:00").trim(), mid_to: (v("mid_to") || "18:00").trim(), mid_exit: (v("mid_exit") || "23:45").trim(),
-    mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10,
+    mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10, mid_ref: v("mid_ref") || "7", mid_multi: c("mid_multi"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };
   if (!out.mid_tfs.length) out.mid_tfs = [60];
@@ -852,3 +853,52 @@ function start() {
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && KEY) { poll(); if (LV_CTRL && Date.now() - LV.t > 3000) LV_CTRL.abort(); } });
 start();
+
+// ---------------------------------------------------------------- проверка на истории
+let BT_DONE = null, BT_TIMER = null;
+async function loadBT() {
+  clearTimeout(BT_TIMER);
+  let st;
+  try { st = await api("/api/backtest"); } catch (e) { $("#btProg").textContent = "Нет связи: " + e.message; return; }
+  $("#btGo").disabled = !!st.running;
+  $("#btProg").innerHTML = st.error ? `<span class="neg">Ошибка: ${esc(st.error)}</span>`
+    : st.running ? `${esc(st.progress || "")} · ${st.pct || 0}%` : (st.result ? `посчитано ${esc(st.result.done)}` : "Ещё не запускалась.");
+  if (st.running || TAB === "history") BT_TIMER = setTimeout(() => { if (TAB === "history") loadBT(); }, st.running ? 1500 : 10000);
+  const r = st.result;
+  if (!r || (BT_DONE && BT_DONE === r.done)) return;
+  BT_DONE = r.done;
+  const S = r.summary || {};
+  $("#btSet").textContent = `${r.period} · бумаг ${r.tickers} · ${r.settings}`;
+  $("#btSum").innerHTML = !S.n ? `<div class="muted">Сделок за период нет.</div>` :
+    `<div class="item"><div class="hd"><b>Сделок ${S.n} · в плюсе ${S.win}%</b><span class="${cls(S.avg)}">средняя ${pct(S.avg)}</span></div>
+     <div class="meta">сумма ${pct(S.sum, 1)} · счёт ${pct(S.total, 1)} · просадка ${pct(S.dd, 1)}${S.pf ? " · профит-фактор " + S.pf : ""}<br>
+     прибыльная ${pct(S.avg_win)} · убыточная ${pct(S.avg_loss)} · выходы: ${Object.entries(S.reasons || {}).map(([k, v]) => esc(k) + " " + v).join(", ")}</div></div>`;
+  $("#btMon").innerHTML = (S.months || []).map((m) => `<div class="item"><div class="hd"><span>${esc(m.m)} · сделок ${m.n}</span><span class="${cls(m.sum)}">${pct(m.sum)} · счёт ${pct(m.eq)}</span></div></div>`).join("");
+  const tfn = { 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" };
+  $("#btTr").innerHTML = (r.trades || []).slice().reverse().slice(0, 300).map((x) =>
+    `<div class="item tap" data-chart="${esc(x.ticker)}" data-tf="${x.tf}"><div class="hd"><span><b>${esc(x.ticker)}</b> <span class="muted small">${esc(x.date)} ${esc(x.time)} · EMA ${tfn[x.tf] || x.tf}</span></span><span class="${cls(x.pct)}">${pct(x.pct)}</span></div>
+     <div class="meta">вход ${fmt(x.entry)} · стоп ${fmt(x.stop)} · тейк ${fmt(x.take)} → ${fmt(x.exit)} (${esc(x.reason)}, ${esc(x.exit_time)})</div></div>`).join("");
+  drawBTCurve(S.curve || []);
+}
+function drawBTCurve(cur) {
+  const cv = $("#btCurve"), dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+  if (cur.length < 2) return;
+  const ys = cur.map((c) => c[1]), lo = Math.min(0, ...ys), hi = Math.max(0, ...ys), sp = (hi - lo) || 1;
+  const X = (i) => 40 + (w - 48) * i / (cur.length - 1), Y = (v) => 8 + (h - 26) * (1 - (v - lo) / sp);
+  g.strokeStyle = "#555"; g.setLineDash([3, 3]); g.beginPath(); g.moveTo(40, Y(0)); g.lineTo(w - 8, Y(0)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "#9aa3b2"; g.font = "11px sans-serif"; g.textAlign = "right";
+  g.fillText(hi.toFixed(1) + "%", 36, Y(hi) + 4); g.fillText(lo.toFixed(1) + "%", 36, Y(lo) + 4);
+  g.textAlign = "left"; g.fillText(cur[0][0], 40, h - 4); g.textAlign = "right"; g.fillText(cur[cur.length - 1][0], w - 8, h - 4);
+  g.strokeStyle = ys[ys.length - 1] >= 0 ? "#26a69a" : "#ef5350"; g.lineWidth = 2; g.beginPath();
+  cur.forEach((c, i) => (i ? g.lineTo(X(i), Y(c[1])) : g.moveTo(X(i), Y(c[1])))); g.stroke();
+}
+$("#btGo").onclick = async () => {
+  try {
+    const r = await api("/api/backtest", { months: +$("#btPer").value });
+    if (r.ok === false) toast(r.msg || "Не запустилась"); else { toast("Проверка запущена"); BT_DONE = null; }
+  } catch (e) { toast("Ошибка: " + e.message); }
+  loadBT();
+};
+$("#btStop").onclick = async () => { try { await api("/api/backtest", { stop: true }); } catch (e) { } loadBT(); };

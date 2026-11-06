@@ -19,7 +19,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
-            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10}
+            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -105,7 +105,8 @@ def mid_cfg(s):
     return {"thr": float(s.get("mid_thr", 2.5) or 2.5) / 100,
             "from": hhmm(s.get("mid_from", "10:00"), 600), "to": hhmm(s.get("mid_to", "18:00"), 1080),
             "exit": hhmm(s.get("mid_exit", "23:45"), 1425), "tfs": sorted(set(tfs), reverse=True),
-            "idx": bool(s.get("mid_idx", False)), "share": float(s.get("mid_share", 10) or 10) / 100}
+            "idx": bool(s.get("mid_idx", False)), "share": float(s.get("mid_share", 10) or 10) / 100,
+            "ref": 600 if str(s.get("mid_ref", "7")) == "10" else 420, "multi": bool(s.get("mid_multi", True))}
 
 
 def chart_sp(s):
@@ -502,3 +503,337 @@ def reset_trading(token, capital, log=print, broker="tinvest"):
                                                     "deposit": capital}])
     log(f"История сделок и баланса очищена (копия: {os.path.basename(arch)}). Начинаем с {capital:,.0f} ₽.".replace(",", " "))
     return {"capital": capital, "archive": os.path.basename(arch)}
+
+
+# ====================================================================== проверка «Движения дня» на истории
+import csv as _csv
+import threading as _th
+from datetime import date as _date
+
+BT_DIR = os.path.join(sc.HERE, "history_bt")          # кэш 5-мин свечей для проверки на истории
+BT_COST = 0.0016                                       # комиссия и проскальзывание на сделку (туда-обратно)
+
+
+def _bt_read(path):
+    out = []
+    with open(path, encoding="utf-8") as f:
+        r = _csv.reader(f)
+        next(r, None)
+        for row in r:
+            try:
+                out.append((datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S"), float(row[1]), float(row[2]), float(row[3]), float(row[4])))
+            except (ValueError, IndexError):
+                pass
+    return out
+
+
+def _bt_write(path, rows):
+    tmp = path + ".tmp"
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        w = _csv.writer(f)
+        w.writerow(["begin", "open", "high", "low", "close"])
+        for t, o, h, l, c in rows:
+            w.writerow([t.strftime("%Y-%m-%d %H:%M:%S"), o, h, l, c])
+    os.replace(tmp, path)
+
+
+def bt_bars(ti, token, ticker, since, log=print):
+    """5-мин свечи бумаги с даты since: кэш на диске + архив Т-Инвестиций (один запрос на год), запасной путь — Мосбиржа."""
+    import history_dl as hd
+    os.makedirs(BT_DIR, exist_ok=True)
+    path = os.path.join(BT_DIR, f"{ticker}.csv")
+    today = datetime.now(sc.MSK).date()
+    old = _bt_read(path) if os.path.exists(path) else []
+    fresh = old and datetime.fromtimestamp(os.path.getmtime(path)).date() == today
+    if fresh and old[0][0].date() <= since + timedelta(days=7):
+        return [r for r in old if r[0].date() >= since]
+    # что докачать: годы, которых нет (или с начала текущего года — архив дополняется каждый день)
+    have_from = old[0][0].date() if old else None
+    years = list(range(since.year, today.year + 1))
+    if have_from and have_from <= since + timedelta(days=7):
+        years = [today.year]
+        keep = [r for r in old if r[0].date() < _date(today.year, 1, 1)]
+    else:
+        keep = []
+    agg = hd.Agg5()
+    ok = False
+    try:
+        sh = ti.share(ticker)
+        for y in years:
+            hd.tinvest_year(token, sh["uid"], y, float(sh.get("lot") or 1), agg, since if y == since.year else _date(y, 1, 1))
+        ok = True
+    except Exception as e:
+        log(f"  {ticker}: архив Т-Инвестиций не ответил ({e}) — беру с сайта Мосбиржи")
+    if not ok:
+        agg = hd.Agg5()
+        hd.iss_range(ticker, _date(years[0], 1, 1) if keep else since, today, agg)
+    new = [(k, b[0], b[1], b[2], b[3]) for k, b in sorted(agg.bars.items())]
+    lo = new[0][0] if new else None
+    rows = [r for r in keep if not lo or r[0] < lo] + new
+    # сегодняшний день из архива ещё не пришёл — добрать свечами API
+    try:
+        last = rows[-1][0].date() if rows else since
+        d = last + timedelta(days=1)
+        while d <= today:
+            if d.weekday() < 5 or d == today:
+                for r in ti.candles(ticker, d, datetime(d.year, d.month, d.day, 6, 50, tzinfo=sc.MSK),
+                                    datetime(d.year, d.month, d.day, 23, 59, tzinfo=sc.MSK), 5):
+                    rows.append((r["t"], r["o"], r["h"], r["l"], r["c"]))
+            d += timedelta(days=1)
+    except Exception:
+        pass
+    if rows:
+        _bt_write(path, rows)
+    return [r for r in rows if r[0].date() >= since]
+
+
+def bt_imoex(since, log=print):
+    """IMOEX по 10-мин свечам Мосбиржи: {время конца свечи → изменение к вчерашнему закрытию}. Для фильтра «IMOEX в плюсе»."""
+    os.makedirs(BT_DIR, exist_ok=True)
+    path = os.path.join(BT_DIR, "_IMOEX10.csv")
+    today = datetime.now(sc.MSK).date()
+    rows = _bt_read(path) if os.path.exists(path) else []
+    if not rows or datetime.fromtimestamp(os.path.getmtime(path)).date() != today or rows[0][0].date() > since:
+        rows, start = [], 0
+        while True:
+            js = sc.iss_get("/engines/stock/markets/index/securities/IMOEX/candles.json",
+                            {"interval": 10, "from": (since - timedelta(days=7)).isoformat(), "till": today.isoformat(), "start": start})
+            c = js["candles"]
+            for x in (dict(zip(c["columns"], r)) for r in c["data"]):
+                rows.append((datetime.strptime(x["begin"], "%Y-%m-%d %H:%M:%S"), float(x["open"]), float(x["high"]),
+                             float(x["low"]), float(x["close"])))
+            start += len(c["data"])
+            if len(c["data"]) < 500:
+                break
+        if rows:
+            _bt_write(path, rows)
+    out, prev_close, day, last = {}, None, None, None
+    for t, o, h, l, c in rows:
+        if t.date() != day:
+            prev_close, day = last, t.date()
+        if prev_close:
+            out[t + timedelta(minutes=10)] = c / prev_close - 1
+        last = c
+    return out
+
+
+def _bt_mids(rows, tf):
+    """Середина (EMA10+EMA20)/2 по последней закрытой свече ТФ — для каждой 5-мин свечи."""
+    a10, a20 = 2 / 11, 2 / 21
+    e10 = e20 = None
+    out = [None] * len(rows)
+    cur_key, cur_close, mid = None, None, None
+    for i, (t, o, h, l, c) in enumerate(rows):
+        m = t.hour * 60 + t.minute
+        key = t.date() if tf >= 1440 else (t.date(), m // tf)
+        if key != cur_key:
+            if cur_close is not None:                 # предыдущая свеча ТФ закрылась
+                e10 = cur_close if e10 is None else e10 + a10 * (cur_close - e10)
+                e20 = cur_close if e20 is None else e20 + a20 * (cur_close - e20)
+                mid = (e10 + e20) / 2
+            cur_key = key
+        cur_close = c
+        out[i] = mid
+    return out
+
+
+def bt_run(data, m, imoex=None):
+    """Проверка «Движения дня» по 5-мин свечам. data: {тикер: [(t,o,h,l,c), …]}. Возвращает список сделок."""
+    trades = []
+    ex = m["exit"]
+    for tk, rows in data.items():
+        if len(rows) < 100:
+            continue
+        mids = {tf: _bt_mids(rows, tf) for tf in m["tfs"]}
+        days, start = [], 0
+        didx = [0] * len(rows)
+        for i in range(1, len(rows) + 1):
+            if i == len(rows) or rows[i][0].date() != rows[start][0].date():
+                for j in range(start, i):
+                    didx[j] = len(days)
+                days.append((start, i)); start = i
+        for di, (a, z) in enumerate(days):
+            tm = [r[0].hour * 60 + r[0].minute for r in rows[a:z]]
+            ii = [k for k, x in enumerate(tm) if x >= m["ref"]]
+            if not ii or tm[ii[0]] > m["ref"] + 5:
+                continue
+            op = rows[a + ii[0]][1]
+            day_from = a + ([k for k, x in enumerate(tm) if x >= 420] or [0])[0]
+            q = None
+            for r in range(a + ii[0], z):
+                x = tm[r - a]
+                if x < m["from"] - 5:
+                    continue
+                if x >= m["to"]:
+                    break
+                if rows[r][4] / op - 1 >= m["thr"]:
+                    q = r
+                    break
+            if q is None:
+                continue
+            arm = {tf: (mids[tf][q] is not None and rows[q][4] > mids[tf][q]) for tf in m["tfs"]}
+            r = q + 1
+            while r < z and tm[r - a] < m["to"]:
+                t, o, h, l, c = rows[r]
+                hit = None
+                for tf in m["tfs"]:
+                    md = mids[tf][r]
+                    if md is None:
+                        continue
+                    if arm[tf] and l <= md and hit is None:
+                        hit = (tf, md)
+                if hit is None or (m["idx"] and imoex is not None and not ((imoex.get(t.replace(minute=t.minute - t.minute % 10)) or 0) > 0)):
+                    for tf in m["tfs"]:
+                        md = mids[tf][r]
+                        if md is not None and c > md:
+                            arm[tf] = True
+                    r += 1
+                    continue
+                tf, md = hit
+                px = o if o <= md else md
+                for x in m["tfs"]:
+                    arm[x] = False
+                if r <= day_from:
+                    r += 1; continue
+                stop = min(x[3] for x in rows[day_from:r]) * (1 - at.MID_STOP_BUF)
+                take = max(x[2] for x in rows[day_from:r])
+                if not (stop < px < take):
+                    r += 1; continue
+                ex_day = di if tm[r - a] < ex else di + 1          # вошли после времени выхода — выход на следующий день
+                res, why, xr, xt = None, "", r, t
+                if l <= stop:
+                    res, why = stop / px - 1, "стоп"
+                else:
+                    k = r + 1
+                    while k < len(rows):
+                        tk_t = rows[k][0]
+                        kd = didx[k]
+                        if kd > ex_day or (kd == ex_day and tk_t.hour * 60 + tk_t.minute >= ex):
+                            res, why, xr = rows[k - 1][4] / px - 1, "время", k - 1
+                            break
+                        if rows[k][3] <= stop:
+                            res, why, xr = min(rows[k][1], stop) / px - 1, "стоп", k
+                            break
+                        if rows[k][2] >= take:
+                            res, why, xr = max(rows[k][1], take) / px - 1, "тейк", k
+                            break
+                        k += 1
+                    if res is None:
+                        res, why, xr = rows[-1][4] / px - 1, "конец данных", len(rows) - 1
+                xp = px * (1 + res)
+                trades.append({"date": t.strftime("%Y-%m-%d"), "time": t.strftime("%H:%M"), "ticker": tk, "tf": tf,
+                               "entry": round(px, 6), "stop": round(stop, 6), "take": round(take, 6), "exit": round(xp, 6),
+                               "exit_time": rows[xr][0].strftime("%d.%m %H:%M"), "reason": why, "pct": round((res - BT_COST) * 100, 3)})
+                if not m["multi"] or why != "стоп" and why != "тейк" or xr >= z:
+                    break
+                r = xr + 1
+    trades.sort(key=lambda x: (x["date"], x["time"]))
+    return trades
+
+
+def bt_summary(trades, share):
+    if not trades:
+        return {"n": 0}
+    pcts = [t["pct"] for t in trades]
+    win = [x for x in pcts if x > 0]
+    los = [x for x in pcts if x <= 0]
+    by_day = {}
+    for t in trades:
+        by_day[t["date"]] = by_day.get(t["date"], 0) + t["pct"] / 100 * share
+    eq, peak, dd, curve = 1.0, 1.0, 0.0, []
+    months = {}
+    for d in sorted(by_day):
+        eq *= 1 + by_day[d]
+        peak = max(peak, eq)
+        dd = min(dd, eq / peak - 1)
+        curve.append([d, round((eq - 1) * 100, 3)])
+        mo = months.setdefault(d[:7], {"m": d[:7], "n": 0, "sum": 0.0, "eq": 1.0})
+        mo["eq"] *= 1 + by_day[d]
+    for t in trades:
+        mo = months[t["date"][:7]]
+        mo["n"] += 1
+        mo["sum"] += t["pct"]
+    reasons = {}
+    for t in trades:
+        reasons[t["reason"]] = reasons.get(t["reason"], 0) + 1
+    return {"n": len(trades), "win": round(len(win) / len(trades) * 100, 1), "avg": round(sum(pcts) / len(pcts), 3),
+            "sum": round(sum(pcts), 2), "total": round((eq - 1) * 100, 2), "dd": round(dd * 100, 2),
+            "pf": round(sum(win) / -sum(los), 2) if los and sum(los) < 0 else None,
+            "avg_win": round(sum(win) / len(win), 3) if win else None, "avg_loss": round(sum(los) / len(los), 3) if los else None,
+            "reasons": reasons, "curve": curve,
+            "months": [{"m": v["m"], "n": v["n"], "sum": round(v["sum"], 2), "eq": round((v["eq"] - 1) * 100, 2)} for _, v in sorted(months.items())]}
+
+
+class Backtest:
+    """Фоновая проверка на истории: одна за раз; состояние читают экран программы и телефон."""
+    def __init__(self):
+        self.state = {"running": False, "progress": "", "pct": 0, "result": None, "error": None}
+        self._stop = _th.Event()
+
+    def start(self, token, sandbox, s, months, tickers=None, log=print):
+        if self.state["running"]:
+            return False
+        self._stop.clear()
+        self.state = {"running": True, "progress": "начинаю…", "pct": 0, "result": None, "error": None,
+                      "started": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
+        _th.Thread(target=self._run, args=(token, sandbox, dict(s), int(months), tickers, log), daemon=True).start()
+        return True
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self, token, sandbox, s, months, tickers, log):
+        try:
+            if not token:
+                raise ValueError("нужен токен Т-Инвестиций (Настройки)")
+            ti = sc.TInvest(token, "sandbox" if sandbox else "prod")
+            m = mid_cfg(s)
+            dm = list(s.get("day_markets") or ["imoex"])
+            if not tickers:
+                self.state["progress"] = "список бумаг…"
+                idx = sc.imoex_tickers()
+                if dm == ["imoex"]:
+                    tickers = idx
+                else:
+                    b = at.SandboxBroker.__new__(at.SandboxBroker)
+                    b.ti, b.log = ti, log
+                    tickers = b.universe(dm, idx, log) or idx
+            since = (datetime.now(sc.MSK) - timedelta(days=int(months * 30.5))).date()
+            data, fails = {}, []
+            for n, tk in enumerate(tickers, 1):
+                if self._stop.is_set():
+                    raise RuntimeError("остановлено")
+                self.state.update(progress=f"свечи {tk} ({n}/{len(tickers)})", pct=int(n / len(tickers) * 90))
+                try:
+                    data[tk] = bt_bars(ti, token, tk, since, log)
+                except Exception as e:
+                    fails.append(tk)
+                    log(f"  {tk}: история не получена ({e})")
+            imx = None
+            if m["idx"]:
+                self.state["progress"] = "IMOEX…"
+                try:
+                    imx = bt_imoex(since, log)
+                except Exception as e:
+                    log(f"IMOEX для фильтра не получен ({e}) — фильтр в проверке не учитывается")
+            self.state.update(progress="считаю сделки…", pct=95)
+            trades = bt_run(data, m, imx)
+            sm = bt_summary(trades, m["share"])
+            tfn = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}
+            self.state["result"] = {
+                "summary": sm, "trades": trades[-400:], "tickers": len(data), "fails": fails,
+                "period": f"{since:%d.%m.%Y} — {datetime.now(sc.MSK):%d.%m.%Y}",
+                "settings": (f"рост {m['thr'] * 100:g}% от {at.hm(m['ref'])}, EMA {', '.join(tfn[x] for x in m['tfs'])}, "
+                             f"покупки {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}, "
+                             f"{'несколько покупок' if m['multi'] else 'одна покупка'} в день"
+                             + (", только при IMOEX в плюсе" if m["idx"] else "") + f", {m['share'] * 100:g}% счёта на сделку; "
+                             f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}"),
+                "done": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
+            self.state.update(progress="готово", pct=100)
+        except Exception as e:
+            self.state.update(error=str(e), progress="ошибка")
+        finally:
+            self.state["running"] = False
+
+
+BACKTEST = Backtest()

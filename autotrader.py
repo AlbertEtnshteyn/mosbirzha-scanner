@@ -775,10 +775,35 @@ class AutoTrader:
             except Exception:
                 pass
         self.on_update({"status": self.status, "market": self.market, "market_open": getattr(self, "market_open", None),
-                        "idx_ref": self.sp.get("idx_ref", "imoex"), "scan": list(self.scan_rows),
+                        "idx_ref": self.sp.get("idx_ref", "imoex"), "scan": self._scan_view(),
                         "spikes": list(self.spikes[-50:]),
                         "positions": [self._pos_view(p) for p in self.positions],
                         "last_scan": self.last_scan, "balance": self.balance})
+
+    def _scan_view(self):
+        """Кандидаты для экрана: рост от 07:00 и что с бумагой делает «Движение дня»."""
+        m = self._mid()
+        q = self.st.get("mid_q", {})
+        held = {p["ticker"] for p in self.positions}
+        mv_ = getattr(self, "mid_view", {})
+        t = self.clock(); t = t.hour * 60 + t.minute
+        out = []
+        for tk, mv, why in self.scan_rows:
+            if tk in held:
+                txt = "В ПОЗИЦИИ"
+            elif tk in q:
+                px = self.prices.get(tk)
+                lv = [(tf, mv_.get(f"{tk}|{tf}")) for tf in m["tfs"]]
+                lv = [f"{self._tf_name(tf)} {x:.4g}" + (f" ({(x / px - 1) * 100:+.1f}%)" if px else "") for tf, x in lv if x]
+                n = sum(1 for x in self.st.get("traded", []) if x == tk)
+                txt = ("СЛЕЖУ с " + q[tk] + (" · покупок " + str(n) if n else "") + " · середина EMA: " + (", ".join(lv) or "считаю")
+                       if t < m["to"] else "покупки на сегодня закончены")
+            elif why == "СИГНАЛ":
+                txt = f"порог есть — покупки с {hm(m['from'])}" if t < m["from"] else "порог есть"
+            else:
+                txt = why
+            out.append((tk, mv, txt))
+        return out
 
     def _pos_view(self, p):
         """Позиция для экрана: текущая цена и результат в ₽ (без комиссий)."""
@@ -943,7 +968,7 @@ class AutoTrader:
             self._set_status(f"ТОРГОВЛЯ: {mk}покупки на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
 
     # ------------------------------------------------------------------ «Движение дня»: покупка на середине EMA10/EMA20
-    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10}
+    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True}
 
     def _mid(self):
         return dict(self.MID_DEFAULT, **(self.sp.get("mid") or {}))
@@ -988,9 +1013,9 @@ class AutoTrader:
         for tk, mv, why in self.scan_rows:
             if why == "СИГНАЛ" and tk not in q:
                 q[tk] = now.strftime("%H:%M")
-                self.log(f"«Движение дня»: {tk} {mv * 100:+.2f}% от 07:00 — слежу, покупка на середине EMA10/EMA20 ({', '.join(self._tf_name(x) for x in m['tfs'])}).")
+                self.log(f"«Движение дня»: {tk} {mv * 100:+.2f}% от {hm(m['ref'])} — слежу, покупка на середине EMA10/EMA20 ({', '.join(self._tf_name(x) for x in m['tfs'])}).")
                 self._save()
-        watch = [tk for tk in q if tk not in held]
+        watch = [tk for tk in q if tk not in held and (m["multi"] or tk not in self.st["traded"])]
         if not watch:
             return
         try:
@@ -1126,7 +1151,7 @@ class AutoTrader:
                 self.opens[tk] = first[0]["o"]
             elif t > sc.OPEN_MIN + 5:
                 self.opens[tk] = None      # не торговалась в начале сессии — как в бэктесте, пропускаем
-        if True:                                     # «Движение дня»: рост всегда от открытия рынка 07:00
+        if self._mid()["ref"] < sc.OPEN_MIN or t < sc.OPEN_MIN + 1:   # рост от 07:00 (настройка) или от 10:00
             ref = {tk: o for tk, o in self.pre_opens.items() if o}  # от открытия рынка 07:00 (до 10:00 — всегда так)
         else:
             ref = {tk: o for tk, o in self.opens.items() if o}

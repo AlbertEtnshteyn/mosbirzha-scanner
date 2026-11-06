@@ -195,15 +195,9 @@ class App(tk.Tk):
         ttk.Button(bar, text="Терминал Т-Инвестиций", command=lambda: self.open_tbank(None)).pack(side="left", padx=(6, 0))
         self.robot_lbl = ttk.Label(t3, text="Запускаю поиск формаций…", style="Big.TLabel")
         self.robot_lbl.pack(anchor="w", pady=(10, 2))
-        ttk.Label(t3, text="Поиск формаций идёт постоянно с открытия программы — по будням с 07:00 до 23:50. "
-                           "«Старт торговли» — робот сам входит и выходит на демо-счёте (входы 09:00–19:00 или 10:00–18:00 — в настройках; "
-                           "перенос позиций на следующий день — см. настройки); "
-                           "«Стоп торговли» — только наблюдение и уведомления. Стратегия «15:00»: каждую минуту "
-                           "пересчитывает движение акций индекса, во время входа сам открывает сделки, стоп 3%, выход 16:59:50. "
-                           "Всплески объёма: после каждой 5-минутки ищет импульс на объёме (одна или несколько свечей подряд) → касание EMA20 → свечу-подтверждение "
-                           "(5м/15м/1ч), входит сам, стоп под низом всего отката, тейк1 на половине пути до хая (50%) → стоп в б/у и трейлинг, тейк2 на хае (50% остатка), остаток — трейлинг. "
-                           "Компьютер не должен засыпать, приложение должно быть открыто.",
-                  foreground="#555", justify="left", wraplength=1040).pack(anchor="w", pady=(0, 6))
+        self.robot_help = ttk.Label(t3, text="", foreground="#555", justify="left", wraplength=1200)
+        self.robot_help.pack(anchor="w", pady=(0, 6))
+        self._robot_help()
         vp = ttk.PanedWindow(t3, orient="vertical")
         vp.pack(fill="both", expand=True)
         mid = ttk.PanedWindow(vp, orient="horizontal")
@@ -212,7 +206,7 @@ class App(tk.Tk):
         self.lnb = lnb
         mid.add(lnb, weight=1)
         lf = ttk.Frame(lnb, padding=4)
-        lnb.add(lf, text="«Движение дня»: кандидаты")
+        lnb.add(lf, text="Кандидаты «Движения дня»")
         sf = ttk.Frame(lnb, padding=4)
         lnb.add(sf, text="Всплески объёма")
         self.spk_tree = self._tree(sf, [("time", "Импульс", 55), ("sig", "Сигнал", 55), ("ticker", "Бумага", 60), ("tf", "ТФ", 35), ("val", "Оборот, млн", 75),
@@ -227,7 +221,7 @@ class App(tk.Tk):
         self.after(4000, self._cal_tick)
         self.scan_lbl = ttk.Label(lf, text="—")
         self.scan_lbl.pack(anchor="w")
-        self.scan_tree = self._tree(lf, [("ticker", "Бумага", 70), ("move", "Движение", 80), ("reason", "Статус", 110)])
+        self.scan_tree = self._tree(lf, [("ticker", "Бумага", 60), ("move", "Рост", 70), ("reason", "Что делает робот", 330)])
         rf = ttk.LabelFrame(mid, text="Открытые позиции", padding=4)
         mid.add(rf, weight=1)
         pb = ttk.Frame(rf)
@@ -256,6 +250,8 @@ class App(tk.Tk):
         self.sb_tree = self._tree(hf, [("date", "Дата", 90), ("strat", "Стратегия", 90), ("ticker", "Бумага", 70), ("side", "Сторона", 70), ("lots", "Лотов", 60),
                                        ("entry", "Вход", 80), ("exit", "Выход", 80), ("reason", "Причина", 120), ("res", "Результат", 90)])
         nb.select(t3)
+        nb.hide(t1); nb.hide(t2)                        # «Сегодня» и «Журнал форвард-теста» — от прежней стратегии «15:00»
+        lnb.hide(sf)                                    # «Всплески объёма» — стратегия убрана
 
         # --- Рынки: состояние рынка, фильтры и сортировка
         t8 = ttk.Frame(nb, padding=10)
@@ -273,19 +269,37 @@ class App(tk.Tk):
         ttk.Label(top8, text="Поиск:").pack(side="left")
         ttk.Entry(top8, textvariable=self.mk_q, width=16).pack(side="left", padx=(4, 12))
         self.mk_form = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top8, text="только с формацией", variable=self.mk_form, command=self._render_market).pack(side="left", padx=(0, 12))
         ttk.Button(top8, text="Обновить", command=self.refresh_market).pack(side="left")
         self.mk_sum = ttk.Label(t8, text="", foreground="#555")
         self.mk_sum.pack(anchor="w", pady=4)
-        self.mk_tree = self._tree(t8, [("ticker", "Тикер", 90), ("name", "Название", 200), ("price", "Цена", 90), ("pct", "Изм. за день", 100),
+        pw8 = ttk.PanedWindow(t8, orient="horizontal")
+        pw8.pack(fill="both", expand=True)
+        left8 = ttk.Frame(pw8); pw8.add(left8, weight=2)
+        self.mk_charts_fr = tk.Frame(pw8, bg="#131722"); pw8.add(self.mk_charts_fr, weight=3)
+        for i in range(2):
+            self.mk_charts_fr.rowconfigure(i, weight=1, uniform="r"); self.mk_charts_fr.columnconfigure(i, weight=1, uniform="c")
+        self.mk_charts = []
+        tk.Label(self.mk_charts_fr, text="Выберите бумагу в таблице слева — здесь появятся графики 5 мин, 15 мин, 1 час и 1 день.",
+                 bg="#131722", fg="#b2b5be").grid(row=0, column=0, columnspan=2, rowspan=2)
+        self.mk_tree = self._tree(left8, [("ticker", "Тикер", 90), ("name", "Название", 200), ("price", "Цена", 90), ("pct", "Изм. за день", 100),
                                        ("value", "Оборот, млн ₽", 110), ("time", "Время", 70), ("tier", "Эшелон", 110),
                                        ("form", "Формация EMA20 (сегодня)", 260)])
+        self.mk_tree["displaycolumns"] = ("ticker", "name", "price", "pct", "value", "time", "tier")
+        for c_, w_ in (("ticker", 70), ("name", 160), ("price", 75), ("pct", 85), ("value", 95), ("time", 55), ("tier", 95)):
+            self.mk_tree.column(c_, width=w_)
+        def _sash():
+            try:
+                pw8.sashpos(0, 640)
+            except tk.TclError:
+                pass
+        nb.bind("<<NotebookTabChanged>>", lambda _: self.after(50, _sash) if nb.select() == str(t8) and not self.mk_charts else None, add="+")
         self.mk_sort = ("pct", True)
         for col in ("ticker", "name", "price", "pct", "value", "time", "tier", "form"):
             self.mk_tree.heading(col, command=lambda c=col: self._mk_sort_by(c))
         for v in (self.mk_type, self.mk_tier, self.mk_q):
             v.trace_add("write", lambda *_: self._render_market())
         self.mk_tree.bind("<Double-1>", lambda e: (lambda tkr: self.open_chart(tkr, 15) if tkr else None)(self._sel_ticker(self.mk_tree)))
+        self.mk_tree.bind("<<TreeviewSelect>>", lambda e: self._mk_charts(self._sel_ticker(self.mk_tree)))
         self._mk = None
         self._mk_tab = t8
         nb.bind("<<NotebookTabChanged>>", lambda _: self.refresh_market() if nb.select() == str(t8) else None, add="+")
@@ -407,6 +421,11 @@ class App(tk.Tk):
         ttk.Button(f6, text="Установить / обновить сервер", style="Start.TButton", command=self.server_install).pack(side="left")
         ttk.Button(f6, text="Показать QR-код для телефона", command=self.server_qr).pack(side="left", padx=8)
         ttk.Button(f6, text="Обновить сервер без пароля (оба)", command=self.server_update_quick).pack(side="left")
+
+        # --- Проверка на истории
+        t9 = ttk.Frame(nb, padding=10)
+        nb.add(t9, text="Проверка на истории")
+        self._build_backtest(t9)
 
         # --- Настройки
         t4o = ttk.Frame(nb)
@@ -578,20 +597,26 @@ class App(tk.Tk):
         self.v_mto = tk.StringVar(value=str(self.s.get("mid_to", "18:00")))
         self.v_mexit = tk.StringVar(value=str(self.s.get("mid_exit", "23:45")))
         self.v_mshare = tk.StringVar(value=f"{float(self.s.get('mid_share', 10)):g}")
+        self.MREF = {"7": "от открытия рынка 07:00", "10": "от открытия основной сессии 10:00 (лучше на истории)"}
+        self.v_mref = tk.StringVar(value=self.MREF.get(str(self.s.get("mid_ref", "7")), self.MREF["7"]))
+        self.v_mmulti = tk.BooleanVar(value=bool(self.s.get("mid_multi", True)))
         ent = lambda var, w: (lambda fr: ttk.Entry(fr, textvariable=var, width=w))
         b2 = box("Стратегия «Движение дня» — покупка на середине между EMA10 и EMA20")
         row(b2, "Бумага выросла от открытия на, %:", ent(self.v_mthr, 5), "EMA по графикам:",
             *[ck(n, self.v_mtfs[k]) for k, n in self.MTF.items()], ck("покупать только когда IMOEX в плюсе", self.v_midx))
         markets(b2, self.v_dmk)
+        row(b2, "Рост считать:", cb(self.v_mref, list(self.MREF.values()), 46),
+            ck("несколько покупок по бумаге за день (на истории хуже)", self.v_mmulti))
         row(b2, "Покупки с", ent(self.v_mfrom, 6), "до", ent(self.v_mto, 6), "   выход в", ent(self.v_mexit, 6),
-            ("hint", "время вписывается вручную, ЧЧ:ММ; рост считается от открытия рынка 07:00"))
+            ("hint", "время вписывается вручную, ЧЧ:ММ"))
         row(b2, "На сделку, % счёта:", ent(self.v_mshare, 5), cb(self.v_lev, list(LEV.values()), 32),
             ck("торговать в выходные и праздники", self.v_wkend))
         tk.Label(b2, text="Только покупки. Бумага выросла на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка; "
                           "стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Если отмечено несколько графиков — покупка на том, где цена первой дошла до середины.\n"
-                          "Покупок за день может быть несколько: после закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней.\n"
-                          "На истории (10.2025–10.2026, после затрат): акции индекса, 2,5%, EMA по 1 часу, с 10:00, выход 23:45 — "
-                          "277 сделок, 60% в плюсе, +0,39% на сделку, просадка −1,8%; выход 18:45 — вдвое хуже; EMA по 5 мин — около нуля.",
+                          "С галочкой «несколько покупок» — после закрытия позиции снова, когда цена отойдёт выше середины и вернётся к ней.\n"
+                          "На истории (10.2025–10.2026, после затрат, акции индекса, 2,5%, EMA 1ч, выход 23:45): рост от 10:00 и одна покупка — +0,39% на сделку, "
+                          "просадка −1,5%; рост от 07:00 — +0,09%; от 07:00 и несколько покупок — +0,02%; EMA по дневке — −0,06%; выход 18:45 — вдвое хуже. "
+                          "Свои настройки можно прогнать во вкладке «Проверка на истории».",
                  justify="left", anchor="w", font=("Segoe UI", 9), fg=GREY, bg=bg, wraplength=980).pack(anchor="w", pady=(4, 0))
         self.share_lbl = ttk.Label(b2, text="", foreground=GREY)
         self.bt_lbl = tk.Label(b2, text="", bg=bg)
@@ -711,13 +736,7 @@ class App(tk.Tk):
         n = now_msk()
         self.clock.configure(text=n.strftime("МСК %d.%m.%Y %H:%M:%S"))
         busy = "выполняется задача" if self.busy.is_set() else "ожидание"
-        auto = []
-        if self.s["auto_signals"]:
-            auto.append(f"сигналы в {self.s['entry']}")
-        if self.robot_running():
-            auto.append("робот работает")
-        if self.s["auto_journal"]:
-            auto.append("журнал в 17:20")
+        auto = ["робот работает"] if self.robot_running() else []
         self.status.configure(text=f"Движение дня: рост {float(self.s.get('mid_thr', 2.5)):g}% → покупка на середине EMA10/EMA20, "
                                    f"покупки {self.s.get('mid_from', '10:00')}–{self.s.get('mid_to', '18:00')}, выход {self.s.get('mid_exit', '23:45')} · {busy}"
                                    + (f" · авто: {', '.join(auto)}" if auto else ""))
@@ -780,7 +799,8 @@ class App(tk.Tk):
             times[k] = f"{m // 60:02d}:{m % 60:02d}"
             var.set(times[k])
         self.s.update(mid_thr=mthr, mid_share=mshare, mid_idx=self.v_midx.get(),
-                      mid_tfs=[k for k, v in self.v_mtfs.items() if v.get()] or [60], **times)
+                      mid_tfs=[k for k, v in self.v_mtfs.items() if v.get()] or [60],
+                      mid_ref={v: k for k, v in self.MREF.items()}.get(self.v_mref.get(), "7"), mid_multi=self.v_mmulti.get(), **times)
         self.s.update(threshold=float(self.v_thr.get()), entry=self.v_entry.get(), capital=cap,
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
@@ -814,6 +834,8 @@ class App(tk.Tk):
             os.environ.pop("TINVEST_TOKEN", None)
         save_settings(self.s)
         self._apply_settings()
+        if hasattr(self, "robot_help"):
+            self._robot_help()
         self.refresh_journal()
         self.refresh_sandbox()
         self.log(f"Настройки сохранены: порог {self.s['threshold']:g}%, вход {self.s['entry']}.\n")
@@ -1210,6 +1232,182 @@ class App(tk.Tk):
                                      "Робот выключен (нужен токен песочницы в «Настройках»). Нажмите «Старт».")
             self.refresh_sandbox()
 
+    # ------------------------------------------------------------------ проверка на истории
+    BT_PERIODS = {"1 месяц": 1, "3 месяца": 3, "6 месяцев": 6, "12 месяцев": 12, "24 месяца": 24}
+
+    def _build_backtest(self, t):
+        bar = ttk.Frame(t); bar.pack(fill="x")
+        ttk.Label(bar, text="Период:").pack(side="left")
+        self.bt_per = tk.StringVar(value="12 месяцев")
+        ttk.Combobox(bar, textvariable=self.bt_per, values=list(self.BT_PERIODS), width=11, state="readonly").pack(side="left", padx=(4, 12))
+        self.bt_go = ttk.Button(bar, text="▶  Прогнать на истории", style="Start.TButton", command=self.bt_start)
+        self.bt_go.pack(side="left")
+        ttk.Button(bar, text="Стоп", command=self.bt_stop).pack(side="left", padx=6)
+        self.bt_pb = ttk.Progressbar(bar, length=220, maximum=100)
+        self.bt_pb.pack(side="left", padx=(12, 6))
+        self.bt_st = ttk.Label(bar, text="", foreground="#555")
+        self.bt_st.pack(side="left")
+        ttk.Label(t, text="Прогоняет «Движение дня» с сохранёнными настройками (вкладка «Настройки») по 5-минутным свечам за выбранный период: "
+                          "те же правила, что у робота, затраты 0,16% на сделку. Первый раз скачивает историю (несколько минут), потом берёт из кэша. "
+                          "Чтобы сравнить варианты — поменяйте настройки, сохраните и прогоните снова.",
+                  foreground="#555", wraplength=1500, justify="left").pack(anchor="w", pady=(6, 4))
+        self.bt_set = ttk.Label(t, text="", foreground="#333", wraplength=1500, justify="left")
+        self.bt_set.pack(anchor="w")
+        self.bt_sum = tk.Label(t, text="Результатов пока нет — нажмите «Прогнать на истории».", font=("Segoe UI", 12, "bold"), justify="left", anchor="w",
+                               bg=ttk.Style().lookup("TFrame", "background") or None)
+        self.bt_sum.pack(anchor="w", pady=(6, 6))
+        pw = ttk.PanedWindow(t, orient="horizontal"); pw.pack(fill="both", expand=True)
+        left = ttk.Frame(pw); pw.add(left, weight=1)
+        self.bt_cv = tk.Canvas(left, height=180, bg="white", highlightthickness=1, highlightbackground="#ccc")
+        self.bt_cv.pack(fill="x", pady=(0, 6))
+        self.bt_cv.bind("<Configure>", lambda e: self._bt_curve())
+        self.bt_mon = self._tree(left, [("m", "Месяц", 80), ("n", "Сделок", 60), ("sum", "Сумма %", 80), ("eq", "Счёт %", 80)])
+        right = ttk.LabelFrame(pw, text="Сделки (двойной щелчок — график)", padding=4); pw.add(right, weight=2)
+        self.bt_tr = self._tree(right, [("date", "Дата", 85), ("time", "Вход", 50), ("ticker", "Бумага", 65), ("tf", "EMA", 45), ("entry", "Цена входа", 80),
+                                        ("stop", "Стоп", 75), ("take", "Тейк", 75), ("exit", "Выход", 75), ("xt", "Время выхода", 95),
+                                        ("reason", "Причина", 70), ("pct", "Итог %", 70)])
+        self.bt_tr.bind("<Double-1>", lambda e: self._bt_chart())
+        self._bt_res = None
+        self.after(1500, self._bt_poll)
+
+    def _bt_state(self):
+        cl = self._server()
+        if cl is not None:
+            return cl.get("/api/backtest")
+        return rc.BACKTEST.state
+
+    def bt_start(self):
+        months = self.BT_PERIODS.get(self.bt_per.get(), 12)
+        cl = self._server()
+        if cl is not None:
+            def go():
+                try:
+                    r = cl.post("/api/backtest", {"months": months})
+                    if not r.get("ok"):
+                        self.q.put(("log", (r.get("msg") or "Проверка не запустилась") + "\n"))
+                except Exception as e:
+                    self.q.put(("log", f"Проверка на истории не запустилась: {e}\n"))
+            threading.Thread(target=go, daemon=True).start()
+        else:
+            if not self.s.get("token"):
+                messagebox.showerror(APP_TITLE, "Для проверки на истории нужен токен Т-Инвестиций (вкладка «Настройки»).")
+                return
+            rc.BACKTEST.start(self.s["token"], bool(self.s.get("sandbox_token", True)), self.s, months,
+                              log=lambda m: self.q.put(("log", m + "\n")))
+        self.bt_st.configure(text="запускаю…")
+        self._bt_res = None
+
+    def bt_stop(self):
+        cl = self._server()
+        if cl is not None:
+            threading.Thread(target=lambda: cl.post("/api/backtest", {"stop": True}), daemon=True).start()
+        else:
+            rc.BACKTEST.stop()
+
+    def _bt_poll(self):
+        def work():
+            try:
+                st = self._bt_state()
+            except Exception as e:
+                st = {"error": f"нет связи с сервером: {e}"}
+            self.after(0, lambda: self._bt_show(st))
+        if self.nb.select() == str(self.bt_go.master.master) or getattr(self, "_bt_running", False) or self._bt_res is None:
+            threading.Thread(target=work, daemon=True).start()
+        self.after(1500 if getattr(self, "_bt_running", False) else 5000, self._bt_poll)
+
+    def _bt_show(self, st):
+        self._bt_running = bool(st.get("running"))
+        self.bt_pb.configure(value=st.get("pct") or 0)
+        self.bt_go.configure(state="disabled" if self._bt_running else "normal")
+        self.bt_st.configure(text=("ошибка: " + st["error"]) if st.get("error") else (st.get("progress") or ""))
+        res = st.get("result")
+        if not res or res is self._bt_res or (self._bt_res and res.get("done") == self._bt_res.get("done")):
+            return
+        self._bt_res = res
+        sm = res["summary"]
+        self.bt_set.configure(text=f"{res['period']} · бумаг {res['tickers']}" + (f" (без истории: {', '.join(res['fails'][:10])})" if res.get("fails") else "")
+                              + f" · {res['settings']} · посчитано {res['done']}")
+        if not sm.get("n"):
+            self.bt_sum.configure(text="Сделок за период нет — условия ни разу не сработали.", fg="#555")
+        else:
+            rs = ", ".join(f"{k} {v}" for k, v in sm["reasons"].items())
+            self.bt_sum.configure(fg="#0a7a2f" if sm["avg"] > 0 else "#b3261e", text=(
+                f"Сделок {sm['n']} · в плюсе {sm['win']:g}% · средняя {sm['avg']:+.2f}% · сумма {sm['sum']:+.1f}% · "
+                f"счёт {sm['total']:+.1f}% · макс. просадка {sm['dd']:.1f}%" + (f" · профит-фактор {sm['pf']:g}" if sm.get("pf") else "")
+                + f"\nсредняя прибыльная {sm.get('avg_win') or 0:+.2f}%, убыточная {sm.get('avg_loss') or 0:+.2f}% · выходы: {rs}"))
+        self.bt_mon.delete(*self.bt_mon.get_children())
+        for m in sm.get("months", []):
+            self.bt_mon.insert("", "end", tags=("pos" if m["sum"] > 0 else "neg",), values=(m["m"], m["n"], f"{m['sum']:+.2f}", f"{m['eq']:+.2f}"))
+        self.bt_tr.delete(*self.bt_tr.get_children())
+        tfn = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}
+        for x in reversed(res.get("trades", [])):
+            self.bt_tr.insert("", "end", tags=("pos" if x["pct"] > 0 else "neg",),
+                              values=(x["date"], x["time"], x["ticker"], tfn.get(x["tf"], x["tf"]), f"{x['entry']:.6g}", f"{x['stop']:.6g}",
+                                      f"{x['take']:.6g}", f"{x['exit']:.6g}", x["exit_time"], x["reason"], f"{x['pct']:+.2f}"))
+        self._bt_curve()
+
+    def _bt_curve(self):
+        cv = self.bt_cv
+        cv.delete("all")
+        cur = ((self._bt_res or {}).get("summary") or {}).get("curve") or []
+        w, h = max(cv.winfo_width(), 200), max(cv.winfo_height(), 120)
+        if len(cur) < 2:
+            cv.create_text(w / 2, h / 2, text="кривая счёта появится после проверки", fill="#888")
+            return
+        ys = [y for _, y in cur]
+        lo, hi = min(ys + [0]), max(ys + [0])
+        sp = (hi - lo) or 1
+        X = lambda i: 40 + (w - 50) * i / (len(cur) - 1)
+        Y = lambda v: 10 + (h - 30) * (1 - (v - lo) / sp)
+        cv.create_line(40, Y(0), w - 10, Y(0), fill="#bbb", dash=(3, 3))
+        cv.create_text(36, Y(hi), text=f"{hi:+.1f}%", anchor="e", fill="#555", font=("Segoe UI", 8))
+        cv.create_text(36, Y(lo), text=f"{lo:+.1f}%", anchor="e", fill="#555", font=("Segoe UI", 8))
+        pts = []
+        for i, (_, y) in enumerate(cur):
+            pts += [X(i), Y(y)]
+        cv.create_line(*pts, fill="#0a7a2f" if ys[-1] >= 0 else "#b3261e", width=2)
+        cv.create_text(40, h - 8, text=cur[0][0], anchor="w", fill="#555", font=("Segoe UI", 8))
+        cv.create_text(w - 10, h - 8, text=cur[-1][0], anchor="e", fill="#555", font=("Segoe UI", 8))
+
+    def _bt_chart(self):
+        sel = self.bt_tr.selection()
+        if not sel:
+            return
+        v = self.bt_tr.item(sel[0], "values")
+        tf = {"5м": 5, "15м": 15, "1ч": 60, "1д": 1440}.get(v[3], 60)
+        self.open_chart(v[2], tf)
+
+    def _mk_charts(self, ticker):
+        """Четыре графика выбранной бумаги на вкладке «Рынки»: сверху 5 мин и 15 мин, снизу 1 час и 1 день."""
+        if not ticker:
+            return
+        import chart
+        if getattr(self, "_mk_ch_tk", None) == ticker:
+            return
+        self._mk_ch_tk = ticker
+        if not self.mk_charts:
+            for w in self.mk_charts_fr.winfo_children():
+                w.destroy()
+            for i, tf in enumerate((5, 15, 60, 1440)):
+                p = chart.ChartPane(self, self.mk_charts_fr, ticker, tf)
+                p.grid(row=i // 2, column=i % 2, sticky="nsew", padx=1, pady=1)
+                self.mk_charts.append(p)
+            return
+        for p in self.mk_charts:
+            p.v_tk.set(ticker)
+            p.set_ticker()
+        if hasattr(self, "live_watch"):
+            self.live_watch([w.ticker for w in getattr(self, "charts", [])])
+
+    def _robot_help(self):
+        m = rc.mid_cfg(self.s)
+        tfs = ", ".join({5: "5 мин", 15: "15 мин", 60: "1 час", 1440: "1 день"}[x] for x in m["tfs"])
+        self.robot_help.configure(text=(
+            f"Стратегия «Движение дня» (только покупки): бумага выросла от {at.hm(m['ref'])} на {m['thr'] * 100:g}% → робот следит → цена опустилась до середины "
+            f"между EMA10 и EMA20 ({tfs}) → покупка {m['share'] * 100:g}% счёта; стоп чуть ниже лоя дня, тейк на хае дня. "
+            f"Покупки {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}" + (", только когда IMOEX в плюсе" if m["idx"] else "")
+            + ". «Старт торговли» — робот покупает и продаёт сам; «Стоп торговли» — только наблюдение. Всё меняется во вкладке «Настройки»."))
+
     def show_robot(self, snap):
         if self.robot_running():
             bal = snap.get("balance")
@@ -1227,14 +1425,12 @@ class App(tk.Tk):
         mk_txt = ((f"рынок по IMOEX (к вчерашнему дню) {mk * 100:+.2f}%" + extra) if ir == "imoex" else
                   (f"рынок по IMOEX (от открытия основной сессии) {mk * 100:+.2f}%" + extra) if ir == "imoex_open" else
                   f"рынок — акции индекса с открытия {ref_t}: {mk * 100:+.2f}%") if mk is not None else ""
-        self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: {mk_txt}; движение бумаг — от открытия {ref_t}; порог {thr * 100:g}%"
+        self.scan_lbl.configure(text=(f"Обновлено {ls:%H:%M}: {mk_txt}; рост бумаг — от {at.hm(rc.mid_cfg(self.s)['ref'])}; порог {rc.mid_cfg(self.s)['thr'] * 100:g}%"
                                       if ls and mk is not None else "Данные появятся после 07:01."))
         self.scan_tree.delete(*self.scan_tree.get_children())
         for tk, mv, why in snap["scan"][:60]:
-            tag = ("pos" if mv > 0 else "neg") if why == "СИГНАЛ" else ()
-            self.scan_tree.insert("", "end", tags=tag, values=(tk, f"{mv * 100:+.2f}%",
-                                                               (("СИГНАЛ — вход сразу" if self.s.get("day_mode", "fixed") == "signal"
-                                                                 else f"кандидат — вход в {self.s.get('entry', '15:00')}") if why == "СИГНАЛ" else why)))
+            tag = ("pos",) if why.startswith(("СЛЕЖУ", "В ПОЗИЦИИ", "порог есть")) else ()
+            self.scan_tree.insert("", "end", tags=tag, values=(tk, f"{mv * 100:+.2f}%", why))
         self.spk_tree.delete(*self.spk_tree.get_children())
         mk = snap.get("market")
         for row in reversed(snap.get("spikes", [])):
@@ -1402,7 +1598,7 @@ class App(tk.Tk):
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
                    "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal",
-                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share"]
+                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1429,6 +1625,7 @@ class App(tk.Tk):
         self.v_mthr.set(f"{float(s.get('mid_thr', 2.5)):g}"); self.v_mshare.set(f"{float(s.get('mid_share', 10)):g}")
         for k, v in self.v_mtfs.items():
             v.set(k in [int(x) for x in (s.get("mid_tfs") or [s.get("mid_tf", 60) or 60])])
+        self.v_mref.set(self.MREF.get(str(s.get("mid_ref", "7")), self.MREF["7"])); self.v_mmulti.set(bool(s.get("mid_multi", True)))
         self.v_midx.set(bool(s.get("mid_idx", False)))
         self.v_mfrom.set(str(s.get("mid_from", "10:00"))); self.v_mto.set(str(s.get("mid_to", "18:00"))); self.v_mexit.set(str(s.get("mid_exit", "23:45")))
         self.v_idxref.set(self.IDXREF.get(s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
@@ -1460,6 +1657,8 @@ class App(tk.Tk):
         self.v_tg_trades.set(bool(s.get("tg_trades", True))); self.v_tg_imp.set(bool(s.get("tg_imp")))
         self.v_tg_trend.set(bool(s.get("tg_trend", True)))
         sc.configure(float(s["threshold"]), s["entry"])
+        if hasattr(self, "robot_help"):
+            self._robot_help()
         self.log("Настройки взяты с сервера — во вкладке «Настройки» показаны те, с которыми работает робот на сервере.\n")
 
     # --- индекс в реальном времени
@@ -2072,7 +2271,8 @@ class App(tk.Tk):
             return (f"{name}: сделок {x['n']}, в плюсе {x['wins'] / x['n'] * 100:.0f}%, средняя {x['avg_pct']:+.2f}%, "
                     f"итог {money(x['pnl_rub'])}")
         self.sb_sum.configure(text="\n".join([
-            line("Всплеск + EMA20", rc.strat_summary([r for r in rows if r.get("strat") == "всплеск"])),
+            *([line("Всплеск + EMA20 (прежняя)", rc.strat_summary([r for r in rows if r.get("strat") == "всплеск"]))]
+              if any(r.get("strat") == "всплеск" for r in rows) else []),
             line("Движение дня", rc.strat_summary([r for r in rows if r.get("strat") == "15:00"])),
             line("Вручную", rc.strat_summary([r for r in rows if r.get("strat") == "вручную"])),
             line("ВСЕГО", rc.strat_summary(rows))]))
@@ -2093,10 +2293,10 @@ class App(tk.Tk):
                     in_window = start - timedelta(minutes=2) <= n < start + timedelta(minutes=10)
                     if in_window and self.done_today.get(("entry", today)) is None:
                         self.done_today[("entry", today)] = True
-                        if self.s["auto_signals"] and self.s.get("day_on", True) and not self.robot_running():
+                        if False and self.s["auto_signals"]:                 # прежняя стратегия «15:00» убрана
                             self.q.put(("call", lambda _: self.submit("Авто: сигналы", self._signals(True),
                                                                       lambda sg: self.show_signals(sg, alert=True)), None))
-                    if self.s["auto_journal"] and (n.hour, n.minute) >= (17, 20) and n.hour < 23 and self.done_today.get(("journal", today)) is None:
+                    if False and (n.hour, n.minute) >= (17, 20) and n.hour < 23 and self.done_today.get(("journal", today)) is None:
                         self.done_today[("journal", today)] = True
                         self.q.put(("call", lambda _: self.submit("Авто: журнал за сегодня",
                                                                   lambda: (sc.journal_day(now_msk().date(), sc.imoex_tickers()), sc.stats()),

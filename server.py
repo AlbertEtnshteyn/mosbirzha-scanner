@@ -799,6 +799,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, rc.results((ROBOT.snap or {}).get("balance")))
             if u.path == "/api/calendar":
                 return self._send(200, trade_calendar())
+            if u.path == "/api/backtest":
+                return self._send(200, rc.BACKTEST.state)
             if u.path == "/api/journal":
                 return self._send(200, journal())
             if u.path == "/api/market":
@@ -882,6 +884,13 @@ class Handler(BaseHTTPRequestHandler):
                 ROBOT.robot.request_close(b.get("ticker") or None)
                 log(f"С телефона запрошено закрытие: {b.get('ticker') or 'все позиции'}.")
                 return self._send(200, {"ok": True})
+            if u.path == "/api/backtest":
+                if b.get("stop"):
+                    rc.BACKTEST.stop()
+                    return self._send(200, {"ok": True})
+                s_ = dict(ROBOT.s, **{k: v for k, v in (b.get("settings") or {}).items() if str(k).startswith("mid_") or k == "day_markets"})
+                ok = rc.BACKTEST.start(s_.get("token"), bool(s_.get("sandbox_token", True)), s_, int(b.get("months") or 12), log=log)
+                return self._send(200, {"ok": ok, "msg": "" if ok else "Проверка уже идёт."})
             if u.path == "/api/settings":
                 new = dict(b)
                 if not new.get("token"):

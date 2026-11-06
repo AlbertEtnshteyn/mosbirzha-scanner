@@ -39,9 +39,10 @@ def ema(vals, span):
     return out
 
 
-class ChartWindow(tk.Toplevel):
-    def __init__(self, app, ticker, tf=5):
-        super().__init__(app)
+class _ChartBase:
+    def __init__(self, app, ticker, tf=5, parent=None, compact=False):
+        super().__init__(parent or app)
+        self.compact = compact
         self.app = app
         self.ticker = ticker.upper()
         self.tf = tf
@@ -53,7 +54,8 @@ class ChartWindow(tk.Toplevel):
         self.res = queue.Queue()
         self.loading = False
         self.hover = None
-        self.geometry("1000x620")
+        if not compact:
+            self.geometry("1000x620")
         self.configure(bg=BG)
         self._build()
         self.load()
@@ -68,7 +70,11 @@ class ChartWindow(tk.Toplevel):
     # ------------------------------------------------------------------ интерфейс
     def _build(self):
         bar = tk.Frame(self, bg=BG)
-        bar.pack(fill="x", padx=6, pady=4)
+        if self.compact:                             # панель на вкладке «Рынки»: только подпись ТФ и строка цены
+            self.head = tk.Label(self, text="", bg=BG, fg="white", font=("Segoe UI", 10, "bold"), anchor="w")
+            self.head.pack(fill="x", padx=6, pady=(2, 0))
+        else:
+            bar.pack(fill="x", padx=6, pady=4)
         self.v_tk = tk.StringVar(value=self.ticker)
         e = ttk.Entry(bar, textvariable=self.v_tk, width=10)
         e.pack(side="left")
@@ -84,7 +90,8 @@ class ChartWindow(tk.Toplevel):
         ttk.Button(bar, text="Т-Инвестиции", command=lambda: self.app.open_tbank(self.ticker)).pack(side="left")
         ttk.Button(bar, text="Терминал", command=lambda: self.app.open_tbank(None)).pack(side="left", padx=(4, 0))
         legend = tk.Frame(self, bg=BG)
-        legend.pack(fill="x", padx=8)
+        if not self.compact:
+            legend.pack(fill="x", padx=8)
         self.info = tk.Label(self, text="", bg=BG, fg=TXT, font=("Consolas", 10), anchor="w")
         self.info.pack(fill="x", padx=8)
         tk.Label(legend, text="━ EMA 10", fg=EMA10_C, bg=BG).pack(side="left")
@@ -121,7 +128,10 @@ class ChartWindow(tk.Toplevel):
         for tf, b in self.tf_btns.items():
             b.configure(bg="#2962ff" if tf == self.tf else GRID, fg="white" if tf == self.tf else TXT)
         name = dict(TFS)[self.tf]
-        self.title(f"{self.ticker} · {name} · график")
+        if self.compact:
+            self.head.configure(text=f"{self.ticker} · {({5: '5 мин', 15: '15 мин', 60: '1 час', 1440: '1 день'}).get(self.tf, name)}")
+        else:
+            self.title(f"{self.ticker} · {name} · график")
 
     def set_tf(self, tf):
         self.tf, self.offset, self.ypan, self.yzoom = tf, 0, 0.0, 1.0
@@ -615,6 +625,17 @@ class ChartWindow(tk.Toplevel):
         return (f"\n{'ЛОНГ' if tr['side'] > 0 else 'ШОРТ'}: импульс {tr['impulse_t']:%d.%m %H:%M}, касание {tr['touch_t']:%H:%M}, "
                 f"вход {b[tr['entry_i']]['t']:%H:%M} по {_fmt(tr['entry'])}, стоп {_fmt(tr['stop'])}, тейк1 {_fmt(tr['t1'])}"
                 + (f", тейк2 {_fmt(tr['t2'])}" if tr.get("t2") else "") + f" → {ex}; итог {tr['result'] * 100:+.2f}%")
+
+
+class ChartWindow(_ChartBase, tk.Toplevel):
+    """Отдельное окно графика."""
+
+
+class ChartPane(_ChartBase, tk.Frame):
+    """Небольшой график внутри вкладки (без панели кнопок)."""
+    def __init__(self, app, parent, ticker, tf):
+        super().__init__(app, ticker, tf, parent=parent, compact=True)
+        self.n_vis = 80
 
 
 def _from_server(d):
