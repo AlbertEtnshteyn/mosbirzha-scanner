@@ -1396,7 +1396,7 @@ class AutoTrader:
     def _sig_from(self):
         """С какого времени «Движение дня» может входить «сразу при сигнале» (настройка «время входов от…»)."""
         ef = str(self.sp.get("entry_from") or "")
-        return 7 * 60 if ef == "7" else 10 * 60 if ef == "10" else DAY_SIG_FROM
+        return int(ef) * 60 if ef in ("7", "9", "10") else DAY_SIG_FROM
 
     def _day_early(self):
         return sc.ENTRY_MIN < 11 * 60

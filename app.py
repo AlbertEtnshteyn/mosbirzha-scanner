@@ -439,6 +439,7 @@ class App(tk.Tk):
         self.v_e2tf = {k: tk.BooleanVar(value=k in (self.s.get("ema200_tfs") or ["form"])) for k, _ in self.E2TF}
         self.v_idx_day = tk.BooleanVar(value=bool(self.s.get("idx_day", True)))
         self.EFROM = {"": "как в окне формации / времени входа «Движения дня»", "7": "с открытия рынка — 07:00",
+                      "9": "с 09:00",
                       "10": "с начала основной сессии — 10:00"}
         self.v_efrom = tk.StringVar(value=self.EFROM.get(str(self.s.get("entry_from") or ""), self.EFROM[""]))
         self.DREF = {"main": "от начала основной сессии (10:00)", "market": "от открытия рынка (07:00)"}

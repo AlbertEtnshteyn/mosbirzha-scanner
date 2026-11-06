@@ -46,10 +46,10 @@ def save_settings(s, path=SETTINGS, keep_token=None):
 
 
 def window_key(s):
-    """Окно входов формации с учётом настройки «время входов от…»: "9-19", "9-19@7" (с 07:00), "9-19@10" (с 10:00)."""
+    """Окно входов формации с учётом настройки «время входов от…»: "9-19", "9-19@7" (с 07:00), "9-19@9" (с 09:00), "9-19@10" (с 10:00)."""
     w = s.get("entry_window", "9-19")
     ef = str(s.get("entry_from") or "")
-    return f"{w}@{ef}" if ef in ("7", "10") else w
+    return f"{w}@{ef}" if ef in ("7", "9", "10") else w
 
 
 def exit_choice(s):
