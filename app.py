@@ -441,6 +441,7 @@ class App(tk.Tk):
         self.v_idx_form = tk.BooleanVar(value=bool(self.s.get("idx_form", True)))
         self.v_e200 = tk.BooleanVar(value=bool(self.s.get("ema200", False)))
         self.v_e10 = tk.BooleanVar(value=bool(self.s.get("ema10_touch", False)))
+        self.v_first = tk.BooleanVar(value=bool(self.s.get("first_form", True)))
         self.v_t5 = tk.BooleanVar(value=bool(self.s.get("trade_5m", False)))
         self.E2TF = [("form", "ТФ формации"), ("5", "5 мин"), ("15", "15 мин"), ("60", "1 час"), ("1440", "1 день")]
         self.v_e2tf = {k: tk.BooleanVar(value=k in (self.s.get("ema200_tfs") or ["form"])) for k, _ in self.E2TF}
@@ -608,6 +609,8 @@ class App(tk.Tk):
         row(b1, "Тейки:", cb(self.v_takes, ["два тейка", "один тейк у хая"], 15), "закрыть на тейке1, %:",
             cb(self.v_spk_half, ["30", "50", "70", "100"], 5), "трейлинг, R:", cb(self.v_spk_trail, ["0.5", "1", "1.5", "2"], 5),
             "макс. позиций:", cb(self.v_spk_max, ["без ограничения", "1", "2", "3", "5", "8", "10", "15", "20"], 15))
+        row(b1, ck("Только первая формация после всплеска", self.v_first),
+            ("hint", "если после всплеска уже была формация (15 мин или 1 час; 5 мин — если на них торгуете) — повторную не торговать, только уведомление"))
         row(b1, ck("Профиль по эшелонам", self.v_tier), ("hint", "индекс — формация 15 мин и 1 час; 2-й эшелон — 1 час и трендовый откат 15 мин; "
                                                          "3-й эшелон — только уведомления"))
         row(b1, "Дополнительно (на истории хуже):", ck("входить и на 5 мин", self.v_t5), ck("откат к EMA10", self.v_e10),
@@ -816,7 +819,7 @@ class App(tk.Tk):
                       day_carry={v: k for k, v in self.DAYC.items()}.get(self.v_dayc.get(), 0), day_exit=self.v_dexit.get(),
                       day_markets=[k for k, _ in at.MARKETS if self.v_dmk[k].get()] or ["imoex"],
                       day_mode={v: k for k, v in self.DMODE.items()}.get(self.v_dmode.get(), "fixed"),
-                      idx_form=self.v_idx_form.get(), ema10_touch=self.v_e10.get(), trade_5m=self.v_t5.get(), ema200=self.v_e200.get(), ema200_tfs=[k for k, _ in self.E2TF if self.v_e2tf[k].get()] or ["form"], idx_day=self.v_idx_day.get(),
+                      idx_form=self.v_idx_form.get(), ema10_touch=self.v_e10.get(), first_form=self.v_first.get(), trade_5m=self.v_t5.get(), ema200=self.v_e200.get(), ema200_tfs=[k for k, _ in self.E2TF if self.v_e2tf[k].get()] or ["form"], idx_day=self.v_idx_day.get(),
                       trade_weekends=self.v_wkend.get(),
                       idx_ref={v: k for k, v in self.IDXREF.items()}.get(self.v_idxref.get(), "imoex"),
                       entry_from={v: k for k, v in self.EFROM.items()}.get(self.v_efrom.get(), ""),
@@ -1428,7 +1431,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets", "day_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
+                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1447,7 +1450,7 @@ class App(tk.Tk):
         self.v_rescan.set(bool(s.get("rescan"))); self.v_day.set(bool(s.get("day_on", True)))
         self.v_dayc.set(self.DAYC.get(int(s.get("day_carry", 0) or 0), self.DAYC[0])); self.v_dexit.set(s.get("day_exit", "18:45"))
         self.v_dmode.set(self.DMODE.get(s.get("day_mode", "fixed"), self.DMODE["fixed"]))
-        self.v_e200.set(bool(s.get("ema200", False))); self.v_e10.set(bool(s.get("ema10_touch", False))); self.v_t5.set(bool(s.get("trade_5m", False)))
+        self.v_e200.set(bool(s.get("ema200", False))); self.v_e10.set(bool(s.get("ema10_touch", False))); self.v_first.set(bool(s.get("first_form", True))); self.v_t5.set(bool(s.get("trade_5m", False)))
         for k, v in self.v_e2tf.items():
             v.set(k in (s.get("ema200_tfs") or ["form"]))
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))

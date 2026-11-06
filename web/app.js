@@ -751,6 +751,7 @@ function renderSettings(s) {
       <label class="c"><input type="checkbox" name="tf60" ${tfs.includes(60) ? "checked" : ""}><span>1 час</span></label></div>
     ${chk("trend_on", "Искать трендовые откаты", "Импульс на объёме был в последние дни, EMA10 над EMA20, касание EMA20 + подтверждение.")}
     ${chk("trend_trade", "…и торговать все трендовые откаты", "На истории в целом в минусе; по умолчанию только по профилю ниже.")}
+    ${chk("first_form", "Только первая формация после всплеска", "Если после всплеска уже была формация (15 мин или 1 час; 5 мин — если на них торгуете) — повторную не торговать, только уведомление.")}
     ${chk("tier_profile", "Профиль по эшелонам", "Индекс — формация 15 мин и 1 час; 2-й эшелон — формация 1 час и трендовый откат 15 мин; 3-й эшелон не торгуется.")}
     ${chk("idx_form", "Только по направлению индекса", "Лонг — когда индекс растёт, шорт — когда падает. Если снять — входит в обе стороны.")}
     ${chk("trade_5m", "Торговать и на 5 мин", "Формации 5 мин (акции индекса и 2-го эшелона) — тоже вход, а не только уведомление. На истории: 556 сделок за год, средняя −0,12% — в минусе.")}
@@ -868,7 +869,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     day_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("dmk_" + k)),
     two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
     spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), ema10_touch: c("ema10_touch"), trade_5m: c("trade_5m"), ema200: c("ema200"), ema200_tfs: ["form", "5", "15", "60", "1440"].filter((k) => c("e2_" + k)), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), entry_from: v("entry_from") || "", day_ref: v("day_ref") || "main", idx_ref: v("idx_ref") || "imoex", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
+    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), ema10_touch: c("ema10_touch"), first_form: c("first_form"), trade_5m: c("trade_5m"), ema200: c("ema200"), ema200_tfs: ["form", "5", "15", "60", "1440"].filter((k) => c("e2_" + k)), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), entry_from: v("entry_from") || "", day_ref: v("day_ref") || "main", idx_ref: v("idx_ref") || "imoex", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
     day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
     rescan: c("rescan"), auto_journal: c("auto_journal"),
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),

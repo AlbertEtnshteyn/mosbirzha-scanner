@@ -16,7 +16,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "tg_token": "", "tg_chat": "", "tg_form": True, "tg_trades": True, "tg_imp": False,
             "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed",
             "day_tp": 8, "day_tp_half": 50, "day_trail": 2, "day_act": 0,
-            "idx_form": True, "ema10_touch": False, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
+            "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": ""}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
@@ -81,7 +81,7 @@ def spike_cfg(s):
             "idx_ref": s.get("idx_ref") if s.get("idx_ref") in ("open", "imoex_open") else "imoex", "day_mode": s.get("day_mode", "fixed"),
             "day_tp": float(s.get("day_tp", 8) or 0) / 100, "day_tp_half": float(s.get("day_tp_half", 50) or 100) / 100,
             "day_trail": float(s.get("day_trail", 2) or 0) / 100, "day_act": float(s.get("day_act", 0) or 0) / 100,
-            "index": bool(s.get("idx_form", True)), "ema10_touch": bool(s.get("ema10_touch", False)), "trade_5m": bool(s.get("trade_5m", False)), "ema200": bool(s.get("ema200", False)), "ema200_tfs": list(s.get("ema200_tfs") or ["form"]), "idx_day": bool(s.get("idx_day", True)),
+            "index": bool(s.get("idx_form", True)), "ema10_touch": bool(s.get("ema10_touch", False)), "first_form": bool(s.get("first_form", True)), "trade_5m": bool(s.get("trade_5m", False)), "ema200": bool(s.get("ema200", False)), "ema200_tfs": list(s.get("ema200_tfs") or ["form"]), "idx_day": bool(s.get("idx_day", True)),
             "idx_flip": s.get("idx_flip", "off") if s.get("idx_flip") in ("all", "profit") else "off"}
 
 

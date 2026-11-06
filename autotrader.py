@@ -45,7 +45,7 @@ SPIKE_PRESETS = {
          "bt": "1 час: 20 сделок за год, в плюсе 60%, в среднем +0,24% после затрат"},
 }
 SPIKE_DEFAULTS = {"on": True, "tfs": [15, 60], "half": 0.5, "trail_r": 1.0, "buf": 0.001, "index": True,
-                  "markets": ["all_shares"], "day_markets": ["imoex"], "entry_from": "", "day_ref": "main", "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "ema10_touch": False, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "trade_weekends": False, "max_pos": 0, "share": 0.10,
+                  "markets": ["all_shares"], "day_markets": ["imoex"], "entry_from": "", "day_ref": "main", "window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed", "idx_day": True, "idx_flip": "off", "idx_ref": "imoex", "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "trade_weekends": False, "max_pos": 0, "share": 0.10,
                   "from_min": 10 * 60, "to_min": 18 * 60, "exit_min": 18 * 60 + 25,   # окно входов (проверено на истории)
                   "scan_from": 7 * 60, "scan_to": 23 * 60 + 40}                     # окно поиска формаций — весь торговый день
 # Какими инструментами торгует формация (выбор в настройках)
@@ -1215,8 +1215,44 @@ class AutoTrader:
                         if kind == "form" and tf == 5 and sp.get("trade_5m") and tier in ("index", "2"):
                             ok, why_no = True, ""                           # «торговать и на 5 мин» в настройках
                         sig["tradeable"], sig["why_no"] = ok, why_no
+                    if kind == "form" and sp.get("first_form", True):
+                        sig["repeat"] = self._earlier_form(tk, sig, b5)     # повторная формация после того же всплеска
                     self._pullback_signal(tk, sig)
         self._push()
+
+    # 5 мин учитываются, только если робот на них торгует: на истории (152 акции, год) пропуск 15м/1ч из-за более ранней
+    # формации на 5 мин срезал результат вдвое (+0,27% → +0,04% на сделку), а без 5 мин — без потерь, повторные ≈ 0%.
+    FIRST_FORM_TFS = (15, 60)
+
+    def _earlier_form(self, tk, sig, b5):
+        """Была ли уже формация в ту же сторону после начала этого всплеска (на любом ТФ) — вернуть «ТФ ЧЧ:ММ» или None.
+        Ищется по свечам заново, так что учитываются и формации до запуска робота."""
+        s, tf0 = sig["side"], sig["tf"]
+        cur_close = sig["confirm"]["t"] + timedelta(minutes=tf0)
+        imp_start = sig["impulse"]["t"]
+        tier = self._tier(tk, b5)
+        for tf in ((5,) if self.sp.get("trade_5m") else ()) + self.FIRST_FORM_TFS:
+            bars = [b for b in aggregate([dict(b) for b in b5], tf) if b["t"] + timedelta(minutes=tf) < cur_close]
+            if len(bars) < 25:
+                continue
+            p = params(self.sp, tf)
+            if tier == "2" and tf == 60:
+                p["min_value"] = 15e6
+            if tf == 60:
+                p["slot_mult"] = 2.0
+            add_slot(bars)
+            closes = [b["c"] for b in bars]
+            emas = [ema(closes)] + ([ema(closes, 10)] if self.sp.get("ema10_touch") else [])
+            for j in range(len(bars) - 1, 24, -1):
+                bj = bars[j]
+                end = bj["t"] + timedelta(minutes=tf)
+                if bj["t"].date() != cur_close.date() or end <= imp_start:
+                    break
+                for e_ in emas:
+                    f = find_pullback(bars, p, e_, last=j)
+                    if f and f["side"] == s:
+                        return f"{self._tf_name(tf)} {end:%H:%M}"
+        return None
 
     @staticmethod
     def _tf_name(tf):
@@ -1335,6 +1371,8 @@ class AutoTrader:
             why = "3-й эшелон — не торгую, только уведомление"
         elif not sig.get("tradeable", (not trend) or sp.get("trend_trade", False)):
             why = sig.get("why_no") or "трендовый откат (объём был раньше) — только уведомление, на истории такие входы в минусе"
+        elif sig.get("repeat"):
+            why = (f"повторная формация после того же всплеска (первая — {sig['repeat']}); повторные на истории хуже — только уведомление")
         elif sig.get("late"):
             why = (f"поздний откат ({sig['age']} свечей после импульса, на истории в этом случае хуже) — только уведомление")
         elif not (prof["from"] <= tc < prof["to"]) or ti < prof["from"]:
