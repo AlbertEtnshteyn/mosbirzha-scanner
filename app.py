@@ -48,6 +48,69 @@ load_settings = rc.load_settings
 save_settings = rc.save_settings
 
 
+# ---------------------------------------------------------------- темы оформления
+THEMES = {
+    "classic": ("Классическая (как было)", None),
+    "light": ("Светлая", dict(bg="#f3f4f6", panel="#ffffff", fg="#1d2330", muted="#5f6673", line="#c9ced8", accent="#2f6fdb",
+                              sel="#cfe0ff", up="#0a7a2f", down="#b3261e", field="#ffffff", head="#e4e8ef", hdr="#e8ecf3")),
+    "dark": ("Тёмная", dict(bg="#161a23", panel="#1e2330", fg="#e6e9f0", muted="#9aa3b5", line="#323a4d", accent="#3b82f6",
+                            sel="#2b3c63", up="#2fd08a", down="#ff6b6b", field="#252b3a", head="#262d3d", hdr="#2a3245")),
+    "blue": ("Тёмно-синяя", dict(bg="#0f1e33", panel="#14263f", fg="#e3ecf8", muted="#93a8c4", line="#24405f", accent="#4aa3ff",
+                                 sel="#1f4170", up="#3ddc97", down="#ff7a7a", field="#1a3050", head="#1b3354", hdr="#1f3a5e")),
+    "green": ("Зелёная", dict(bg="#eef5ef", panel="#ffffff", fg="#1b2a1f", muted="#5b6e60", line="#c3d6c7", accent="#2e8b57",
+                              sel="#cfe8d6", up="#16793a", down="#b3261e", field="#ffffff", head="#dcebdf", hdr="#e2efe5")),
+    "dracula": ("Dracula (фиолетовая)", dict(bg="#282a36", panel="#2f3241", fg="#f8f8f2", muted="#a4a8c0", line="#44475a", accent="#bd93f9",
+                                             sel="#44475a", up="#50fa7b", down="#ff5555", field="#343746", head="#383a4a", hdr="#3c3f52")),
+    "nord": ("Nord (северная)", dict(bg="#2e3440", panel="#3b4252", fg="#eceff4", muted="#a3acbd", line="#4c566a", accent="#88c0d0",
+                                     sel="#4c566a", up="#a3be8c", down="#bf616a", field="#3b4252", head="#434c5e", hdr="#434c5e")),
+    "solarized": ("Solarized (бежевая)", dict(bg="#fdf6e3", panel="#fffbef", fg="#3d4f57", muted="#7b8c8e", line="#e2dcc8", accent="#268bd2",
+                                              sel="#eee8d5", up="#2aa198", down="#dc322f", field="#fffbef", head="#eee8d5", hdr="#eee8d5")),
+    "contrast": ("Контрастная (чёрная)", dict(bg="#000000", panel="#0a0a0a", fg="#ffffff", muted="#d0d0d0", line="#777777", accent="#ffd400",
+                                             sel="#3d3a00", up="#00ff88", down="#ff5555", field="#141414", head="#1c1c1c", hdr="#262626")),
+}
+TH = dict(bg="#dcdad5", panel="#ffffff", fg="#000000", muted="#555555", line="#ccc", accent="#2f6fdb", sel="#cfe0ff",
+          up="#0a7a2f", down="#b3261e", field="#ffffff", head="#dcdad5", hdr="#e8ecf3")
+
+
+def apply_theme(root, style, key):
+    """Палитра для ttk и обычных tk-виджетов. «Классическая» — стандартный вид clam (как было)."""
+    pal = THEMES.get(key, THEMES["classic"])[1]
+    if not pal:
+        return
+    TH.update(pal)
+    c = pal
+    style.configure(".", background=c["bg"], foreground=c["fg"], fieldbackground=c["field"], bordercolor=c["line"],
+                    darkcolor=c["bg"], lightcolor=c["bg"], troughcolor=c["bg"], selectbackground=c["sel"],
+                    selectforeground=c["fg"], insertcolor=c["fg"], focuscolor=c["accent"])
+    for w in ("TFrame", "TLabel", "TLabelframe", "TLabelframe.Label", "TCheckbutton", "TRadiobutton", "TPanedwindow"):
+        style.configure(w, background=c["bg"], foreground=c["fg"])
+    style.configure("TButton", background=c["head"], foreground=c["fg"], bordercolor=c["line"])
+    style.map("TButton", background=[("disabled", c["bg"]), ("active", c["sel"])], foreground=[("disabled", c["muted"])])
+    style.configure("TEntry", fieldbackground=c["field"], foreground=c["fg"])
+    style.configure("TCombobox", fieldbackground=c["field"], foreground=c["fg"], background=c["head"], arrowcolor=c["fg"])
+    style.map("TCombobox", fieldbackground=[("readonly", c["field"])], foreground=[("readonly", c["fg"])],
+              selectbackground=[("readonly", c["field"])], selectforeground=[("readonly", c["fg"])])
+    style.configure("TCheckbutton", indicatorbackground=c["field"], indicatorforeground=c["fg"])
+    style.map("TCheckbutton", background=[("active", c["bg"])], indicatorbackground=[("selected", c["field"])])
+    style.configure("TNotebook", background=c["bg"], bordercolor=c["line"])
+    style.configure("TNotebook.Tab", background=c["head"], foreground=c["fg"], bordercolor=c["line"])
+    style.map("TNotebook.Tab", background=[("selected", c["panel"])], foreground=[("selected", c["fg"])])
+    for tv in ("Treeview", "Mk.Treeview"):
+        style.configure(tv, background=c["panel"], fieldbackground=c["panel"], foreground=c["fg"], bordercolor=c["line"])
+        style.map(tv, background=[("selected", c["sel"])], foreground=[("selected", c["fg"])])
+        style.configure(tv + ".Heading", background=c["head"], foreground=c["fg"], bordercolor=c["line"])
+        style.map(tv + ".Heading", background=[("active", c["sel"])])
+    style.configure("TScrollbar", background=c["head"], troughcolor=c["bg"], arrowcolor=c["fg"], bordercolor=c["line"])
+    style.configure("Horizontal.TProgressbar", background=c["accent"], troughcolor=c["field"])
+    for k, v in (("*Background", c["bg"]), ("*Foreground", c["fg"]), ("*Text.Background", c["field"]), ("*Text.Foreground", c["fg"]),
+                 ("*Text.insertBackground", c["fg"]), ("*Listbox.Background", c["field"]), ("*Listbox.Foreground", c["fg"]),
+                 ("*TCombobox*Listbox.background", c["field"]), ("*TCombobox*Listbox.foreground", c["fg"]),
+                 ("*TCombobox*Listbox.selectBackground", c["sel"]), ("*Menu.Background", c["panel"]), ("*Menu.Foreground", c["fg"]),
+                 ("*Entry.Background", c["field"]), ("*Entry.Foreground", c["fg"]), ("*Canvas.Background", c["bg"])):
+        root.option_add(k, v)
+    root.configure(bg=c["bg"])
+
+
 class QueueWriter:
     """Перенаправляет print() из рабочих задач в окно журнала действий."""
     def __init__(self, q):
@@ -118,6 +181,7 @@ class App(tk.Tk):
             style.theme_use("clam")
         except tk.TclError:
             pass
+        apply_theme(self, style, self.s.get("theme", "classic"))
         style.configure("Treeview", rowheight=24)
         style.configure("Big.TLabel", font=("Segoe UI", 11, "bold"))
         style.configure("Start.TButton", font=("Segoe UI", 11, "bold"), padding=(14, 6))
@@ -156,7 +220,7 @@ class App(tk.Tk):
         self.sig_tree = self._tree(t1, [("ticker", "Бумага", 90), ("side", "Направление", 140), ("move", "Движение дня", 120),
                                         ("price", "Цена", 100), ("stop", "Стоп", 100)])
         ttk.Label(t1, text="Капитал делится поровну между сигналами. Все позиции закрыть в 18:45, раньше — только по стопу или тейку.",
-                  foreground="#555").pack(anchor="w", pady=(6, 0))
+                  foreground=TH["muted"]).pack(anchor="w", pady=(6, 0))
 
         # --- Журнал
         t2 = ttk.Frame(nb, padding=10)
@@ -174,7 +238,7 @@ class App(tk.Tk):
         ttk.Button(bar2, text="Скачать историю всех акций (для проверки стратегий)", command=self.download_history).pack(side="left")
         ttk.Button(bar2, text="Стоп", command=self.stop).pack(side="left", padx=6)
         ttk.Label(bar2, text="5-минутки с 01.10.2025 по всем акциям Мосбиржи → архив history5m.zip рядом с программой",
-                  foreground="#777").pack(side="left", padx=6)
+                  foreground=TH["muted"]).pack(side="left", padx=6)
         self.stats_lbl = ttk.Label(t2, text="", justify="left")
         self.stats_lbl.pack(anchor="w", pady=(8, 4))
         self.j_tree = self._tree(t2, [("date", "Дата", 90), ("ticker", "Бумага", 70), ("side", "Сторона", 70),
@@ -195,7 +259,7 @@ class App(tk.Tk):
         ttk.Button(bar, text="Терминал Т-Инвестиций", command=lambda: self.open_tbank(None)).pack(side="left", padx=(6, 0))
         self.robot_lbl = ttk.Label(t3, text="Запускаю поиск формаций…", style="Big.TLabel")
         self.robot_lbl.pack(anchor="w", pady=(10, 2))
-        self.robot_help = ttk.Label(t3, text="", foreground="#555", justify="left", wraplength=1200)
+        self.robot_help = ttk.Label(t3, text="", foreground=TH["muted"], justify="left", wraplength=1200)
         self.robot_help.pack(anchor="w", pady=(0, 6))
         self._robot_help()
         vp = ttk.PanedWindow(t3, orient="vertical")
@@ -214,7 +278,7 @@ class App(tk.Tk):
                                         ("reason", "Статус", 125)])
         cf = ttk.Frame(lnb, padding=4)
         lnb.add(cf, text="Календарь")
-        self.cal_lbl = ttk.Label(cf, text="—", foreground="#555")
+        self.cal_lbl = ttk.Label(cf, text="—", foreground=TH["muted"])
         self.cal_lbl.pack(anchor="w")
         self.cal_tree = self._tree(cf, [("date", "Дата", 70), ("dow", "День", 40), ("kind", "Биржа", 170), ("time", "Время", 90), ("robot", "Робот", 170)])
         self.cal_tree.tag_configure("off", foreground="#b33")
@@ -235,11 +299,11 @@ class App(tk.Tk):
             ttk.Button(pb, text=txt, width=10, command=lambda m=mode: self.carry_selected(m)).pack(side="left", padx=2)
         ttk.Button(pb, text="График", command=self.chart_selected).pack(side="left", padx=(12, 0))
         ttk.Button(pb, text="В Т-Инвестиции", command=lambda: self.open_tbank(self._sel_ticker(self.pos_tree))).pack(side="left", padx=(6, 0))
-        ttk.Label(pb, text="двойной щелчок по бумаге — график", foreground="#777").pack(side="left", padx=8)
+        ttk.Label(pb, text="двойной щелчок по бумаге — график", foreground=TH["muted"]).pack(side="left", padx=8)
         self.pos_tree = self._tree(rf, [("ticker", "Бумага", 60), ("strat", "Стратегия", 70), ("side", "Сторона", 55), ("lots", "Лотов", 55),
                                         ("entry", "Вход", 65), ("stop", "Стоп", 65), ("take", "Тейк", 75), ("last", "Сейчас", 65),
                                         ("res", "Итог", 60), ("rub", "Итог, ₽", 80)])
-        self.pos_tree.tag_configure("hdr", background="#e8ecf3", font=("Segoe UI", 9, "bold"))
+        self.pos_tree.tag_configure("hdr", background=TH["hdr"], font=("Segoe UI", 9, "bold"))
         for tv, col in ((self.scan_tree, 0), (self.spk_tree, 2), (self.pos_tree, 0)):
             tv.bind("<Double-1>", lambda e, tv=tv, col=col: self._chart_from(tv, col))
             tv.bind("<Button-3>", lambda e, tv=tv, col=col: self._row_menu(e, tv, col))
@@ -270,7 +334,7 @@ class App(tk.Tk):
         ttk.Entry(top8, textvariable=self.mk_q, width=16).pack(side="left", padx=(4, 12))
         self.mk_form = tk.BooleanVar(value=False)
         ttk.Button(top8, text="Обновить", command=self.refresh_market).pack(side="left")
-        self.mk_sum = ttk.Label(t8, text="", foreground="#555", wraplength=640, justify="left", font=("Segoe UI", 8))
+        self.mk_sum = ttk.Label(t8, text="", foreground=TH["muted"], wraplength=640, justify="left", font=("Segoe UI", 8))
         self.mk_sum.pack(anchor="w", pady=4)
         pw8 = ttk.PanedWindow(t8, orient="horizontal")
         pw8.pack(fill="both", expand=True)
@@ -320,14 +384,14 @@ class App(tk.Tk):
         self.res_tree = self._tree(t7, [("period", "Период", 180), ("from", "С", 90), ("start", "Баланс на начало", 130),
                                         ("chg", "Изменение, ₽", 120), ("pct", "Изменение, %", 100), ("n", "Сделок", 70),
                                         ("win", "В плюсе", 70), ("pnl", "Итог сделок, ₽", 120), ("avg", "Средняя сделка", 110)])
-        self.res_tree.tag_configure("sub", foreground="#5f6673")
+        self.res_tree.tag_configure("sub", foreground=TH["muted"])
         self.res_tree.master.pack_configure(fill="x", expand=False)
         self.res_tree.configure(height=12)
         ttk.Label(t7, text="Изменение баланса", style="Big.TLabel").pack(anchor="w", pady=(10, 2))
         self.res_cv = tk.Canvas(t7, height=260, bg="#131722", highlightthickness=0)
         self.res_cv.pack(fill="both", expand=True)
         self.res_cv.bind("<Configure>", lambda _: self._draw_balance())
-        ttk.Label(t7, foreground="#555", wraplength=1000, justify="left", text=(
+        ttk.Label(t7, foreground=TH["muted"], wraplength=1000, justify="left", text=(
             "Изменение баланса — по стоимости портфеля демо-счёта (пополнения вычитаются), с учётом открытых позиций; "
             "баланс записывается каждые несколько минут, пока работает робот. Сделки и «итог сделок, ₽» — по закрытым сделкам "
             "обеих стратегий (₽ считаются со сделок, закрытых этой версией, без комиссий).")).pack(anchor="w", pady=4)
@@ -345,7 +409,7 @@ class App(tk.Tk):
         self.v_tg_imp = tk.BooleanVar(value=self.s.get("tg_imp", False))
         self.v_tg_trend = tk.BooleanVar(value=self.s.get("tg_trend", True))
         ttk.Label(t5, text="Уведомления в Telegram о найденных формациях и сделках робота", style="Big.TLabel").pack(anchor="w")
-        ttk.Label(t5, justify="left", foreground="#555", text=(
+        ttk.Label(t5, justify="left", foreground=TH["muted"], text=(
             "1. В Telegram откройте @BotFather → /newbot → придумайте имя → скопируйте токен бота.\n"
             "2. Вставьте токен ниже, откройте своего нового бота в Telegram и отправьте ему любое сообщение (например «привет»).\n"
             "3. Нажмите «Узнать chat id» — программа найдёт ваш чат сама. Затем «Тест» и «Сохранить».")).pack(anchor="w", pady=(6, 10))
@@ -372,7 +436,7 @@ class App(tk.Tk):
         t6 = ttk.Frame(nb, padding=14)
         nb.add(t6, text="Сервер и телефон")
         ttk.Label(t6, text="Круглосуточная работа на сервере и управление с телефона", style="Big.TLabel").pack(anchor="w")
-        ttk.Label(t6, justify="left", foreground="#555", wraplength=900, text=(
+        ttk.Label(t6, justify="left", foreground=TH["muted"], wraplength=900, text=(
             "1. Арендуйте VPS на Ubuntu 22.04 или 24.04 (1 ядро, 1–2 ГБ памяти; например Timeweb Cloud, Selectel, REG.RU — "
             "около 300–600 ₽ в месяц). Провайдер пришлёт IP-адрес и пароль root.\n"
             "2. Введите их ниже и нажмите «Установить / обновить сервер» — программа сама поставит робота на сервер "
@@ -404,7 +468,7 @@ class App(tk.Tk):
         f6 = ttk.Frame(g6); f6.grid(row=4, column=1, columnspan=2, sticky="w", pady=10)
         ttk.Separator(g6).grid(row=6, column=0, columnspan=3, sticky="ew", pady=10)
         ttk.Label(g6, text="Резервный сервер (пара):", font=("Segoe UI", 10, "bold")).grid(row=7, column=0, columnspan=3, sticky="w")
-        ttk.Label(g6, foreground="#555", wraplength=760, justify="left", text=(
+        ttk.Label(g6, foreground=TH["muted"], wraplength=760, justify="left", text=(
             "Второй VPS, лучше у другого провайдера. Работают в паре: торгует основной, резервный держит копию позиций и "
             "настроек и продолжает торговлю, если основной не отвечает 5 минут. Если запрос к Т-Инвестициям, Мосбирже или "
             "Telegram не проходит напрямую — он идёт через второй сервер. Телефон и программа переключаются сами.")).grid(
@@ -534,24 +598,30 @@ class App(tk.Tk):
         ttk.Label(g, text="Токен реального счёта Т-Инв.:").grid(row=r, column=0, sticky="w", pady=4)
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
         ttk.Entry(f, textvariable=self.v_rtok, width=40, show="•").pack(side="left")
-        self.rtok_lbl = ttk.Label(f, foreground="#555", text="  сохранён — оставьте пустым, чтобы не менять" if self.s.get("real_token") else "  не введён (нужен «полный доступ»)")
+        self.rtok_lbl = ttk.Label(f, foreground=TH["muted"], text="  сохранён — оставьте пустым, чтобы не менять" if self.s.get("real_token") else "  не введён (нужен «полный доступ»)")
         self.rtok_lbl.pack(side="left")
         ttk.Label(f, text="   Счёт:").pack(side="left")
         ttk.Entry(f, textvariable=self.v_racc, width=14).pack(side="left")
-        ttk.Label(f, foreground="#555", text=" (пусто — основной)").pack(side="left")
+        ttk.Label(f, foreground=TH["muted"], text=" (пусто — основной)").pack(side="left")
         r += 1
         ttk.Label(g, text="Секретный токен Финама:").grid(row=r, column=0, sticky="w", pady=4)
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
         ttk.Entry(f, textvariable=self.v_fsec, width=40, show="•").pack(side="left")
-        self.fsec_lbl = ttk.Label(f, foreground="#555", text="  сохранён — оставьте пустым, чтобы не менять" if self.s.get("finam_secret") else "  не введён")
+        self.fsec_lbl = ttk.Label(f, foreground=TH["muted"], text="  сохранён — оставьте пустым, чтобы не менять" if self.s.get("finam_secret") else "  не введён")
         self.fsec_lbl.pack(side="left")
         ttk.Label(f, text="   Счёт:").pack(side="left")
         ttk.Entry(f, textvariable=self.v_facc, width=14).pack(side="left")
-        ttk.Label(f, foreground="#555", text=" (пусто — первый доступный)").pack(side="left")
+        ttk.Label(f, foreground=TH["muted"], text=" (пусто — первый доступный)").pack(side="left")
         r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
         ttk.Checkbutton(f, text="Включать торговлю сразу при открытии программы", variable=self.v_autostart).pack(side="left")
         ttk.Checkbutton(f, text="Звук при входе и выходе из позиции", variable=self.v_sound).pack(side="left", padx=(16, 0))
+        r += 1
+        self.v_theme = tk.StringVar(value=THEMES.get(self.s.get("theme", "classic"), THEMES["classic"])[0])
+        ttk.Label(g, text="Тема оформления:").grid(row=r, column=0, sticky="w", pady=4)
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
+        ttk.Combobox(f, textvariable=self.v_theme, width=26, state="readonly", values=[v[0] for v in THEMES.values()]).pack(side="left")
+        ttk.Label(f, text="  применяется после перезапуска программы", foreground=TH["muted"]).pack(side="left")
         r += 1
         self.DIRS = {"both": "лонг и шорт", "long": "только лонг", "short": "только шорт"}
         self.v_dir = tk.StringVar(value=self.DIRS.get(self.s.get("direction", "both"), "лонг и шорт"))
@@ -562,7 +632,7 @@ class App(tk.Tk):
         self.LEV = LEV
         self.v_lev = tk.StringVar(value=LEV.get(str(self.s.get("leverage", "1")), "без маржи"))
         bg = ttk.Style().lookup("TFrame", "background") or None
-        GREY = "#666"
+        GREY = TH["muted"]
 
         def row(parent, *items, pady=3):
             """Строка настроек: подписи (str), поля (виджет-фабрики) и подсказки (("hint", текст))."""
@@ -668,14 +738,14 @@ class App(tk.Tk):
                        + f"; при {mx} позициях до {tot:g}%" + (" × плечо" if lk == "auto" else ""))
                 if lk == "1" and pct * mx > 100:
                     txt += " — больше 100%: без маржи брокер не даст открыть все позиции"
-                self.share_lbl.configure(text=txt, foreground="#b3261e" if (lk == "1" and pct * mx > 100) else GREY)
+                self.share_lbl.configure(text=txt, foreground=TH["down"] if (lk == "1" and pct * mx > 100) else GREY)
             except ValueError:
                 self.share_lbl.configure(text="введите число")
         r += 1
         ttk.Button(g, text="Сохранить настройки", command=self.save).grid(row=r, column=0, columnspan=2, sticky="w", pady=12)
         ttk.Label(t4, text="Без токена данные берутся с сайта Мосбиржи; бесплатные данные там обычно идут с задержкой около 15 минут.\n"
                            "Для журнала форвард-теста это не важно, для сигналов в реальном времени лучше задать токен.",
-                  foreground="#555", justify="left").pack(anchor="w", pady=(10, 0))
+                  foreground=TH["muted"], justify="left").pack(anchor="w", pady=(10, 0))
         self._tick()
 
     # ------------------------------------------------------------------ буфер обмена
@@ -732,14 +802,14 @@ class App(tk.Tk):
         except ValueError:
             v = None
         if not v:
-            self.bt_lbl.configure(text="", fg="#555")
+            self.bt_lbl.configure(text="", fg=TH["muted"])
             return
         per, tot, dd, n = v
         txt = (f"На истории (10.2025–10.2026, затраты 0,16%): сделок {n}, средняя сделка {per:+.2f}%, "
                f"итог {tot:+.1f}%, макс. просадка {dd:.1f}%.")
         if per <= 0:
             txt += "\nВнимание: это сочетание на истории теряло деньги. Лучшее — вход 15:00, порог 2,5%."
-        self.bt_lbl.configure(text=txt, fg="#b3261e" if per <= 0 else "#0a7a2f")
+        self.bt_lbl.configure(text=txt, fg=TH["down"] if per <= 0 else TH["up"])
 
     def _tree(self, parent, cols):
         fr = ttk.Frame(parent)
@@ -752,8 +822,8 @@ class App(tk.Tk):
         tv.configure(yscrollcommand=sb.set)
         tv.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
-        tv.tag_configure("pos", foreground="#0a7a2f")
-        tv.tag_configure("neg", foreground="#b3261e")
+        tv.tag_configure("pos", foreground=TH["up"])
+        tv.tag_configure("neg", foreground=TH["down"])
         return tv
 
     # ------------------------------------------------------------------ служебное
@@ -814,6 +884,10 @@ class App(tk.Tk):
             self.s["real_token"] = self.v_rtok.get().strip()
             self.v_rtok.set("")
             self.rtok_lbl.configure(text="  сохранён — оставьте пустым, чтобы не менять")
+        new_theme = {v[0]: k for k, v in THEMES.items()}.get(self.v_theme.get(), "classic")
+        if new_theme != self.s.get("theme", "classic"):
+            self.after(300, lambda: messagebox.showinfo(APP_TITLE, "Тема сохранена — она применится, когда вы закроете и снова откроете программу."))
+        self.s["theme"] = new_theme
         self.s.update(broker=broker, finam_account=self.v_facc.get().strip(), real_account=self.v_racc.get().strip())
         try:
             mthr = float(self.v_mthr.get().replace(",", ".")); mshare = float(self.v_mshare.get().replace(",", "."))
@@ -1285,20 +1359,20 @@ class App(tk.Tk):
         ttk.Button(bar, text="Сбросить", command=self.bt_reset).pack(side="left")
         self.bt_pb = ttk.Progressbar(bar, length=220, maximum=100)
         self.bt_pb.pack(side="left", padx=(12, 6))
-        self.bt_st = ttk.Label(bar, text="", foreground="#555")
+        self.bt_st = ttk.Label(bar, text="", foreground=TH["muted"])
         self.bt_st.pack(side="left")
         ttk.Label(t, text="Прогоняет «Движение дня» с сохранёнными настройками (вкладка «Настройки») по 5-минутным свечам за выбранный период: "
                           "те же правила, что у робота, затраты 0,16% на сделку. Первый раз скачивает историю (несколько минут), потом берёт из кэша. "
                           "Чтобы сравнить варианты — поменяйте настройки, сохраните и прогоните снова.",
-                  foreground="#555", wraplength=1500, justify="left").pack(anchor="w", pady=(6, 4))
-        self.bt_set = ttk.Label(t, text="", foreground="#333", wraplength=1500, justify="left")
+                  foreground=TH["muted"], wraplength=1500, justify="left").pack(anchor="w", pady=(6, 4))
+        self.bt_set = ttk.Label(t, text="", foreground=TH["fg"], wraplength=1500, justify="left")
         self.bt_set.pack(anchor="w")
         self.bt_sum = tk.Label(t, text="Результатов пока нет — нажмите «Прогнать на истории».", font=("Segoe UI", 12, "bold"), justify="left", anchor="w",
                                bg=ttk.Style().lookup("TFrame", "background") or None)
         self.bt_sum.pack(anchor="w", pady=(6, 6))
         pw = ttk.PanedWindow(t, orient="horizontal"); pw.pack(fill="both", expand=True)
         left = ttk.Frame(pw); pw.add(left, weight=1)
-        self.bt_cv = tk.Canvas(left, height=180, bg="white", highlightthickness=1, highlightbackground="#ccc")
+        self.bt_cv = tk.Canvas(left, height=180, bg=TH["panel"], highlightthickness=1, highlightbackground=TH["line"])
         self.bt_cv.pack(fill="x", pady=(0, 6))
         self.bt_cv.bind("<Configure>", lambda e: self._bt_curve())
         self.bt_mon = self._tree(left, [("m", "Месяц", 75), ("n", "Сделок", 55), ("rub", "Прибыль, ₽", 100), ("eq", "Счёт %", 70)])
@@ -1351,7 +1425,7 @@ class App(tk.Tk):
             rc.BACKTEST.reset()
         self._bt_res = None
         self.bt_set.configure(text="")
-        self.bt_sum.configure(text="Результатов пока нет — нажмите «Прогнать на истории».", fg="black")
+        self.bt_sum.configure(text="Результатов пока нет — нажмите «Прогнать на истории».", fg=TH["fg"])
         self.bt_mon.delete(*self.bt_mon.get_children())
         self.bt_tr.delete(*self.bt_tr.get_children())
         self.bt_pb.configure(value=0)
@@ -1390,11 +1464,11 @@ class App(tk.Tk):
         self.bt_set.configure(text=f"{res['period']} · бумаг {res['tickers']}" + (f" (без истории: {', '.join(res['fails'][:10])})" if res.get("fails") else "")
                               + f" · {res['settings']} · посчитано {res['done']}")
         if not sm.get("n"):
-            self.bt_sum.configure(text="Сделок за период нет — условия ни разу не сработали.", fg="#555")
+            self.bt_sum.configure(text="Сделок за период нет — условия ни разу не сработали.", fg=TH["muted"])
         else:
             rs = ", ".join(f"{k} {v}" for k, v in sm["reasons"].items())
             rub = lambda v, sg=False: (("+" if sg and v > 0 else "") + f"{v:,.0f}".replace(",", " ") + " ₽")
-            self.bt_sum.configure(fg="#0a7a2f" if sm["profit_rub"] > 0 else "#b3261e", text=(
+            self.bt_sum.configure(fg=TH["up"] if sm["profit_rub"] > 0 else TH["down"], text=(
                 f"Стартовая сумма {rub(sm['capital'])} → {rub(sm['final'])} · прибыль {rub(sm['profit_rub'], True)} ({sm['profit_pct']:+.2f}%) · "
                 f"макс. просадка {rub(sm['dd_rub'])} ({sm['dd']:.1f}%)\n"
                 f"Сделок {sm['n']} · в плюсе {sm['win']:g}% · средняя {sm['avg']:+.2f}%" + (f" · профит-фактор {sm['pf']:g}" if sm.get("pf") else "")
@@ -1418,24 +1492,24 @@ class App(tk.Tk):
         cur = ((self._bt_res or {}).get("summary") or {}).get("curve") or []
         w, h = max(cv.winfo_width(), 200), max(cv.winfo_height(), 120)
         if len(cur) < 2:
-            cv.create_text(w / 2, h / 2, text="кривая счёта появится после проверки", fill="#888")
+            cv.create_text(w / 2, h / 2, text="кривая счёта появится после проверки", fill=TH["muted"])
             return
         ys = [c[1] for c in cur]
         lo, hi = min(ys + [0]), max(ys + [0])
         sp = (hi - lo) or 1
         X = lambda i: 40 + (w - 50) * i / (len(cur) - 1)
         Y = lambda v: 10 + (h - 30) * (1 - (v - lo) / sp)
-        cv.create_line(40, Y(0), w - 10, Y(0), fill="#bbb", dash=(3, 3))
-        cv.create_text(36, Y(hi), text=f"{hi:+.1f}%", anchor="e", fill="#555", font=("Segoe UI", 8))
-        cv.create_text(36, Y(lo), text=f"{lo:+.1f}%", anchor="e", fill="#555", font=("Segoe UI", 8))
+        cv.create_line(40, Y(0), w - 10, Y(0), fill=TH["line"], dash=(3, 3))
+        cv.create_text(36, Y(hi), text=f"{hi:+.1f}%", anchor="e", fill=TH["muted"], font=("Segoe UI", 8))
+        cv.create_text(36, Y(lo), text=f"{lo:+.1f}%", anchor="e", fill=TH["muted"], font=("Segoe UI", 8))
         pts = []
         for i, c in enumerate(cur):
             pts += [X(i), Y(c[1])]
-        cv.create_line(*pts, fill="#0a7a2f" if ys[-1] >= 0 else "#b3261e", width=2)
-        cv.create_text(40, h - 8, text=cur[0][0], anchor="w", fill="#555", font=("Segoe UI", 8))
-        cv.create_text(w - 10, h - 8, text=cur[-1][0], anchor="e", fill="#555", font=("Segoe UI", 8))
+        cv.create_line(*pts, fill=TH["up"] if ys[-1] >= 0 else TH["down"], width=2)
+        cv.create_text(40, h - 8, text=cur[0][0], anchor="w", fill=TH["muted"], font=("Segoe UI", 8))
+        cv.create_text(w - 10, h - 8, text=cur[-1][0], anchor="e", fill=TH["muted"], font=("Segoe UI", 8))
         if len(cur[-1]) > 2:
-            cv.create_text(w - 12, 12, text=f"{cur[-1][2]:,.0f} ₽".replace(",", " "), anchor="ne", fill="#333", font=("Segoe UI", 9, "bold"))
+            cv.create_text(w - 12, 12, text=f"{cur[-1][2]:,.0f} ₽".replace(",", " "), anchor="ne", fill=TH["fg"], font=("Segoe UI", 9, "bold"))
 
     def _bt_chart(self):
         sel = self.bt_tr.selection()
@@ -1763,7 +1837,7 @@ class App(tk.Tk):
         v = f"{q['value']:,.2f}".replace(",", " ").replace(".", ",")
         ch = f"{q['chg']:+,.2f}".replace(",", " ").replace(".", ",")
         self.idx_lbl.configure(text=f"IMOEX {v} ({ch}; {q['pct']:+.2f}%)".replace(".", ","),
-                               fg="#0a7a2f" if q["pct"] > 0 else "#b3261e" if q["pct"] < 0 else "#333")
+                               fg=TH["up"] if q["pct"] > 0 else TH["down"] if q["pct"] < 0 else TH["fg"])
 
     # --- рынки
     def _market_tick(self):
@@ -2119,7 +2193,7 @@ class App(tk.Tk):
         e.configure(state="readonly")
         e.pack(padx=16, pady=4)
         ttk.Button(w, text="Скопировать код", command=lambda: (self.clipboard_clear(), self.clipboard_append(code))).pack(pady=(4, 14))
-        tk.Label(w, text="Код — это ключ к управлению роботом. Никому его не пересылайте.", bg="white", fg="#b3261e").pack(pady=(0, 12))
+        tk.Label(w, text="Код — это ключ к управлению роботом. Никому его не пересылайте.", bg="white", fg=TH["down"]).pack(pady=(0, 12))
 
     def _sel_ticker(self, tv, col=0):
         sel = tv.selection()
@@ -2188,7 +2262,7 @@ class App(tk.Tk):
         b = ttk.Frame(f); b.grid(row=len(rows), column=0, columnspan=2, pady=(10, 0), sticky="w")
         ttk.Button(b, text="Открыть по рынку", command=go).pack(side="left")
         ttk.Button(b, text="Отмена", command=w.destroy).pack(side="left", padx=6)
-        ttk.Label(f, foreground="#555", wraplength=330, text="Позицию ведёт робот: стоп, тейк, трейлинг и время выхода. "
+        ttk.Label(f, foreground=TH["muted"], wraplength=330, text="Позицию ведёт робот: стоп, тейк, трейлинг и время выхода. "
                   "«Перенести/закрыть» можно поменять потом кнопками под таблицей.").grid(row=len(rows) + 1, column=0, columnspan=2, pady=(8, 0), sticky="w")
 
     def carry_selected(self, mode):
@@ -2293,7 +2367,7 @@ class App(tk.Tk):
         b = ttk.Frame(f); b.grid(row=3, column=0, columnspan=2, pady=(8, 0), sticky="w")
         ttk.Button(b, text="Сохранить", command=go).pack(side="left")
         ttk.Button(b, text="Отмена", command=w.destroy).pack(side="left", padx=6)
-        ttk.Label(f, foreground="#555", text="Уровни можно и перетащить мышью на графике.").grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(f, foreground=TH["muted"], text="Уровни можно и перетащить мышью на графике.").grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
         w.bind("<Return>", go)
 
     def _close_ticker(self, tkr):

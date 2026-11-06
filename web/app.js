@@ -7,6 +7,17 @@ const NATIVE = window.Android || null;          // мост приложения
 // ---------------------------------------------------------------- ключ доступа
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { return null; } }
 let KEY = null;
+// ---------------------------------------------------------------- тема оформления (хранится на телефоне)
+const THEMES = [["dark", "Тёмная (как было)"], ["light", "Светлая"], ["blue", "Тёмно-синяя"], ["green", "Зелёная"], ["dracula", "Dracula (фиолетовая)"],
+  ["nord", "Nord (северная)"], ["solarized", "Solarized (бежевая)"], ["contrast", "Контрастная (чёрная)"], ["auto", "Как в системе"]];
+function applyTheme(t) {
+  let v = t || "dark";
+  if (v === "auto") v = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  if (v === "dark") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = v;
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+}
+try { applyTheme(localStorage.getItem("theme") || "dark"); } catch (e) { }
+const CSSV = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 (function initKey() {
   const m = location.hash.match(/k=([A-Za-z0-9_\-]+)/);
   if (m) { KEY = m[1]; store("key", KEY); history.replaceState(null, "", location.pathname); }
@@ -348,17 +359,17 @@ function ensureChart() {
   const el = $("#chart");
   const c = LightweightCharts.createChart(el, {
     width: el.clientWidth, height: el.clientHeight,
-    layout: { background: { color: "#131722" }, textColor: "#b2b5be", fontSize: 11 },
-    grid: { vertLines: { color: "#1f2433" }, horzLines: { color: "#1f2433" } },
-    rightPriceScale: { borderColor: "#283048" },
-    timeScale: { borderColor: "#283048", timeVisible: true, secondsVisible: false, rightOffset: 12 },
+    layout: { background: { color: CSSV("--ch-bg") }, textColor: CSSV("--ch-fg"), fontSize: 11 },
+    grid: { vertLines: { color: CSSV("--ch-grid") }, horzLines: { color: CSSV("--ch-grid") } },
+    rightPriceScale: { borderColor: CSSV("--ch-grid") },
+    timeScale: { borderColor: CSSV("--ch-grid"), timeVisible: true, secondsVisible: false, rightOffset: 12 },
     crosshair: { mode: 0 },
   });
   CH.chart = c;
   CH.candles = c.addCandlestickSeries({ upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, wickUpColor: "#26a69a", wickDownColor: "#ef5350" });
   CH.vol = c.addHistogramSeries({ priceScaleId: "vol", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false });
   c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-  CH.e10 = c.addLineSeries({ color: "#e8e8e8", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+  CH.e10 = c.addLineSeries({ color: CSSV("--ch-e10"), lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
   CH.e20 = c.addLineSeries({ color: "#2962ff", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
   CH.e200 = c.addLineSeries({ color: "#ef5350", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
   CH.s200 = c.addLineSeries({ color: "#b388ff", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
@@ -646,8 +657,8 @@ async function loadResults() {
         return `<tr class="sub"><td>↳ ${n}</td><td></td><td class="${cls(x.avg_pct)}">${x.n ? pct(x.avg_pct) + " ср." : ""}</td><td>${x.n}${x.n ? " · " + Math.round(x.wins / x.n * 100) + "%" : ""}</td><td class="${cls(x.pnl_rub)}">${rub(x.pnl_rub, true)}</td></tr>`; }).join("")).join("");
   const el = $("#resChart");
   if (!RCH) {
-    RCH = LightweightCharts.createChart(el, { width: el.clientWidth, height: 220, layout: { background: { color: "#131722" }, textColor: "#b2b5be", fontSize: 11 },
-      grid: { vertLines: { color: "#1f2433" }, horzLines: { color: "#1f2433" } }, rightPriceScale: { borderColor: "#283048" }, timeScale: { borderColor: "#283048" } });
+    RCH = LightweightCharts.createChart(el, { width: el.clientWidth, height: 220, layout: { background: { color: CSSV("--ch-bg") }, textColor: CSSV("--ch-fg"), fontSize: 11 },
+      grid: { vertLines: { color: CSSV("--ch-grid") }, horzLines: { color: CSSV("--ch-grid") } }, rightPriceScale: { borderColor: CSSV("--ch-grid") }, timeScale: { borderColor: CSSV("--ch-grid") } });
     RCH.s = RCH.addAreaSeries({ lineColor: "#2f7cf6", topColor: "rgba(47,124,246,.35)", bottomColor: "rgba(47,124,246,0)", lineWidth: 2,
       priceFormat: { type: "price", precision: 0, minMove: 1 } });
     new ResizeObserver(() => RCH.applyOptions({ width: el.clientWidth })).observe(el);
@@ -775,6 +786,7 @@ function renderSettings(s) {
     ${chk("tg_trades", "Покупки и продажи робота")}
   </div>
   <div class="grp"><h3>Этот телефон</h3>
+    <label class="f"><span>Тема оформления</span><select id="phTheme">${THEMES.map(([k, n]) => `<option value="${k}" ${(store("theme") || "dark") === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
     <label class="c"><input type="checkbox" id="phSound" ${store("sound") === "0" ? "" : "checked"}><span>Звук при входе и выходе (пока открыт пульт)</span></label>
     <button type="button" class="btn small ghost" id="forget">Сменить сервер / код подключения</button>
     <p class="muted small">Программа на сервере: ${esc(ST ? ST.version : "")}${NATIVE && NATIVE.bundleVersion ? "<br>В этом приложении: " + esc(NATIVE.bundleVersion()) : ""}</p>
@@ -788,6 +800,7 @@ function renderSettings(s) {
   };
   $("#tgTest").onclick = async () => { try { await api("/api/tg_test", {}); toast("Отправлено — проверьте Telegram (нужно сначала сохранить)"); } catch (e) { toast("Не отправилось: " + e.message); } };
   $("#phSound").onchange = (e) => store("sound", e.target.checked ? "1" : "0");
+  $("#phTheme").onchange = (e) => { store("theme", e.target.value); applyTheme(e.target.value); setTimeout(() => location.reload(), 150); };
   if ($("#srvUpd")) $("#srvUpd").onclick = () => NATIVE.updateServer();
   $("#forget").onclick = async () => {
     if (!(await ask("Забыть код подключения на этом телефоне?", [["Забыть", true, "danger"], ["Отмена", false]]))) return;
@@ -918,11 +931,11 @@ $("#btStop").onclick = async () => { try { await api("/api/backtest", { stop: tr
 // ---------------------------------------------------------------- рынки: 4 графика выбранной бумаги
 const MKC = { tk: null, ch: {} };
 function mkChart(el) {
-  const c = LightweightCharts.createChart(el, { width: el.clientWidth, height: el.clientHeight, layout: { background: { color: "#131722" }, textColor: "#b2b5be", fontSize: 9 },
-    grid: { vertLines: { color: "#1f2433" }, horzLines: { color: "#1f2433" } }, rightPriceScale: { borderColor: "#2a2e39" },
-    timeScale: { borderColor: "#2a2e39", timeVisible: true }, handleScroll: false, handleScale: false, crosshair: { mode: 0 } });
+  const c = LightweightCharts.createChart(el, { width: el.clientWidth, height: el.clientHeight, layout: { background: { color: CSSV("--ch-bg") }, textColor: CSSV("--ch-fg"), fontSize: 9 },
+    grid: { vertLines: { color: CSSV("--ch-grid") }, horzLines: { color: CSSV("--ch-grid") } }, rightPriceScale: { borderColor: CSSV("--ch-grid") },
+    timeScale: { borderColor: CSSV("--ch-grid"), timeVisible: true }, handleScroll: false, handleScale: false, crosshair: { mode: 0 } });
   return { c, k: c.addCandlestickSeries({ upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, wickUpColor: "#26a69a", wickDownColor: "#ef5350" }),
-    e10: c.addLineSeries({ color: "#e8e8e8", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
+    e10: c.addLineSeries({ color: CSSV("--ch-e10"), lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
     e20: c.addLineSeries({ color: "#2962ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }) };
 }
 async function mkCharts(tk) {
