@@ -148,6 +148,8 @@ class Robot:
                     live = _tail_ti().index_last("IMOEX")
                 except Exception:
                     live = None
+            if iss and iss.get("prev"):
+                self.idx_prev = iss["prev"]
             if live and iss and iss.get("prev"):
                 v, prev = live["value"], iss["prev"]
                 self.index = {"code": "IMOEX", "value": v, "chg": round(v - prev, 2), "pct": round((v / prev - 1) * 100, 2),
@@ -423,6 +425,141 @@ class Robot:
 
 ROBOT = None
 PAIR = None
+
+
+# ============================================================================ живые цены (поток для телефона)
+class LiveFeed:
+    """
+    Последние цены сделок в реальном времени для экрана: подписка на поток Т-Инвестиций (MarketDataServerSideStream),
+    а если поток недоступен — опрос GetLastPrices раз в 0,3 с. Работает, только пока телефон/программа открыты
+    (есть подключённый поток /api/live). Следит за IMOEX, открытыми позициями и бумагой на графике.
+    """
+    POLL = 0.3
+
+    def __init__(self):
+        self.px = {}                      # тикер -> цена
+        self.seq = 0
+        self.cond = threading.Condition()
+        self.want = {}                    # тикер -> до какого времени нужен (time.time())
+        self.clients = 0
+        self.mode = "—"
+        self._uids = {}
+        self._stream_bad_until = 0.0
+        threading.Thread(target=self._loop, daemon=True, name="live").start()
+
+    def watch(self, tickers, ttl=20):
+        t = time.time() + ttl
+        for tk in tickers:
+            if tk:
+                self.want[tk] = max(self.want.get(tk, 0), t)
+
+    def _targets(self):
+        now = time.time()
+        tks = {"IMOEX"} | {k for k, t in self.want.items() if t > now}
+        r = ROBOT.robot if ROBOT and ROBOT.running() else None
+        if r:
+            tks |= {p["ticker"] for p in r.positions}
+        return tuple(sorted(tks))
+
+    def _put(self, tk, price):
+        if not price or self.px.get(tk) == price:
+            return
+        with self.cond:
+            self.px[tk] = price
+            self.seq += 1
+            self.cond.notify_all()
+
+    def _uid_map(self, ti, tks):
+        out = {}
+        for tk in tks:
+            if tk not in self._uids:
+                try:
+                    self._uids[tk] = ti.index_uid(tk) if tk == "IMOEX" else ti.share(tk)["uid"]
+                except Exception:
+                    self._uids[tk] = None
+            if self._uids[tk]:
+                out[self._uids[tk]] = tk
+        return out
+
+    def _loop(self):
+        while True:
+            if self.clients <= 0 or not (ROBOT and ROBOT.has_token()):
+                time.sleep(0.2)
+                continue
+            try:
+                ti = _tail_ti()
+                tks = self._targets()
+                uids = self._uid_map(ti, tks)
+                if not uids:
+                    time.sleep(1)
+                    continue
+                if time.time() >= self._stream_bad_until:
+                    if self._stream(ti, uids, tks):
+                        continue
+                    self._stream_bad_until = time.time() + 600       # поток не дали — 10 минут опрашиваем
+                self.mode = "опрос 0,3 с"
+                js = ti.call("MarketDataService", "GetLastPrices", {"instrumentId": list(uids)})
+                for p in js.get("lastPrices", []):
+                    tk = uids.get(p.get("instrumentUid"))
+                    if tk:
+                        self._put(tk, sc.TInvest.q(p.get("price")))
+                time.sleep(self.POLL)
+            except Exception:
+                time.sleep(1)
+
+    def _stream(self, ti, uids, tks):
+        """Поток последних цен; выходит, когда меняется набор бумаг или телефоны отключились. False — поток недоступен."""
+        body = {"subscribeLastPriceRequest": {"subscriptionAction": "SUBSCRIPTION_ACTION_SUBSCRIBE",
+                                              "instruments": [{"instrumentId": u} for u in uids]}}
+        try:
+            r = sc.http().post(f"{ti.base}{sc.SVC}MarketDataStreamService/MarketDataServerSideStream", headers=ti.h,
+                               data=json.dumps(body), stream=True, timeout=(10, 30))
+        except Exception:
+            return False
+        if r.status_code != 200:
+            r.close()
+            return False
+        self.mode = "поток"
+        got = False
+        stop = threading.Event()
+
+        def guard():                       # закрываем поток, если сменился набор бумаг
+            while not stop.wait(0.5):
+                if self.clients <= 0 or self._targets() != tks:
+                    r.close()
+                    return
+        threading.Thread(target=guard, daemon=True).start()
+        try:
+            for line in r.iter_lines(chunk_size=1):         # без буфера — каждая цена сразу
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                if "error" in msg and not got:
+                    return False
+                m = msg.get("result", msg)
+                lp = m.get("lastPrice")
+                if lp:
+                    got = True
+                    tk = uids.get(lp.get("instrumentUid"))
+                    if tk:
+                        self._put(tk, sc.TInvest.q(lp.get("price")))
+                elif m.get("subscribeLastPriceResponse") or m.get("ping"):
+                    got = True
+        except Exception:
+            pass
+        finally:
+            stop.set()
+            r.close()
+        return got
+
+    def snapshot(self, tks):
+        return {tk: self.px[tk] for tk in tks if tk in self.px}
+
+
+LIVE = None
 
 
 # ============================================================================ данные для вкладок
@@ -704,7 +841,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("слишком большой запрос")
         return json.loads(self.rfile.read(n) or b"{}")
 
-    LOCAL_API = {"/api/ping", "/api/pair_sync", "/api/relay", "/api/pair_set", "/api/pair_info", "/api/update"}
+    LOCAL_API = {"/api/ping", "/api/pair_sync", "/api/relay", "/api/pair_set", "/api/pair_info", "/api/update", "/api/live"}
 
     def _proxy(self, method, raw=None):
         """Резервный сервер пересылает запросы телефона/программы активному серверу."""
@@ -716,6 +853,45 @@ class Handler(BaseHTTPRequestHandler):
             return True
         except Exception:
             return False                                  # второй не отвечает — отвечаем сами
+
+    def _live(self, q):
+        """Живые цены одной длинной строкой событий (по строке JSON на изменение). Держим до 2 минут — телефон переподключится."""
+        tks = [t for t in (q.get("tk") or "").split(",") if t][:20]
+        LIVE.watch(tks, ttl=30)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        LIVE.clients += 1
+        try:
+            end, seq, last = time.time() + 120, -1, None
+            while time.time() < end:
+                with LIVE.cond:
+                    if LIVE.seq == seq:
+                        LIVE.cond.wait(10)
+                    seq = LIVE.seq
+                LIVE.watch(tks, ttl=30)
+                r = ROBOT.robot if ROBOT.running() else None
+                want = set(tks) | {"IMOEX"} | ({p["ticker"] for p in r.positions} if r else set())
+                p = LIVE.snapshot(want)
+                if p == last:
+                    self.wfile.write(b"{}\n")                       # поддержка соединения
+                else:
+                    out = {"p": p, "t": int(time.time() * 1000), "mode": LIVE.mode}
+                    prev = getattr(ROBOT, "idx_prev", None)
+                    if prev and p.get("IMOEX"):
+                        v = p["IMOEX"]
+                        out["idx"] = {"value": v, "chg": round(v - prev, 2), "pct": round((v / prev - 1) * 100, 2)}
+                    self.wfile.write(json.dumps(out, ensure_ascii=False).encode("utf-8") + b"\n")
+                    last = p
+                self.wfile.flush()
+        except Exception:
+            pass
+        finally:
+            LIVE.clients -= 1
 
     def _passive(self, path):
         return PAIR and PAIR.enabled and not PAIR.active and PAIR.peer_ok and path not in self.LOCAL_API
@@ -738,6 +914,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, PAIR.info() if PAIR else {"enabled": False})
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         try:
+            if u.path == "/api/live":
+                return self._live(q)
             if u.path == "/api/state":
                 st = ROBOT.state()
                 since = int(q.get("ev", 0))
@@ -936,6 +1114,8 @@ def main():
         ROBOT.start(bool(ROBOT.s.get("autostart")))
     else:
         log("Токен песочницы ещё не введён — откройте приложение на телефоне → Настройки.")
+    global LIVE
+    LIVE = LiveFeed()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(CERT, KEY)

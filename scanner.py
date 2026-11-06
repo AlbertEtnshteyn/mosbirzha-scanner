@@ -771,7 +771,11 @@ class TInvest:
                         "v": int(c.get("volume", 0) or 0)})
         return out
 
-    def index_last(self, code="IMOEX"):
+    def index_uid(self, code="IMOEX"):
+        self.index_last(code, only_uid=True)
+        return self._idx_uid.get(code)
+
+    def index_last(self, code="IMOEX", only_uid=False):
         """Индекс в реальном времени (индикатив Т-Инвестиций). None — если индекс не найден."""
         if not hasattr(self, "_idx_uid"):
             self._idx_uid = {}
@@ -784,7 +788,7 @@ class TInvest:
             else:
                 self._idx_uid[code] = None
         uid = self._idx_uid[code]
-        if not uid:
+        if not uid or only_uid:
             return None
         js = self.call("MarketDataService", "GetLastPrices", {"instrumentId": [uid]})
         for p in js.get("lastPrices", []):

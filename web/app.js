@@ -72,6 +72,7 @@ document.addEventListener("click", () => { try { actx = actx || new (window.Audi
 let TAB = "robot";
 function showTab(t) {
   TAB = t;
+  setTimeout(liveRetarget, 0);
   $$("nav.bottom button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
   $$(".tab").forEach((s) => (s.hidden = s.id !== "tab-" + t));
   if (t === "trades") loadTrades();
@@ -102,6 +103,80 @@ async function poll() {
   } catch (e) {
     if (e.message !== "401") { $("#tradeBadge").textContent = "нет связи"; $("#tradeBadge").className = "badge dead"; }
   } finally { POLL_BUSY = false; }
+}
+
+// ---------------------------------------------------------------- живые цены (поток с сервера, без опроса)
+const grpKey = (p) => p.strat === "spike" ? "spike" : p.strat === "manual" ? "manual" : "15";
+const grpVal = (d) => `${d.avg_pct != null ? `<span class="${cls(d.avg_pct)}">${pct(d.avg_pct)} ср.</span> · ` : ""}<b class="${cls(d.pnl_rub)}">${d.known ? rub(d.pnl_rub, true) : "—"}</b>`;
+const LV = { p: {}, idx: null, ok: false, t: 0 };
+function setText(el, html, c) { if (el.innerHTML !== html) el.innerHTML = html; if (c !== undefined) el.className = el.className.replace(/\b(up|down)\b/g, "").trim() + (c ? " " + c : ""); }
+function liveApply() {
+  if (!ST) return;
+  const ix = LV.idx;
+  if (ix) {
+    $("#idx").innerHTML = `IMOEX ${ix.value.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+    <small class="${cls(ix.pct)}">(${ix.chg > 0 ? "+" : ""}${ix.chg.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}; ${pct(ix.pct)})</small>`;
+    $("#market").innerHTML = `<span class="${cls(ix.pct)}">${pct(ix.pct)}</span>`;
+  }
+  const P = ST.positions || [];
+  if (!P.length) return;
+  const G = {}, T = { pnl_rub: 0, known: 0 };
+  for (const p of P) {
+    const px = LV.p[p.ticker];
+    if (px) { p.last = px; if (p.mult) p.pnl_rub = p.side * (px - p.entry) * p.mult; }
+    const res = p.last ? p.side * (p.last / p.entry - 1) * 100 : null;
+    const g = G[grpKey(p)] || (G[grpKey(p)] = { pct: [], pnl_rub: 0, known: 0 });
+    if (res != null) g.pct.push(res);
+    if (p.pnl_rub != null) { g.pnl_rub += p.pnl_rub; g.known++; T.pnl_rub += p.pnl_rub; T.known++; }
+    const sel = (a) => document.querySelector(`[${a}="${CSS.escape(p.ticker)}"]`);
+    let el = sel("data-lv-px"); if (el) setText(el, fmt(p.last));
+    el = sel("data-lv-pct"); if (el) setText(el, pct(res), cls(res));
+    el = sel("data-lv-rub"); if (el) setText(el, p.pnl_rub != null ? rub(p.pnl_rub, true) : "", cls(p.pnl_rub));
+  }
+  for (const [k, g] of Object.entries(G)) {
+    const el = document.querySelector(`[data-lv-grp="${k}"]`);
+    if (el) setText(el, grpVal({ avg_pct: g.pct.length ? g.pct.reduce((a, b) => a + b, 0) / g.pct.length : null, pnl_rub: g.pnl_rub, known: g.known }));
+  }
+  const tot = document.querySelector(`[data-lv-grp="total"]`);
+  if (tot) setText(tot, T.known ? rub(T.pnl_rub, true) : "—", cls(T.pnl_rub));
+}
+let LV_RAF = 0;
+function liveTick(m) {
+  if (m.p) Object.assign(LV.p, m.p);
+  if (m.idx) LV.idx = m.idx;
+  LV.t = Date.now();
+  if (CH.ticker && LV.p[CH.ticker] && TAB === "chart") chartPrice(LV.p[CH.ticker], Math.floor(m.t / 1000) + 3 * 3600);
+  if (!LV_RAF) LV_RAF = requestAnimationFrame(() => { LV_RAF = 0; liveApply(); });
+}
+let LV_CTRL = null, LV_KEY = "";
+async function liveLoop() {
+  for (;;) {
+    if (document.hidden || !KEY) { await new Promise((r) => setTimeout(r, 500)); continue; }
+    LV_KEY = TAB === "chart" && CH.ticker ? CH.ticker : "";
+    LV_CTRL = new AbortController();
+    try {
+      const r = await fetch(`/api/live?tk=${encodeURIComponent(LV_KEY)}`, { headers: { "X-Key": KEY }, signal: LV_CTRL.signal });
+      if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
+      const rd = r.body.getReader(), dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await rd.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i); buf = buf.slice(i + 1);
+          if (!line || line === "{}") continue;
+          try { LV.ok = true; liveTick(JSON.parse(line)); } catch (e) {}
+        }
+        if (document.hidden) { LV_CTRL.abort(); break; }
+      }
+    } catch (e) { LV.ok = false; await new Promise((r) => setTimeout(r, 2000)); }
+  }
+}
+function liveRetarget() {                       // открыли другую бумагу на графике — переподключиться с ней
+  const k = TAB === "chart" && CH.ticker ? CH.ticker : "";
+  if (k !== LV_KEY && LV_CTRL) LV_CTRL.abort();
 }
 
 function onEvent(e) {
@@ -150,10 +225,10 @@ function renderState(st) {
     const strat = p.strat === "spike" ? "всплеск " + (tfl || "15м") + (p.took ? " (б/у)" : "") : p.strat === "manual" ? "вручную" + (tfl ? " " + tfl : "") : "15:00";
     return `<div class="item ${p.side > 0 ? "l" : "s"}">
       <div class="hd"><span class="tk">${esc(p.ticker)} <span class="small ${p.side > 0 ? "up" : "down"}">${p.side > 0 ? "ЛОНГ" : "ШОРТ"}</span></span>
-        <span style="text-align:right"><span class="big ${cls(res)}" style="font-size:18px">${pct(res)}</span>
-        ${p.pnl_rub != null ? `<div class="small ${cls(p.pnl_rub)}">${rub(p.pnl_rub, true)}</div>` : ""}</span></div>
+        <span style="text-align:right"><span class="big ${cls(res)}" style="font-size:18px" data-lv-pct="${esc(p.ticker)}">${pct(res)}</span>
+        <div class="small ${cls(p.pnl_rub)}" data-lv-rub="${esc(p.ticker)}">${p.pnl_rub != null ? rub(p.pnl_rub, true) : ""}</div></span></div>
       <div class="meta">${strat} · ${p.lots} лот.${p.carried ? " · перенос " + p.carried : ""}</div>
-      <div class="grid4"><div><span>вход</span><b>${fmt(p.entry)}</b></div><div><span>сейчас</span><b>${fmt(p.last)}</b></div>
+      <div class="grid4"><div><span>вход</span><b>${fmt(p.entry)}</b></div><div><span>сейчас</span><b data-lv-px="${esc(p.ticker)}">${fmt(p.last)}</b></div>
         <div><span>стоп</span><b class="down">${fmt(p.stop)}</b></div><div><span>тейк</span><b class="up">${take}</b></div></div>
       <div class="acts"><button class="btn small" data-chart="${esc(p.ticker)}" data-tf="${p.tf || 15}">График</button>
         <button class="btn small" data-lv="${esc(p.ticker)}" data-stop="${p.stop || ""}" data-take="${p.take || ""}">Стоп/тейк</button>
@@ -163,19 +238,20 @@ function renderState(st) {
           `<button data-carry="${esc(p.ticker)}" data-mode="${v}" class="${(p.carry_pick || "") === v ? "on" : ""}">${n}</button>`).join("")}</div></div></div>`;
   };
   const PS = st.pos_summary || { by_strat: {}, total: {} };
-  const grpHead = (name, d) => `<div class="grp-h"><span>${name} · ${d.n} поз.</span>
-    <span>${d.avg_pct != null ? `<span class="${cls(d.avg_pct)}">${pct(d.avg_pct)} ср.</span> · ` : ""}<b class="${cls(d.pnl_rub)}">${d.known ? rub(d.pnl_rub, true) : "—"}</b></span></div>`;
+  const grpHead = (name, d, kp) => `<div class="grp-h"><span>${name} · ${d.n} поз.</span>
+    <span data-lv-grp="${kp}">${grpVal(d)}</span></div>`;
   let html = "";
   for (const [k, kp, name] of [["всплеск", "spike", "Всплеск + EMA20"], ["15:00", "15", "Движение дня"], ["вручную", "manual", "Открытые вручную"]]) {
     const G = P.filter((p) => (p.strat === "spike" ? "spike" : p.strat === "manual" ? "manual" : "15") === kp);
     if (!G.length) continue;
-    html += grpHead(name, PS.by_strat[k] || { n: G.length }) + G.map(posCard).join("");
+    html += grpHead(name, PS.by_strat[k] || { n: G.length }, kp) + G.map(posCard).join("");
   }
   if (P.length) {
     const T = PS.total || {};
-    html += `<div class="grp-h total"><span>Итого открытые · ${P.length} поз.</span><b class="${cls(T.pnl_rub)}">${T.known ? rub(T.pnl_rub, true) : "—"}</b></div>`;
+    html += `<div class="grp-h total"><span>Итого открытые · ${P.length} поз.</span><b class="${cls(T.pnl_rub)}" data-lv-grp="total">${T.known ? rub(T.pnl_rub, true) : "—"}</b></div>`;
   }
   $("#positions").innerHTML = html || `<div class="empty">Открытых позиций нет</div>`;
+  liveApply();                                   // поверх — самые свежие цены из живого потока
 
   // кандидаты «движения дня»
   const S = st.scan || [];
@@ -308,25 +384,28 @@ $("#chPrev").onclick = () => {
   selectTrade(T.length - 1 - (CH.go++ % T.length));
 };
 
+function chartPrice(price, t) {                 // t — время МСК «как есть», секунды
+  const B = CH.data && CH.data.bars;
+  if (!B || !B.length || !price) return;
+  const b = B[B.length - 1];
+  if (CH.tf < 1440 && t >= b.t + CH.tf * 60) {          // началась новая свеча — рисуем её сразу, объём подтянет обновление свечей
+    const nt = t - (t % (CH.tf * 60));
+    B.push({ t: nt, o: price, h: price, l: price, c: price, v: 0 });
+    CH.candles.update({ time: nt, open: price, high: price, low: price, close: price });
+    return;
+  }
+  if (b.c === price) return;
+  b.c = price; b.h = Math.max(b.h, price); b.l = Math.min(b.l, price);
+  CH.candles.update({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c });
+}
 let LIVE_BUSY = false;
 async function chartLive() {
-  if (LIVE_BUSY) return;
+  if (LIVE_BUSY || (LV.ok && Date.now() - LV.t < 3000 && LV.p[CH.ticker])) return;   // есть живой поток — опрос не нужен
   LIVE_BUSY = true;
   const tk = CH.ticker;
   try {
     const d = await api(`/api/last?ticker=${encodeURIComponent(tk)}`);
-    const B = CH.data && CH.data.bars;
-    if (tk !== CH.ticker || !B || !B.length || !d.price) return;
-    const b = B[B.length - 1];
-    if (CH.tf < 1440 && d.t >= b.t + CH.tf * 60) {          // началась новая свеча — рисуем её сразу, объём подтянет обновление свечей
-      const t = d.t - (d.t % (CH.tf * 60));
-      B.push({ t, o: d.price, h: d.price, l: d.price, c: d.price, v: 0 });
-      CH.candles.update({ time: t, open: d.price, high: d.price, low: d.price, close: d.price });
-      return;
-    }
-    if (b.c === d.price) return;
-    b.c = d.price; b.h = Math.max(b.h, d.price); b.l = Math.min(b.l, d.price);
-    CH.candles.update({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c });
+    if (tk === CH.ticker) chartPrice(d.price, d.t);
   } catch (e) { /* следующая попытка через секунду */ }
   finally { LIVE_BUSY = false; }
 }
@@ -350,7 +429,7 @@ async function chartTail() {
   finally { TAIL_BUSY = false; }
 }
 async function loadChart(quiet) {
-  ensureChart(); markTf();
+  ensureChart(); markTf(); liveRetarget();
   const tk = CH.ticker, tf = CH.tf;
   if (!quiet) $("#chartInfo").textContent = `Загружаю ${tk} ${TFNAME[tf]}…`;
   try {
@@ -827,6 +906,7 @@ function start() {
   if (!KEY) { showLogin(""); return; }
   $("#login").hidden = true; $("#app").hidden = false;
   poll(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
+  if (!liveLoop.started) { liveLoop.started = true; liveLoop(); }   // живые цены — потоком, сразу при каждой сделке
   loadResults(); setInterval(() => { if (!document.hidden) loadResults(); }, 60000);
   loadCalendar(); setInterval(() => { if (!document.hidden) loadCalendar(); }, 30 * 60000);
   setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) loadChart(true); }, 60000);
