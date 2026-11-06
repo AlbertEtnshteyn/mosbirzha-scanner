@@ -19,7 +19,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
-            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"], "mid_liq": 1.0, "mid_min_turn": 20, "mid_liq_on": True, "mid_minv_on": False}
+            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"], "mid_liq": 1.0, "mid_min_turn": 20, "mid_liq_on": True, "mid_minv_on": False, "mid_vol_on": False, "mid_vol": 5}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -111,7 +111,8 @@ def mid_cfg(s):
             "carry_days": int(s.get("mid_carry_days", 0) or 0),
             "modes": mid_modes(s),
             "liq": float(s.get("mid_liq", 1.0) or 0) / 100 if s.get("mid_liq_on", True) else 0.0,       # доля дневного оборота
-            "min_turn": float(s.get("mid_min_turn", 0) or 0) * 1e6 if s.get("mid_minv_on", False) else 0.0}  # мин. оборот, ₽ в день
+            "min_turn": float(s.get("mid_min_turn", 0) or 0) * 1e6 if s.get("mid_minv_on", False) else 0.0,  # мин. оборот, ₽ в день
+            "min_vol": float(s.get("mid_vol", 0) or 0) * 1e6 if s.get("mid_vol_on", False) else 0.0}      # мин. объём сегодня, ₽
 
 
 MID_MODES = [("idx_long", "индекс идёт вверх — лонг"), ("idx_short", "индекс идёт вниз — шорт"),
@@ -815,6 +816,8 @@ def bt_run(data, m, imoex=None):
                     arm[x] = False
                 if r <= day_from:
                     r += 1; continue
+                if m.get("min_vol") and sum(x[5] if len(x) > 5 else 0 for x in rows[day_from:r]) < m["min_vol"]:
+                    r += 1; continue                        # объём торгов сегодня к моменту входа меньше заданного
                 lo_d = min(x[3] for x in rows[day_from:r]); hi_d = max(x[2] for x in rows[day_from:r])
                 if sd > 0:
                     stop, take = lo_d * (1 - at.MID_STOP_BUF), hi_d
@@ -1054,7 +1057,8 @@ class Backtest:
                              + (f" (до {m['carry_days']} дн.)" if m["carry"] != "none" and m["carry_days"] else "")
                              + f", {m['share'] * 100:g}% счёта на сделку"
                              + (f", но не больше {m['liq'] * 100:g}% дневного оборота бумаги" if m["liq"] else "")
-                             + (f", оборот не меньше {m['min_turn'] / 1e6:g} млн ₽/день" if m["min_turn"] else "") + "; "
+                             + (f", оборот не меньше {m['min_turn'] / 1e6:g} млн ₽/день" if m["min_turn"] else "")
+                             + (f", объём сегодня не меньше {m['min_vol'] / 1e6:g} млн ₽" if m.get("min_vol") else "") + "; "
                              f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}"),
                 "done": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
             self.state.update(progress="готово", pct=100)

@@ -270,7 +270,7 @@ class App(tk.Tk):
         ttk.Entry(top8, textvariable=self.mk_q, width=16).pack(side="left", padx=(4, 12))
         self.mk_form = tk.BooleanVar(value=False)
         ttk.Button(top8, text="Обновить", command=self.refresh_market).pack(side="left")
-        self.mk_sum = ttk.Label(t8, text="", foreground="#555")
+        self.mk_sum = ttk.Label(t8, text="", foreground="#555", wraplength=640, justify="left", font=("Segoe UI", 8))
         self.mk_sum.pack(anchor="w", pady=4)
         pw8 = ttk.PanedWindow(t8, orient="horizontal")
         pw8.pack(fill="both", expand=True)
@@ -281,12 +281,16 @@ class App(tk.Tk):
         self.mk_charts = []
         tk.Label(self.mk_charts_fr, text="Выберите бумагу в таблице слева — здесь появятся графики 5 мин, 15 мин, 1 час и 1 день.",
                  bg="#131722", fg="#b2b5be").grid(row=0, column=0, columnspan=2, rowspan=2)
-        self.mk_tree = self._tree(left8, [("ticker", "Тикер", 90), ("name", "Название", 200), ("price", "Цена", 90), ("pct", "Изм. за день", 100),
-                                       ("value", "Оборот сегодня, млн ₽", 110), ("avg", "Оборот в день, млн ₽", 110), ("time", "Время", 70), ("tier", "Эшелон", 110),
-                                       ("form", "Формация EMA20 (сегодня)", 260)])
+        self.mk_tree = self._tree(left8, [("ticker", "Тикер", 90), ("name", "Название", 200), ("price", "Цена", 90), ("pct", "Изм., %", 100),
+                                       ("value", "Объём сег.", 110), ("avg", "Объём/день", 110), ("time", "Время", 70),
+                                       ("tier", "Эшелон", 110), ("form", "Формация EMA20 (сегодня)", 260)])
+        st_ = ttk.Style()
+        st_.configure("Mk.Treeview", font=("Segoe UI", 8), rowheight=18)
+        st_.configure("Mk.Treeview.Heading", font=("Segoe UI", 8, "bold"), padding=(2, 2))
+        self.mk_tree.configure(style="Mk.Treeview")
         self.mk_tree["displaycolumns"] = ("ticker", "name", "price", "pct", "value", "avg", "time", "tier")
-        for c_, w_ in (("ticker", 65), ("name", 140), ("price", 70), ("pct", 80), ("value", 105), ("avg", 105), ("time", 50), ("tier", 90)):
-            self.mk_tree.column(c_, width=w_)
+        for c_, w_ in (("ticker", 52), ("name", 105), ("price", 62), ("pct", 58), ("value", 92), ("avg", 92), ("time", 46), ("tier", 66)):
+            self.mk_tree.column(c_, width=w_, minwidth=36, stretch=c_ == "name")
         def _sash():
             try:
                 pw8.sashpos(0, 640)
@@ -601,6 +605,8 @@ class App(tk.Tk):
         self.v_mminv = tk.StringVar(value=f"{float(self.s.get('mid_min_turn', 20)):g}")
         self.v_mliq_on = tk.BooleanVar(value=bool(self.s.get("mid_liq_on", True)))
         self.v_mminv_on = tk.BooleanVar(value=bool(self.s.get("mid_minv_on", False)))
+        self.v_mvol = tk.StringVar(value=f"{float(self.s.get('mid_vol', 5)):g}")
+        self.v_mvol_on = tk.BooleanVar(value=bool(self.s.get("mid_vol_on", False)))
         self.MREF = {"7": "от открытия рынка 07:00", "10": "от открытия основной сессии 10:00 (лучше на истории)"}
         self.v_mref = tk.StringVar(value=self.MREF.get(str(self.s.get("mid_ref", "7")), self.MREF["7"]))
         self.v_mmulti = tk.BooleanVar(value=bool(self.s.get("mid_multi", True)))
@@ -631,6 +637,8 @@ class App(tk.Tk):
         row(b2, ck("Ограничивать позицию по обороту бумаги: не больше, % дневного оборота", self.v_mliq_on),
             cbe(self.v_mliq, ["0.5", "1", "2", "3", "5"], 5),
             ck("Не торговать бумаги с оборотом меньше, млн ₽ в день", self.v_mminv_on), cbe(self.v_mminv, ["0.5", "1", "2", "5", "10", "20", "50", "100", "500"], 6))
+        row(b2, ck("Не торговать бумаги с объёмом сегодня меньше, млн ₽", self.v_mvol_on), cbe(self.v_mvol, ["0.5", "1", "2", "5", "10", "20", "50", "100", "500"], 6),
+            ("hint", "объём торгов бумагой за сегодня (с 07:00) к моменту входа; если меньше — робот ждёт, пока наберётся"))
         row(b2, ("hint", "чтобы не застрять в неликвиде: позиция уменьшается до этой доли оборота. На истории (152 акции, с переносом): без ограничения +89%, "
                          "1% оборота +80% (просадка меньше), от 20 млн ₽/день +65%"))
         tk.Label(b2, text="Лонг: бумага выросла на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка; "
@@ -824,6 +832,7 @@ class App(tk.Tk):
         self.s.update(mid_thr=mthr, mid_share=mshare,
                       mid_liq=self._num(self.v_mliq.get(), 1.0), mid_min_turn=self._num(self.v_mminv.get(), 20),
                       mid_liq_on=self.v_mliq_on.get(), mid_minv_on=self.v_mminv_on.get(),
+                      mid_vol_on=self.v_mvol_on.get(), mid_vol=self._num(self.v_mvol.get(), 5),
                       mid_tfs=[k for k, v in self.v_mtfs.items() if v.get()] or [60],
                       mid_ref={v: k for k, v in self.MREF.items()}.get(self.v_mref.get(), "7"), mid_multi=self.v_mmulti.get(), mid_modes=[k for k, _ in rc.MID_MODES if self.v_mmodes[k].get()] or ["long"],
                       mid_carry={v: k for k, v in self.MCARRY.items()}.get(self.v_mcarry.get(), "none"),
@@ -1666,7 +1675,7 @@ class App(tk.Tk):
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
                    "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal",
-                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi", "mid_carry", "mid_carry_days", "mid_dir", "mid_modes", "mid_liq", "mid_min_turn", "mid_liq_on", "mid_minv_on"]
+                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi", "mid_carry", "mid_carry_days", "mid_dir", "mid_modes", "mid_liq", "mid_min_turn", "mid_liq_on", "mid_minv_on", "mid_vol_on", "mid_vol"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1693,6 +1702,7 @@ class App(tk.Tk):
         self.v_mthr.set(f"{float(s.get('mid_thr', 2.5)):g}"); self.v_mshare.set(f"{float(s.get('mid_share', 10)):g}")
         self.v_mliq.set(f"{float(s.get('mid_liq', 1.0)):g}"); self.v_mminv.set(f"{float(s.get('mid_min_turn', 20)):g}")
         self.v_mliq_on.set(bool(s.get("mid_liq_on", True))); self.v_mminv_on.set(bool(s.get("mid_minv_on", False)))
+        self.v_mvol_on.set(bool(s.get("mid_vol_on", False))); self.v_mvol.set(f"{float(s.get('mid_vol', 5)):g}")
         for k, v in self.v_mtfs.items():
             v.set(k in [int(x) for x in (s.get("mid_tfs") or [s.get("mid_tf", 60) or 60])])
         self.v_mref.set(self.MREF.get(str(s.get("mid_ref", "7")), self.MREF["7"])); self.v_mmulti.set(bool(s.get("mid_multi", True)))
@@ -1822,7 +1832,7 @@ class App(tk.Tk):
         s = d.get("summary", {})
         self.mk_sum.configure(text=(f"Акции: растут {s.get('up', 0)}, падают {s.get('down', 0)}, оборот {s.get('value', 0) / 1e9:.1f} млрд ₽ · "
                                     + ("цены акций в реальном времени (● — Т-Инвестиции)" if s.get("live") else "данные Мосбиржи (могут быть с задержкой)")
-                                    + f" · обновлено {d.get('time', '')[11:]} · показано {len(R)} · «оборот в день» — средний за 10 торговых дней · щелчок по заголовку — сортировка, двойной по строке — график"
+                                    + f" · обновлено {d.get('time', '')[11:]} · показано {len(R)} · объёмы в млн ₽, «объём/день» — в среднем за 10 торговых дней · щелчок по заголовку — сортировка, двойной по строке — график"
                                     + (f" · ошибки: {'; '.join(d['errors'])}" if d.get("errors") else "")))
 
     # --- результаты

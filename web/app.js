@@ -758,6 +758,8 @@ function renderSettings(s) {
     ${sel("mid_liq", "…не больше, % среднего дневного оборота", [[0.5, "0,5%"], [1, "1%"], [2, "2%"], [3, "3%"], [5, "5%"]])}
     ${chk("mid_minv_on", "Не торговать бумаги с маленьким оборотом")}
     ${sel("mid_min_turn", "…оборот меньше, млн ₽ в день", [[0.5, "0,5 (500 тыс. ₽)"], [1, "1"], [2, "2"], [5, "5"], [10, "10"], [20, "20"], [50, "50"], [100, "100"], [500, "500"]])}
+    ${chk("mid_vol_on", "Не торговать бумаги с объёмом сегодня меньше", "Объём торгов бумагой за сегодня (с 07:00) к моменту входа. Если меньше — робот ждёт, пока наберётся.")}
+    ${sel("mid_vol", "…объём сегодня меньше, млн ₽", [[0.5, "0,5 (500 тыс. ₽)"], [1, "1"], [2, "2"], [5, "5"], [10, "10"], [20, "20"], [50, "50"], [100, "100"], [500, "500"]])}
     <div class="hint" style="margin-left:0">Чтобы не застрять в неликвиде: позиция уменьшается до этой доли среднего дневного оборота бумаги. На истории (152 акции, с переносом): без ограничения +89%, 1% оборота +80% (просадка меньше), от 20 млн ₽/день +65%.</div>
     ${sel("leverage", "Маржа", Object.entries(LEV))}
     <div class="hint" style="margin-left:0">На истории (10.2025–10.2026, после затрат, акции индекса, 2,5%, EMA 1ч, выход 23:45): рост от 10:00 и одна покупка — +0,39% на сделку, просадка −1,5%; от 07:00 — +0,09%; от 07:00 и несколько покупок — +0,02%; EMA по дневке — −0,06%; выход 18:45 — вдвое хуже; перенос всех позиций до стопа или тейка — +0,72% на сделку, просадка −3,1%; шорт зеркально — −0,04%, в обе стороны — +0,14%, в обе стороны по индексу — +0,16%. Свои настройки — во вкладке «История».</div>
@@ -805,7 +807,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     mid_thr: parseFloat(String(v("mid_thr")).replace(",", ".")) || 2.5, mid_tfs: [5, 15, 60, 1440].filter((k) => c("mtf_" + k)),
     mid_from: (v("mid_from") || "10:00").trim(), mid_to: (v("mid_to") || "18:00").trim(), mid_exit: (v("mid_exit") || "23:45").trim(),
     mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10,
-    mid_liq: parseFloat(v("mid_liq")) || 1, mid_min_turn: parseFloat(v("mid_min_turn")) || 20, mid_liq_on: c("mid_liq_on"), mid_minv_on: c("mid_minv_on"), mid_ref: v("mid_ref") || "7", mid_multi: c("mid_multi"), mid_carry: v("mid_carry") || "none", mid_modes: ["idx_long", "idx_short", "both", "long", "short"].filter((k) => c("mm_" + k)), mid_carry_days: parseInt(v("mid_carry_days")) || 0,
+    mid_liq: parseFloat(v("mid_liq")) || 1, mid_min_turn: parseFloat(v("mid_min_turn")) || 20, mid_liq_on: c("mid_liq_on"), mid_minv_on: c("mid_minv_on"), mid_vol_on: c("mid_vol_on"), mid_vol: parseFloat(v("mid_vol")) || 5, mid_ref: v("mid_ref") || "7", mid_multi: c("mid_multi"), mid_carry: v("mid_carry") || "none", mid_modes: ["idx_long", "idx_short", "both", "long", "short"].filter((k) => c("mm_" + k)), mid_carry_days: parseInt(v("mid_carry_days")) || 0,
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };
   if (!out.mid_tfs.length) out.mid_tfs = [60];

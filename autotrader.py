@@ -1002,7 +1002,7 @@ class AutoTrader:
             self._set_status(f"ТОРГОВЛЯ: {mk}входы на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
 
     # ------------------------------------------------------------------ «Движение дня»: покупка на середине EMA10/EMA20
-    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0, "modes": ["long"], "liq": 0.01, "min_turn": 0}
+    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0, "modes": ["long"], "liq": 0.01, "min_turn": 0, "min_vol": 0}
 
     def _mid(self):
         return dict(self.MID_DEFAULT, **(self.sp.get("mid") or {}))
@@ -1134,6 +1134,16 @@ class AutoTrader:
                 self.st["traded"].append(tk)
                 self.log(f"«Движение дня»: {tk} — оборот {liq / 1e6:.1f} млн ₽ в день меньше {m['min_turn'] / 1e6:g} млн — не вхожу.")
                 continue
+            if m.get("min_vol"):
+                vol = sum(b.get("val", 0) for b in self._bars5(tk, now) if b["t"].date() == now.date())
+                if vol < m["min_vol"]:
+                    w = getattr(self, "_volw", {})
+                    if w.get(tk) != now.date():
+                        w[tk] = now.date(); self._volw = w
+                        self.log(f"«Движение дня»: {tk} — объём торгов сегодня {vol / 1e6:.1f} млн ₽ меньше {m['min_vol'] / 1e6:g} млн — пока не вхожу.")
+                    for x in m["tfs"]:
+                        arm[f"{tk}|{x}"] = True           # объём ещё может набраться — следующее касание снова проверим
+                    continue
             if m["liq"] and liq and alloc > liq * m["liq"]:
                 self.log(f"  {tk}: средний оборот {liq / 1e6:.1f} млн ₽ в день — позиция уменьшена до {m['liq'] * 100:g}% оборота: "
                          f"{liq * m['liq']:,.0f} ₽ вместо {alloc:,.0f} ₽".replace(",", " "))
