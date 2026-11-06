@@ -19,7 +19,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
-            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"], "mid_liq": 1.0, "mid_min_turn": 0}
+            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"], "mid_liq": 1.0, "mid_min_turn": 20, "mid_liq_on": True, "mid_minv_on": False}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -110,8 +110,8 @@ def mid_cfg(s):
             "carry": s.get("mid_carry") if s.get("mid_carry") in ("all", "profit") else "none",
             "carry_days": int(s.get("mid_carry_days", 0) or 0),
             "modes": mid_modes(s),
-            "liq": float(s.get("mid_liq", 1.0) or 0) / 100,          # не больше этой доли среднего дневного оборота бумаги
-            "min_turn": float(s.get("mid_min_turn", 0) or 0) * 1e6}  # не торговать бумаги с оборотом меньше, ₽ в день
+            "liq": float(s.get("mid_liq", 1.0) or 0) / 100 if s.get("mid_liq_on", True) else 0.0,       # доля дневного оборота
+            "min_turn": float(s.get("mid_min_turn", 0) or 0) * 1e6 if s.get("mid_minv_on", False) else 0.0}  # мин. оборот, ₽ в день
 
 
 MID_MODES = [("idx_long", "индекс идёт вверх — лонг"), ("idx_short", "индекс идёт вниз — шорт"),
