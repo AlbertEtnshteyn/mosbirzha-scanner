@@ -222,7 +222,7 @@ function renderState(st) {
   const posCard = (p) => {
     const res = p.last ? p.side * (p.last / p.entry - 1) * 100 : null;
     const take = p.take ? ((p.stage || 0) === 0 ? fmt(p.take) : (p.stage === 1 && p.take2 ? "т2 " + fmt(p.take2) : "трейл")) : "—";
-    const tfl = { 5: "5м", 15: "15м", 60: "1ч" }[p.tf] || "";
+    const tfl = { 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" }[p.tf] || "";
     const strat = p.strat === "spike" ? "всплеск " + (tfl || "15м") + (p.took ? " (б/у)" : "") : p.strat === "manual" ? "вручную" + (tfl ? " " + tfl : "") : p.strat === "mid" ? "день EMA " + (tfl || "1ч") : "15:00";
     return `<div class="item ${p.side > 0 ? "l" : "s"}">
       <div class="hd"><span class="tk">${esc(p.ticker)} <span class="small ${p.side > 0 ? "up" : "down"}">${p.side > 0 ? "ЛОНГ" : "ШОРТ"}</span></span>
@@ -744,16 +744,16 @@ function renderSettings(s) {
     ${inp("finam_account", "Номер счёта Финама (пусто — первый доступный токену)")}
   </div>
   <div class="grp"><h3>Стратегия «Движение дня»</h3>
-    <div class="hint" style="margin-left:0">Только покупки. Бумага выросла от открытия на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка. Стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Одна покупка по бумаге в день.</div>
+    <div class="hint" style="margin-left:0">Только покупки. Бумага выросла от открытия на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка. Стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Покупок за день может быть несколько: после закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней.</div>
     ${inp("mid_thr", "Бумага выросла от открытия на, %", "number", 'step="0.1" inputmode="decimal"')}
-    ${sel("mid_tf", "EMA10 / EMA20 по графику", [[60, "1 час (лучше на истории)"], [15, "15 мин"], [5, "5 мин"]])}
+    ${sel("mid_tf", "EMA10 / EMA20 по графику", [[60, "1 час (лучше на истории)"], [15, "15 мин"], [5, "5 мин"], [1440, "1 день"]])}
     ${chk("mid_idx", "Покупать только когда IMOEX в плюсе")}
     <div class="f"><span>Чем торговать</span>
       ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="dmk_${k}" ${(s.day_markets || ["imoex"]).includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
     ${inp("mid_from", "Покупки с (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="10:00"')}
     ${inp("mid_to", "Покупки до (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="18:00"')}
     ${inp("mid_exit", "Выход в (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="23:45"')}
-    <div class="hint" style="margin-left:0">Рост до 10:00 считается от 07:00, после — от открытия 10:00.</div>
+    <div class="hint" style="margin-left:0">Рост считается от открытия рынка 07:00.</div>
     ${inp("mid_share", "На сделку, % счёта", "number", 'step="1" inputmode="decimal"')}
     ${sel("leverage", "Маржа", Object.entries(LEV))}
     <div class="hint" style="margin-left:0">На истории (10.2025–10.2026, после затрат): акции индекса, 2,5%, EMA по 1 часу, с 10:00, выход 23:45 — 277 сделок, 60% в плюсе, +0,39% на сделку, просадка −1,8%. Выход 18:45 — вдвое хуже, EMA по 5 мин — около нуля.</div>

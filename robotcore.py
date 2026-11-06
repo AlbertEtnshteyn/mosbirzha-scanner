@@ -104,7 +104,7 @@ def mid_cfg(s):
     tf = int(s.get("mid_tf", 60) or 60)
     return {"thr": float(s.get("mid_thr", 2.5) or 2.5) / 100,
             "from": hhmm(s.get("mid_from", "10:00"), 600), "to": hhmm(s.get("mid_to", "18:00"), 1080),
-            "exit": hhmm(s.get("mid_exit", "23:45"), 1425), "tf": tf if tf in (5, 15, 60) else 60,
+            "exit": hhmm(s.get("mid_exit", "23:45"), 1425), "tf": tf if tf in (5, 15, 60, 1440) else 60,
             "idx": bool(s.get("mid_idx", False)), "share": float(s.get("mid_share", 10) or 10) / 100}
 
 

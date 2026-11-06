@@ -956,7 +956,15 @@ class AutoTrader:
         self._mid_cache = getattr(self, "_mid_cache", {})
         b5 = self._bars5(tk, now)
         naive = now.replace(tzinfo=None)
-        bars = [b for b in aggregate([dict(b) for b in b5], tf) if b["t"] + timedelta(minutes=tf) <= naive]
+        if tf >= 1440:                                 # дневка: EMA по закрытым дням (сегодняшний не считается)
+            dk = getattr(self, "_mid_daily", {})
+            if dk.get(tk, (None,))[0] != naive.date():
+                rows = self.b.ti.candles_range(tk, now - timedelta(days=70), now, 1440)
+                dk[tk] = (naive.date(), [r for r in rows if r["t"].date() < naive.date()])
+                self._mid_daily = dk
+            bars = dk[tk][1]
+        else:
+            bars = [b for b in aggregate([dict(b) for b in b5], tf) if b["t"] + timedelta(minutes=tf) <= naive]
         day = [b for b in b5 if b["t"].date() == naive.date() and b["t"].hour >= 7]
         if len(bars) < 21 or not day:
             self._mid_cache[tk] = (now, None)
@@ -968,19 +976,21 @@ class AutoTrader:
         return lv
 
     def _mid_step(self, now):
+        """Бумага выросла на порог от 07:00 → следим; цена побывала выше середины EMA10/EMA20 и дошла до неё → покупка.
+        Покупок за день по бумаге может быть несколько (пока тренд идёт), но одна позиция по бумаге за раз."""
         m = self._mid()
         t = now.hour * 60 + now.minute
         if not self.trade or not (m["from"] <= t < m["to"]):
             return
         q = self.st.setdefault("mid_q", {})
-        traded = self.st["traded"]
+        arm = self.st.setdefault("mid_arm", {})
         held = {p["ticker"] for p in self.positions}
         for tk, mv, why in self.scan_rows:
-            if why == "СИГНАЛ" and tk not in q and tk not in traded and tk not in held:
+            if why == "СИГНАЛ" and tk not in q:
                 q[tk] = now.strftime("%H:%M")
-                self.log(f"«Движение дня»: {tk} {mv * 100:+.2f}% от открытия — жду цену на середине EMA10/EMA20 ({self._tf_name(m['tf'])}).")
+                self.log(f"«Движение дня»: {tk} {mv * 100:+.2f}% от 07:00 — слежу, покупка на середине EMA10/EMA20 ({self._tf_name(m['tf'])}).")
                 self._save()
-        watch = [tk for tk in q if tk not in traded and tk not in held]
+        watch = [tk for tk in q if tk not in held]
         if not watch:
             return
         try:
@@ -1005,12 +1015,17 @@ class AutoTrader:
             mid, lo, hi = lv
             self.mid_view[tk] = mid
             if px > mid:
+                if not arm.get(tk):
+                    arm[tk] = True                       # цена выше середины — следующее касание будет покупкой
+                    self._save()
+                continue
+            if not arm.get(tk):
                 continue
             if m["idx"] and not (self.market is not None and self.market > 0):
                 continue                                  # ждём, пока IMOEX в плюсе
-            stop, take = lo * (1 - MID_STOP_BUF), hi
-            traded.append(tk)
+            arm[tk] = False
             self._save()
+            stop, take = lo * (1 - MID_STOP_BUF), hi
             if not (stop < px < take):
                 self.log(f"«Движение дня»: {tk} дошла до середины EMA ({px:.4g}), но цена уже "
                          + ("у лоя дня" if px <= stop else "у хая дня") + " — не покупаю.")
@@ -1020,8 +1035,11 @@ class AutoTrader:
                 base = self.b.portfolio_value() or self.capital
             except Exception:
                 pass
-            self.log(f"«Движение дня»: {tk} дошла до середины EMA10/EMA20 ({mid:.4g}), цена {px:.4g} — ПОКУПКА "
-                     f"({m['share'] * 100:g}% счёта), стоп {stop:.4g} (лой дня), тейк {take:.4g} (хай дня), выход {hm(m['exit'])}.")
+            n = sum(1 for x in self.st["traded"] if x == tk) + 1
+            self.st["traded"].append(tk)
+            self.log(f"«Движение дня»: {tk} дошла до середины EMA10/EMA20 ({mid:.4g}), цена {px:.4g} — ПОКУПКА"
+                     + (f" №{n} за день" if n > 1 else "") + f" ({m['share'] * 100:g}% счёта), стоп {stop:.4g} (лой дня), "
+                     f"тейк {take:.4g} (хай дня), выход {hm(m['exit'])}.")
             self._open(tk, 1, base * m["share"], strat="mid", stop_level=stop, t1=take, exit_min=m["exit"], tf=m["tf"])
 
     # ------------------------------------------------------------------ сканирование
@@ -1101,7 +1119,7 @@ class AutoTrader:
                 self.opens[tk] = first[0]["o"]
             elif t > sc.OPEN_MIN + 5:
                 self.opens[tk] = None      # не торговалась в начале сессии — как в бэктесте, пропускаем
-        if self._mid()["from"] < sc.OPEN_MIN or t < sc.OPEN_MIN + 1:
+        if True:                                     # «Движение дня»: рост всегда от открытия рынка 07:00
             ref = {tk: o for tk, o in self.pre_opens.items() if o}  # от открытия рынка 07:00 (до 10:00 — всегда так)
         else:
             ref = {tk: o for tk, o in self.opens.items() if o}
@@ -1280,6 +1298,8 @@ class AutoTrader:
 
     @staticmethod
     def _tf_name(tf):
+        if tf >= 1440:
+            return "1 день"
         return "1ч" if tf == 60 else f"{tf}м"
 
     def _tier(self, tk, b5):

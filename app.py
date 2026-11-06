@@ -569,7 +569,7 @@ class App(tk.Tk):
                 ttk.Checkbutton(fr, text=name, variable=vars_[k]).grid(row=i // 3, column=1 + i % 3, sticky="w", padx=(0, 14))
 
         # --- единственная стратегия: «Движение дня» — покупка на середине EMA10/EMA20
-        self.MTF = {5: "5 мин", 15: "15 мин", 60: "1 час"}
+        self.MTF = {5: "5 мин", 15: "15 мин", 60: "1 час", 1440: "1 день"}
         self.v_mthr = tk.StringVar(value=f"{float(self.s.get('mid_thr', 2.5)):g}")
         self.v_mtf = tk.StringVar(value=self.MTF.get(int(self.s.get("mid_tf", 60) or 60), "1 час"))
         self.v_midx = tk.BooleanVar(value=bool(self.s.get("mid_idx", False)))
@@ -583,11 +583,12 @@ class App(tk.Tk):
             ck("покупать только когда IMOEX в плюсе", self.v_midx))
         markets(b2, self.v_dmk)
         row(b2, "Покупки с", ent(self.v_mfrom, 6), "до", ent(self.v_mto, 6), "   выход в", ent(self.v_mexit, 6),
-            ("hint", "время вписывается вручную, ЧЧ:ММ; рост до 10:00 считается от 07:00, после — от открытия 10:00"))
+            ("hint", "время вписывается вручную, ЧЧ:ММ; рост считается от открытия рынка 07:00"))
         row(b2, "На сделку, % счёта:", ent(self.v_mshare, 5), cb(self.v_lev, list(LEV.values()), 32),
             ck("торговать в выходные и праздники", self.v_wkend))
         tk.Label(b2, text="Только покупки. Бумага выросла на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка; "
-                          "стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Одна покупка по бумаге в день.\n"
+                          "стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени.\n"
+                          "Покупок за день может быть несколько: после закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней.\n"
                           "На истории (10.2025–10.2026, после затрат): акции индекса, 2,5%, EMA по 1 часу, с 10:00, выход 23:45 — "
                           "277 сделок, 60% в плюсе, +0,39% на сделку, просадка −1,8%; выход 18:45 — вдвое хуже; EMA по 5 мин — около нуля.",
                  justify="left", anchor="w", font=("Segoe UI", 9), fg=GREY, bg=bg, wraplength=980).pack(anchor="w", pady=(4, 0))
@@ -1262,7 +1263,7 @@ class App(tk.Tk):
             for p in G:
                 last = p.get("last")
                 res = p["side"] * (last / p["entry"] - 1) if last else None
-                tfl = {5: "5м", 15: "15м", 60: "1ч"}.get(int(p.get("tf") or 0), "")
+                tfl = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}.get(int(p.get("tf") or 0), "")
                 strat = ("всплеск " + (tfl or "15м") + (" (б/у)" if p.get("took") else "")) if p.get("strat") == "spike" else \
                     ("вручную" + (" " + tfl if tfl else "")) if p.get("strat") == "manual" else \
                     ("день EMA " + (tfl or "1ч")) if p.get("strat") == "mid" else "15:00"
