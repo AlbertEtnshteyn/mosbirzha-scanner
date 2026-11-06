@@ -744,37 +744,42 @@ def bt_run(data, m, imoex=None):
     return trades
 
 
-def bt_summary(trades, share):
+def bt_summary(trades, share, capital=1_000_000):
+    """Итоги проверки. Каждая сделка — доля share от счёта на начало дня входа (как у робота), счёт растёт со сделками."""
     if not trades:
-        return {"n": 0}
+        return {"n": 0, "capital": capital, "final": capital, "profit_rub": 0, "profit_pct": 0}
     pcts = [t["pct"] for t in trades]
     win = [x for x in pcts if x > 0]
     los = [x for x in pcts if x <= 0]
     by_day = {}
     for t in trades:
-        by_day[t["date"]] = by_day.get(t["date"], 0) + t["pct"] / 100 * share
-    eq, peak, dd, curve = 1.0, 1.0, 0.0, []
+        by_day.setdefault(t["date"], []).append(t)
+    eq, peak, dd, dd_rub, curve = float(capital), float(capital), 0.0, 0.0, []
     months = {}
     for d in sorted(by_day):
-        eq *= 1 + by_day[d]
+        start = eq
+        mo = months.setdefault(d[:7], {"m": d[:7], "n": 0, "sum": 0.0, "start": start, "rub": 0.0})
+        for t in by_day[d]:
+            t["rub"] = round(start * share * t["pct"] / 100, 2)
+            eq += t["rub"]
+            mo["n"] += 1
+            mo["sum"] += t["pct"]
+            mo["rub"] += t["rub"]
         peak = max(peak, eq)
         dd = min(dd, eq / peak - 1)
-        curve.append([d, round((eq - 1) * 100, 3)])
-        mo = months.setdefault(d[:7], {"m": d[:7], "n": 0, "sum": 0.0, "eq": 1.0})
-        mo["eq"] *= 1 + by_day[d]
-    for t in trades:
-        mo = months[t["date"][:7]]
-        mo["n"] += 1
-        mo["sum"] += t["pct"]
+        dd_rub = min(dd_rub, eq - peak)
+        curve.append([d, round((eq / capital - 1) * 100, 3), round(eq, 2)])
     reasons = {}
     for t in trades:
         reasons[t["reason"]] = reasons.get(t["reason"], 0) + 1
     return {"n": len(trades), "win": round(len(win) / len(trades) * 100, 1), "avg": round(sum(pcts) / len(pcts), 3),
-            "sum": round(sum(pcts), 2), "total": round((eq - 1) * 100, 2), "dd": round(dd * 100, 2),
+            "sum": round(sum(pcts), 2), "total": round((eq / capital - 1) * 100, 2), "dd": round(dd * 100, 2), "dd_rub": round(dd_rub, 2),
+            "capital": capital, "final": round(eq, 2), "profit_rub": round(eq - capital, 2), "profit_pct": round((eq / capital - 1) * 100, 2),
             "pf": round(sum(win) / -sum(los), 2) if los and sum(los) < 0 else None,
             "avg_win": round(sum(win) / len(win), 3) if win else None, "avg_loss": round(sum(los) / len(los), 3) if los else None,
             "reasons": reasons, "curve": curve,
-            "months": [{"m": v["m"], "n": v["n"], "sum": round(v["sum"], 2), "eq": round((v["eq"] - 1) * 100, 2)} for _, v in sorted(months.items())]}
+            "months": [{"m": v["m"], "n": v["n"], "sum": round(v["sum"], 2), "rub": round(v["rub"], 2),
+                        "eq": round(v["rub"] / v["start"] * 100, 2)} for _, v in sorted(months.items())]}
 
 
 class Backtest:
@@ -783,19 +788,20 @@ class Backtest:
         self.state = {"running": False, "progress": "", "pct": 0, "result": None, "error": None}
         self._stop = _th.Event()
 
-    def start(self, token, sandbox, s, months, tickers=None, log=print):
+    def start(self, token, sandbox, s, months, tickers=None, log=print, capital=None):
         if self.state["running"]:
             return False
         self._stop.clear()
         self.state = {"running": True, "progress": "начинаю…", "pct": 0, "result": None, "error": None,
                       "started": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
-        _th.Thread(target=self._run, args=(token, sandbox, dict(s), int(months), tickers, log), daemon=True).start()
+        cap = float(capital or s.get("capital") or 1_000_000)
+        _th.Thread(target=self._run, args=(token, sandbox, dict(s), int(months), tickers, log, cap), daemon=True).start()
         return True
 
     def stop(self):
         self._stop.set()
 
-    def _run(self, token, sandbox, s, months, tickers, log):
+    def _run(self, token, sandbox, s, months, tickers, log, capital=1_000_000):
         try:
             if not token:
                 raise ValueError("нужен токен Т-Инвестиций (Настройки)")
@@ -831,7 +837,7 @@ class Backtest:
                     log(f"IMOEX для фильтра не получен ({e}) — фильтр в проверке не учитывается")
             self.state.update(progress="считаю сделки…", pct=95)
             trades = bt_run(data, m, imx)
-            sm = bt_summary(trades, m["share"])
+            sm = bt_summary(trades, m["share"], capital)
             tfn = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}
             self.state["result"] = {
                 "summary": sm, "trades": trades[-400:], "tickers": len(data), "fails": fails,

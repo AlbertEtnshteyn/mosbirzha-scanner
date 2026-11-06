@@ -849,6 +849,7 @@ start();
 let BT_DONE = null, BT_TIMER = null;
 async function loadBT() {
   clearTimeout(BT_TIMER);
+  if (!$("#btCap").value && SET && SET.capital) $("#btCap").value = Math.round(SET.capital);
   let st;
   try { st = await api("/api/backtest"); } catch (e) { $("#btProg").textContent = "Нет связи: " + e.message; return; }
   $("#btGo").disabled = !!st.running;
@@ -861,13 +862,13 @@ async function loadBT() {
   const S = r.summary || {};
   $("#btSet").textContent = `${r.period} · бумаг ${r.tickers} · ${r.settings}`;
   $("#btSum").innerHTML = !S.n ? `<div class="muted">Сделок за период нет.</div>` :
-    `<div class="item"><div class="hd"><b>Сделок ${S.n} · в плюсе ${S.win}%</b><span class="${cls(S.avg)}">средняя ${pct(S.avg)}</span></div>
-     <div class="meta">сумма ${pct(S.sum, 1)} · счёт ${pct(S.total, 1)} · просадка ${pct(S.dd, 1)}${S.pf ? " · профит-фактор " + S.pf : ""}<br>
+    `<div class="item"><div class="hd"><b>${rub(S.capital)} → ${rub(S.final)}</b><b class="${cls(S.profit_rub)}">${rub(S.profit_rub, true)} (${pct(S.profit_pct)})</b></div>
+     <div class="meta">макс. просадка ${rub(S.dd_rub)} (${pct(S.dd, 1)}) · сделок ${S.n} · в плюсе ${S.win}% · средняя ${pct(S.avg)}${S.pf ? " · профит-фактор " + S.pf : ""}<br>
      прибыльная ${pct(S.avg_win)} · убыточная ${pct(S.avg_loss)} · выходы: ${Object.entries(S.reasons || {}).map(([k, v]) => esc(k) + " " + v).join(", ")}</div></div>`;
-  $("#btMon").innerHTML = (S.months || []).map((m) => `<div class="item"><div class="hd"><span>${esc(m.m)} · сделок ${m.n}</span><span class="${cls(m.sum)}">${pct(m.sum)} · счёт ${pct(m.eq)}</span></div></div>`).join("");
+  $("#btMon").innerHTML = (S.months || []).map((m) => `<div class="item"><div class="hd"><span>${esc(m.m)} · сделок ${m.n}</span><span class="${cls(m.rub)}">${rub(m.rub, true)} · ${pct(m.eq)}</span></div></div>`).join("");
   const tfn = { 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" };
   $("#btTr").innerHTML = (r.trades || []).slice().reverse().slice(0, 300).map((x) =>
-    `<div class="item tap" data-chart="${esc(x.ticker)}" data-tf="${x.tf}"><div class="hd"><span><b>${esc(x.ticker)}</b> <span class="muted small">${esc(x.date)} ${esc(x.time)} · EMA ${tfn[x.tf] || x.tf}</span></span><span class="${cls(x.pct)}">${pct(x.pct)}</span></div>
+    `<div class="item tap" data-chart="${esc(x.ticker)}" data-tf="${x.tf}"><div class="hd"><span><b>${esc(x.ticker)}</b> <span class="muted small">${esc(x.date)} ${esc(x.time)} · EMA ${tfn[x.tf] || x.tf}</span></span><span class="${cls(x.pct)}">${pct(x.pct)}${x.rub != null ? " · " + rub(x.rub, true) : ""}</span></div>
      <div class="meta">вход ${fmt(x.entry)} · стоп ${fmt(x.stop)} · тейк ${fmt(x.take)} → ${fmt(x.exit)} (${esc(x.reason)}, ${esc(x.exit_time)})</div></div>`).join("");
   drawBTCurve(S.curve || []);
 }
@@ -882,12 +883,14 @@ function drawBTCurve(cur) {
   g.fillStyle = "#9aa3b2"; g.font = "11px sans-serif"; g.textAlign = "right";
   g.fillText(hi.toFixed(1) + "%", 36, Y(hi) + 4); g.fillText(lo.toFixed(1) + "%", 36, Y(lo) + 4);
   g.textAlign = "left"; g.fillText(cur[0][0], 40, h - 4); g.textAlign = "right"; g.fillText(cur[cur.length - 1][0], w - 8, h - 4);
+  if (cur[cur.length - 1][2] != null) { g.fillStyle = "#e6e9f0"; g.font = "bold 12px sans-serif"; g.fillText(rub(cur[cur.length - 1][2]), w - 8, 16); }
   g.strokeStyle = ys[ys.length - 1] >= 0 ? "#26a69a" : "#ef5350"; g.lineWidth = 2; g.beginPath();
   cur.forEach((c, i) => (i ? g.lineTo(X(i), Y(c[1])) : g.moveTo(X(i), Y(c[1])))); g.stroke();
 }
 $("#btGo").onclick = async () => {
   try {
-    const r = await api("/api/backtest", { months: +$("#btPer").value });
+    const cap = parseFloat($("#btCap").value) || (SET && SET.capital) || 1000000;
+    const r = await api("/api/backtest", { months: +$("#btPer").value, capital: cap });
     if (r.ok === false) toast(r.msg || "Не запустилась"); else { toast("Проверка запущена"); BT_DONE = null; }
   } catch (e) { toast("Ошибка: " + e.message); }
   loadBT();

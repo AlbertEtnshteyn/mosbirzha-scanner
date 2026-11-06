@@ -1248,6 +1248,9 @@ class App(tk.Tk):
         ttk.Label(bar, text="Период:").pack(side="left")
         self.bt_per = tk.StringVar(value="12 месяцев")
         ttk.Combobox(bar, textvariable=self.bt_per, values=list(self.BT_PERIODS), width=11, state="readonly").pack(side="left", padx=(4, 12))
+        ttk.Label(bar, text="Стартовая сумма, ₽:").pack(side="left")
+        self.bt_cap = tk.StringVar(value=f"{float(self.s.get('capital', 1_000_000)):.0f}")
+        ttk.Entry(bar, textvariable=self.bt_cap, width=12).pack(side="left", padx=(4, 12))
         self.bt_go = ttk.Button(bar, text="▶  Прогнать на истории", style="Start.TButton", command=self.bt_start)
         self.bt_go.pack(side="left")
         ttk.Button(bar, text="Стоп", command=self.bt_stop).pack(side="left", padx=6)
@@ -1269,11 +1272,11 @@ class App(tk.Tk):
         self.bt_cv = tk.Canvas(left, height=180, bg="white", highlightthickness=1, highlightbackground="#ccc")
         self.bt_cv.pack(fill="x", pady=(0, 6))
         self.bt_cv.bind("<Configure>", lambda e: self._bt_curve())
-        self.bt_mon = self._tree(left, [("m", "Месяц", 80), ("n", "Сделок", 60), ("sum", "Сумма %", 80), ("eq", "Счёт %", 80)])
+        self.bt_mon = self._tree(left, [("m", "Месяц", 75), ("n", "Сделок", 55), ("rub", "Прибыль, ₽", 100), ("eq", "Счёт %", 70)])
         right = ttk.LabelFrame(pw, text="Сделки (двойной щелчок — график)", padding=4); pw.add(right, weight=2)
         self.bt_tr = self._tree(right, [("date", "Дата", 85), ("time", "Вход", 50), ("ticker", "Бумага", 65), ("tf", "EMA", 45), ("entry", "Цена входа", 80),
                                         ("stop", "Стоп", 75), ("take", "Тейк", 75), ("exit", "Выход", 75), ("xt", "Время выхода", 95),
-                                        ("reason", "Причина", 70), ("pct", "Итог %", 70)])
+                                        ("reason", "Причина", 70), ("pct", "Итог %", 65), ("rub", "Итог, ₽", 85)])
         self.bt_tr.bind("<Double-1>", lambda e: self._bt_chart())
         self._bt_res = None
         self.after(1500, self._bt_poll)
@@ -1286,11 +1289,17 @@ class App(tk.Tk):
 
     def bt_start(self):
         months = self.BT_PERIODS.get(self.bt_per.get(), 12)
+        try:
+            cap = float(self.bt_cap.get().replace(" ", "").replace(",", "."))
+            assert cap > 0
+        except (ValueError, AssertionError):
+            messagebox.showerror(APP_TITLE, "Стартовая сумма — число, например 1000000.")
+            return
         cl = self._server()
         if cl is not None:
             def go():
                 try:
-                    r = cl.post("/api/backtest", {"months": months})
+                    r = cl.post("/api/backtest", {"months": months, "capital": cap})
                     if not r.get("ok"):
                         self.q.put(("log", (r.get("msg") or "Проверка не запустилась") + "\n"))
                 except Exception as e:
@@ -1301,7 +1310,7 @@ class App(tk.Tk):
                 messagebox.showerror(APP_TITLE, "Для проверки на истории нужен токен Т-Инвестиций (вкладка «Настройки»).")
                 return
             rc.BACKTEST.start(self.s["token"], bool(self.s.get("sandbox_token", True)), self.s, months,
-                              log=lambda m: self.q.put(("log", m + "\n")))
+                              log=lambda m: self.q.put(("log", m + "\n")), capital=cap)
         self.bt_st.configure(text="запускаю…")
         self._bt_res = None
 
@@ -1340,19 +1349,23 @@ class App(tk.Tk):
             self.bt_sum.configure(text="Сделок за период нет — условия ни разу не сработали.", fg="#555")
         else:
             rs = ", ".join(f"{k} {v}" for k, v in sm["reasons"].items())
-            self.bt_sum.configure(fg="#0a7a2f" if sm["avg"] > 0 else "#b3261e", text=(
-                f"Сделок {sm['n']} · в плюсе {sm['win']:g}% · средняя {sm['avg']:+.2f}% · сумма {sm['sum']:+.1f}% · "
-                f"счёт {sm['total']:+.1f}% · макс. просадка {sm['dd']:.1f}%" + (f" · профит-фактор {sm['pf']:g}" if sm.get("pf") else "")
+            rub = lambda v, sg=False: (("+" if sg and v > 0 else "") + f"{v:,.0f}".replace(",", " ") + " ₽")
+            self.bt_sum.configure(fg="#0a7a2f" if sm["profit_rub"] > 0 else "#b3261e", text=(
+                f"Стартовая сумма {rub(sm['capital'])} → {rub(sm['final'])} · прибыль {rub(sm['profit_rub'], True)} ({sm['profit_pct']:+.2f}%) · "
+                f"макс. просадка {rub(sm['dd_rub'])} ({sm['dd']:.1f}%)\n"
+                f"Сделок {sm['n']} · в плюсе {sm['win']:g}% · средняя {sm['avg']:+.2f}%" + (f" · профит-фактор {sm['pf']:g}" if sm.get("pf") else "")
                 + f"\nсредняя прибыльная {sm.get('avg_win') or 0:+.2f}%, убыточная {sm.get('avg_loss') or 0:+.2f}% · выходы: {rs}"))
         self.bt_mon.delete(*self.bt_mon.get_children())
         for m in sm.get("months", []):
-            self.bt_mon.insert("", "end", tags=("pos" if m["sum"] > 0 else "neg",), values=(m["m"], m["n"], f"{m['sum']:+.2f}", f"{m['eq']:+.2f}"))
+            self.bt_mon.insert("", "end", tags=("pos" if m["rub"] > 0 else "neg",),
+                               values=(m["m"], m["n"], (f"{m['rub']:+,.0f}").replace(",", " "), f"{m['eq']:+.2f}"))
         self.bt_tr.delete(*self.bt_tr.get_children())
         tfn = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}
         for x in reversed(res.get("trades", [])):
             self.bt_tr.insert("", "end", tags=("pos" if x["pct"] > 0 else "neg",),
                               values=(x["date"], x["time"], x["ticker"], tfn.get(x["tf"], x["tf"]), f"{x['entry']:.6g}", f"{x['stop']:.6g}",
-                                      f"{x['take']:.6g}", f"{x['exit']:.6g}", x["exit_time"], x["reason"], f"{x['pct']:+.2f}"))
+                                      f"{x['take']:.6g}", f"{x['exit']:.6g}", x["exit_time"], x["reason"], f"{x['pct']:+.2f}",
+                                      (f"{x.get('rub', 0):+,.0f}").replace(",", " ")))
         self._bt_curve()
 
     def _bt_curve(self):
@@ -1363,7 +1376,7 @@ class App(tk.Tk):
         if len(cur) < 2:
             cv.create_text(w / 2, h / 2, text="кривая счёта появится после проверки", fill="#888")
             return
-        ys = [y for _, y in cur]
+        ys = [c[1] for c in cur]
         lo, hi = min(ys + [0]), max(ys + [0])
         sp = (hi - lo) or 1
         X = lambda i: 40 + (w - 50) * i / (len(cur) - 1)
@@ -1372,11 +1385,13 @@ class App(tk.Tk):
         cv.create_text(36, Y(hi), text=f"{hi:+.1f}%", anchor="e", fill="#555", font=("Segoe UI", 8))
         cv.create_text(36, Y(lo), text=f"{lo:+.1f}%", anchor="e", fill="#555", font=("Segoe UI", 8))
         pts = []
-        for i, (_, y) in enumerate(cur):
-            pts += [X(i), Y(y)]
+        for i, c in enumerate(cur):
+            pts += [X(i), Y(c[1])]
         cv.create_line(*pts, fill="#0a7a2f" if ys[-1] >= 0 else "#b3261e", width=2)
         cv.create_text(40, h - 8, text=cur[0][0], anchor="w", fill="#555", font=("Segoe UI", 8))
         cv.create_text(w - 10, h - 8, text=cur[-1][0], anchor="e", fill="#555", font=("Segoe UI", 8))
+        if len(cur[-1]) > 2:
+            cv.create_text(w - 12, 12, text=f"{cur[-1][2]:,.0f} ₽".replace(",", " "), anchor="ne", fill="#333", font=("Segoe UI", 9, "bold"))
 
     def _bt_chart(self):
         sel = self.bt_tr.selection()
