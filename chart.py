@@ -3,6 +3,7 @@
 import os
 import queue
 import threading
+import time
 from datetime import datetime, timedelta
 
 import tkinter as tk
@@ -56,8 +57,12 @@ class ChartWindow(tk.Toplevel):
         self.configure(bg=BG)
         self._build()
         self.load()
+        if hasattr(app, "charts"):
+            app.charts.append(self)                  # живые цены потоком — app.show_live → live_price
+            self.bind("<Destroy>", lambda e: e.widget is self and self in app.charts and app.charts.remove(self))
+            self._watch()
         self.after(60000, self._auto)
-        self.after(5000, self._fast)
+        self.after(3000, self._fast)
         self.after(1000, self._live)
 
     # ------------------------------------------------------------------ интерфейс
@@ -228,11 +233,44 @@ class ChartWindow(tk.Toplevel):
             self.load()
         self.after(60000, self._auto)
 
+    def _watch(self):
+        if hasattr(self.app, "live_watch"):
+            self.app.live_watch([w.ticker for w in self.app.charts])
+
+    def live_price(self, px):
+        """Цена из живого потока (на каждую сделку): двигает текущую свечу, новую свечу рисует сразу."""
+        if self.loading or not self.bars or not px:
+            return
+        b = self.bars[-1]
+        now = datetime.now(sc.MSK).replace(tzinfo=None)
+        if self.tf < 1440 and now >= b["t"].replace(tzinfo=None) + timedelta(minutes=self.tf):
+            t0 = now.replace(second=0, microsecond=0)
+            t0 -= timedelta(minutes=(t0.hour * 60 + t0.minute) % self.tf)
+            nb = dict(b, t=t0.replace(tzinfo=b["t"].tzinfo), o=px, h=px, l=px, c=px, v=0)
+            self.bars.append(nb)
+        elif b.get("c") == px:
+            return
+        else:
+            b["c"] = px
+            b["h"] = max(b["h"], px)
+            b["l"] = min(b["l"], px)
+        if not self.offset and not getattr(self, "_draw_wait", False):
+            self._draw_wait = True                      # перерисовка не чаще ~30 раз в секунду — окно не подвисает
+            self.after(33, self._live_draw)
+
+    def _live_draw(self):
+        self._draw_wait = False
+        if self.winfo_exists():
+            self.draw()
+
     def _live(self):
-        """Живая цена раз в секунду: двигает текущую свечу (закрытие, хай, лой) без ожидания свечей."""
+        """Запасной путь: живая цена раз в секунду, если потока цен нет. Двигает текущую свечу без ожидания свечей."""
         if not self.winfo_exists():
             return
         self.after(1000, self._live)
+        self._watch()
+        if self.app.live_px.get(self.ticker) and time.time() - getattr(self.app, "live_t", 0) < 3:
+            return                                  # поток работает
         if self.loading or not self.bars or self.offset or getattr(self, "_live_busy", False):
             return
         self._live_busy = True
@@ -272,7 +310,7 @@ class ChartWindow(tk.Toplevel):
     def _fast(self):
         if not self.winfo_exists():
             return
-        self.after(5000, self._fast)
+        self.after(3000, self._fast)
         if self.loading or not self.bars or getattr(self, "_tail_busy", False):
             return
         self._tail_busy = True

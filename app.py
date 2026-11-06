@@ -11,6 +11,7 @@ import os
 import queue
 import threading
 import traceback
+import time
 import types
 from datetime import date, datetime, timedelta
 
@@ -93,7 +94,13 @@ class App(tk.Tk):
         self._build()
         threading.Thread(target=self._worker, daemon=True).start()
         threading.Thread(target=self._scheduler, daemon=True).start()
-        self.after(200, self._poll)
+        # живые цены: на каждую сделку — IMOEX, позиции, графики (и стопы/тейки своего робота)
+        self.live_px, self.live_idx, self.live_t, self._live_dirty, self.charts = {}, None, 0.0, False, []
+        self._feed_ti_cache = {}
+        self.feed = sc.LiveFeed(get_ti=self._feed_ti, get_robot=self._feed_robot, always=True,
+                                has_token=lambda: not self.remote_mode() and bool(os.environ.get("TINVEST_TOKEN")))
+        self.feed.listeners.append(lambda tk, px: self._live_in({tk: px}, self.feed.index_now() if tk == "IMOEX" else None))
+        self.after(25, self._poll)
         self.after(500, self.refresh_journal)
         self.after(600, self.refresh_sandbox)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -890,7 +897,7 @@ class App(tk.Tk):
                     item[1](item[2])
         except queue.Empty:
             pass
-        self.after(200, self._poll)
+        self.after(25, self._poll)                 # очередь из фоновых потоков — живые цены без задержки
 
     def stop(self):
         sc.STOP_EVENT.set()
@@ -1044,6 +1051,77 @@ class App(tk.Tk):
         self.submit("Проверка доступа", lambda: sc.check_mode(types.SimpleNamespace(sandbox_token=self.s["sandbox_token"])))
 
     # --- робот
+    # --- живые цены
+    def _feed_robot(self):
+        r = self.robot if self.robot_running() and not self.remote_mode() else None
+        return r if r is not None and hasattr(r, "on_price") else None
+
+    def _feed_ti(self):
+        r = self._feed_robot()
+        ti = getattr(getattr(r, "b", None), "ti", None)
+        if ti is not None:
+            return ti
+        tok = os.environ.get("TINVEST_TOKEN")
+        if not tok:
+            return None
+        key = (tok, bool(self.s.get("sandbox_token")))
+        if key not in self._feed_ti_cache:
+            self._feed_ti_cache[key] = sc.TInvest(tok, "sandbox" if key[1] else "prod")
+        return self._feed_ti_cache[key]
+
+    def live_watch(self, tickers):
+        """Окна графика сообщают, за какими бумагами следить."""
+        self.feed.watch(tickers, ttl=5)
+        r = self.robot if self.robot_running() else None
+        if r is not None and hasattr(r, "live_watch"):
+            r.live_watch = set(tickers)
+
+    def _live_in(self, prices, idx):
+        """Из любого потока: свежие цены → окно (одним обновлением, сколько бы цен ни пришло за это время)."""
+        self.live_px.update(prices)
+        if idx:
+            self.live_idx = idx
+        self.live_t = time.time()
+        if not self._live_dirty:
+            self._live_dirty = True
+            self.q.put(("call", self.show_live, None))
+
+    def show_live(self, _=None):
+        self._live_dirty = False
+        if self.live_idx:
+            self._show_index(self.live_idx)
+        rows = getattr(self, "_pos_rows", [])
+        if rows and not getattr(self, "_menu_open", False):
+            money = lambda v: "—" if v is None else (("+" if v > 0 else "") + f"{v:,.0f}").replace(",", " ")
+            for iid, p in rows:
+                px = self.live_px.get(p["ticker"])
+                if not px:
+                    continue
+                p["last"] = px
+                if p.get("mult"):
+                    p["pnl_rub"] = round(p["side"] * (px - p["entry"]) * p["mult"], 2)
+                res = p["side"] * (px / p["entry"] - 1)
+                try:
+                    self.pos_tree.set(iid, "last", f"{px:.4g}")
+                    self.pos_tree.set(iid, "res", f"{res * 100:+.2f}%")
+                    self.pos_tree.set(iid, "rub", money(p.get("pnl_rub")))
+                    self.pos_tree.item(iid, tags=("pos" if res > 0 else "neg",))
+                except tk.TclError:
+                    pass
+            PS = rc.positions_summary([p for _, p in rows])
+            for key, iid in getattr(self, "_pos_hdr", {}).items():
+                d = PS["total"] if key == "total" else PS["by_strat"].get(key, {})
+                try:
+                    if key != "total":
+                        self.pos_tree.set(iid, "res", f"{d['avg_pct']:+.2f}%" if d.get("avg_pct") is not None else "")
+                    self.pos_tree.set(iid, "rub", money(d.get("pnl_rub")) if d.get("known") else "—")
+                except tk.TclError:
+                    pass
+        for w in list(self.charts):
+            px = self.live_px.get(w.ticker)
+            if px:
+                w.live_price(px)
+
     def remote_mode(self):
         """Сервер установлен — программа служит его пультом, своего робота не запускает."""
         return bool(self.s.get("srv_code")) and bool(self.s.get("srv_remote", True))
@@ -1070,6 +1148,8 @@ class App(tk.Tk):
                 log(f"Код подключения к серверу не подошёл: {e}")
                 return
             rr.on_settings = lambda srv: self.q.put(("call", self._settings_from_server, srv))
+            rr.on_live = self._live_in
+            rr.live_watch = {w.ticker for w in self.charts}
             self.robot = rr
             self.robot_lbl.configure(text=f"Подключаюсь к роботу на сервере {rr.where}…")
 
@@ -1196,6 +1276,7 @@ class App(tk.Tk):
         if getattr(self, "_menu_open", False):
             return                                     # открыто меню правой кнопки — таблицу не перестраиваем
         self.pos_tree.delete(*self.pos_tree.get_children())
+        self._pos_rows, self._pos_hdr = [], {}
         money = lambda v: "—" if v is None else (("+" if v > 0 else "") + f"{v:,.0f}").replace(",", " ")
         PS = rc.positions_summary(snap["positions"])
         groups = [("всплеск", "Всплеск + EMA20", [p for p in snap["positions"] if p.get("strat") == "spike"]),
@@ -1205,7 +1286,7 @@ class App(tk.Tk):
             if not G:
                 continue
             d = PS["by_strat"].get(key, {})
-            self.pos_tree.insert("", "end", tags=("hdr",), values=(
+            self._pos_hdr[key] = self.pos_tree.insert("", "end", tags=("hdr",), values=(
                 f"▸ {name}", f"{len(G)} поз.", "", "", "", "", "", "",
                 f"{d['avg_pct']:+.2f}%" if d.get("avg_pct") is not None else "", money(d.get("pnl_rub")) if d.get("known") else "—"))
             for p in G:
@@ -1215,15 +1296,17 @@ class App(tk.Tk):
                 strat = ("всплеск " + (tfl or "15м") + (" (б/у)" if p.get("took") else "")) if p.get("strat") == "spike" else \
                     ("вручную" + (" " + tfl if tfl else "")) if p.get("strat") == "manual" else "15:00"
                 strat += {"carry": " · перенести", "close": " · закрыть"}.get(p.get("carry_pick"), "")
-                self.pos_tree.insert("", "end", tags=(("pos" if res > 0 else "neg"),) if res is not None else (), values=(
+                self._pos_rows.append((self.pos_tree.insert("", "end", tags=(("pos" if res > 0 else "neg"),) if res is not None else (), values=(
                     p["ticker"], strat, "лонг" if p["side"] > 0 else "шорт", p["lots"], f"{p['entry']:.4g}", f"{p['stop']:.4g}",
                     (f"{p['take']:.4g}" if p.get("stage", 0) == 0 else (f"т2 {p['take2']:.4g}" if p.get("stage") == 1 and p.get("take2") else "трейл"))
                     if p.get("take") else "—",
-                    f"{last:.4g}" if last else "—", f"{res * 100:+.2f}%" if res is not None else "—", money(p.get("pnl_rub"))))
+                    f"{last:.4g}" if last else "—", f"{res * 100:+.2f}%" if res is not None else "—", money(p.get("pnl_rub")))), p))
         if snap["positions"]:
             T = PS["total"]
-            self.pos_tree.insert("", "end", tags=("hdr",), values=(
+            self._pos_hdr["total"] = self.pos_tree.insert("", "end", tags=("hdr",), values=(
                 "ИТОГО", f"{T['n']} поз.", "", "", "", "", "", "", "", money(T["pnl_rub"]) if T["known"] else "—"))
+        if self.live_px:
+            self.show_live()                           # поверх — самые свежие цены из потока
         if len(snap["positions"]) != getattr(self, "_npos", None):
             self._npos = len(snap["positions"])
             self.refresh_sandbox()
@@ -1405,10 +1488,11 @@ class App(tk.Tk):
         import time as _t
         while True:
             try:
-                srv = self._server()
-                q = (srv.get("/api/state").get("index") if srv else sc.index_quote())
-                if q:
-                    self.q.put(("call", self._show_index, q))
+                if time.time() - self.live_t > 5 or not self.live_idx:        # живой поток молчит — запасной путь
+                    srv = self._server()
+                    q = (srv.get("/api/state").get("index") if srv else sc.index_quote())
+                    if q:
+                        self.q.put(("call", self._show_index, q))
             except Exception:
                 pass
             n = now_msk()

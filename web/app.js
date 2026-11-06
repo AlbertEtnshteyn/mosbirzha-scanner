@@ -151,9 +151,9 @@ function liveTick(m) {
 let LV_CTRL = null, LV_KEY = "";
 async function liveLoop() {
   for (;;) {
-    if (document.hidden || !KEY) { await new Promise((r) => setTimeout(r, 500)); continue; }
+    if (!KEY) { await new Promise((r) => setTimeout(r, 500)); continue; }   // поток идёт и в свёрнутом приложении
     LV_KEY = TAB === "chart" && CH.ticker ? CH.ticker : "";
-    LV_CTRL = new AbortController();
+    LV_CTRL = new AbortController(); LV.rx = Date.now();
     try {
       const r = await fetch(`/api/live?tk=${encodeURIComponent(LV_KEY)}`, { headers: { "X-Key": KEY }, signal: LV_CTRL.signal });
       if (!r.ok || !r.body) throw new Error("HTTP " + r.status);
@@ -162,6 +162,7 @@ async function liveLoop() {
       for (;;) {
         const { value, done } = await rd.read();
         if (done) break;
+        LV.rx = Date.now();
         buf += dec.decode(value, { stream: true });
         let i;
         while ((i = buf.indexOf("\n")) >= 0) {
@@ -169,11 +170,11 @@ async function liveLoop() {
           if (!line || line === "{}") continue;
           try { LV.ok = true; liveTick(JSON.parse(line)); } catch (e) {}
         }
-        if (document.hidden) { LV_CTRL.abort(); break; }
       }
     } catch (e) { LV.ok = false; await new Promise((r) => setTimeout(r, 2000)); }
   }
 }
+setInterval(() => { if (LV_CTRL && LV.rx && Date.now() - LV.rx > 25000) { LV.rx = 0; LV_CTRL.abort(); } }, 5000);   // связь оборвалась молча — переподключиться
 function liveRetarget() {                       // открыли другую бумагу на графике — переподключиться с ней
   const k = TAB === "chart" && CH.ticker ? CH.ticker : "";
   if (k !== LV_KEY && LV_CTRL) LV_CTRL.abort();
@@ -905,7 +906,7 @@ let timer = null;
 function start() {
   if (!KEY) { showLogin(""); return; }
   $("#login").hidden = true; $("#app").hidden = false;
-  poll(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
+  poll(); clearInterval(timer); timer = setInterval(poll, 2000);   // и в свёрнутом — уведомления о сделках приходят сразу
   if (!liveLoop.started) { liveLoop.started = true; liveLoop(); }   // живые цены — потоком, сразу при каждой сделке
   loadResults(); setInterval(() => { if (!document.hidden) loadResults(); }, 60000);
   loadCalendar(); setInterval(() => { if (!document.hidden) loadCalendar(); }, 30 * 60000);
@@ -913,5 +914,5 @@ function start() {
   setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) chartTail(); }, 3000);   // последние свечи — каждые 3 с
   setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) chartLive(); }, 1000);   // живая цена — каждую секунду
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden && KEY) poll(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && KEY) { poll(); if (LV_CTRL && Date.now() - LV.t > 3000) LV_CTRL.abort(); } });
 start();

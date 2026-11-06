@@ -633,6 +633,10 @@ class AutoTrader:
         self.manual = []                         # тикеры, которые пользователь попросил закрыть ("*" — все)
         self.manual_open = []                    # заявки на открытие позиции вручную
         self._lock = threading.Lock()
+        self.pos_lock = threading.RLock()         # стопы/тейки по живому потоку цен и главный цикл не закрывают позицию дважды
+        self._px_new = {}                         # свежие цены из потока, ждут проверки стопов
+        self._px_ev = threading.Event()
+        self.in_session = False                   # главный цикл сейчас в торговых часах — можно проверять стопы по потоку
         self._sleep = sleep or self._wait
         self.rescan = rescan
         self.day_on = day_on
@@ -705,11 +709,32 @@ class AutoTrader:
         self.st["found_waits"] = [[list(k), dict(w, date=w["date"].isoformat())] for k, w in self.waits.items()]
 
     def _save(self):
-        self._store_found()
-        tmp = self.state_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.st, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, self.state_path)
+        with self.pos_lock:
+            self._store_found()
+            tmp = self.state_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.st, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, self.state_path)
+
+    # ------------------------------------------------------------------ стопы и тейки по живому потоку цен
+    def on_price(self, ticker, price):
+        """Цена из потока сделок (вызывает сервер на каждую сделку). Проверка — в отдельном потоке, чтобы не тормозить поток цен."""
+        if price and any(p["ticker"] == ticker for p in self.positions):
+            self._px_new[ticker] = price
+            self._px_ev.set()
+
+    def _stops_worker(self):
+        while not self.stop_event.is_set():
+            if not self._px_ev.wait(1):
+                continue
+            self._px_ev.clear()
+            lp, self._px_new = self._px_new, {}
+            if not lp or not self.in_session:
+                continue
+            try:
+                self._check_stops(lp=lp)
+            except Exception as e:
+                self.log(f"Проверка стопов по потоку цен: {e}")
 
     @property
     def positions(self):
@@ -809,6 +834,7 @@ class AutoTrader:
             self.log(f"Открытые позиции с прошлого запуска: {', '.join(p['ticker'] for p in self.positions)} — продолжаю сопровождать.")
         prepared_for = None
         self.cal = sc.TradingCalendar(getattr(self.b, "ti", None))
+        threading.Thread(target=self._stops_worker, daemon=True, name="stops-live").start()
         while not self.stop_event.is_set():
             now = self.clock()
             t = now.hour * 60 + now.minute
@@ -820,10 +846,12 @@ class AutoTrader:
                 if kind in ("holiday", "weekend") or (kind == "weekend_session" and not wk):
                     nxt = self.cal.next_trading(now.date(), wk)
                     why = sc.DAY_KINDS[kind] + (" (торговля в выходные выключена)" if kind == "weekend_session" else "")
+                    self.in_session = False
                     self._set_status(f"{why} — жду " + (f"{nxt:%d.%m}" if nxt else "следующего торгового дня"))
                     self._sleep(300)
                     continue
                 if t < DAY_START or t >= DAY_END:
+                    self.in_session = False
                     self._set_status(f"биржа закрыта — жду {hm(DAY_START)}")
                     self._sleep(60)
                     continue
@@ -849,6 +877,7 @@ class AutoTrader:
                     names = ", ".join(dict(MARKETS).get(m, m) for m in self.sp["markets"])
                     self.log(f"{now:%d.%m} рабочий день начат: индекс — {len(self.tickers)} акций; формацию ищу в группах: "
                              f"{names} — всего {len(self.universe)} инструментов.")
+                self.in_session = True
                 self._step(now)
             except sc.CertError:
                 raise
@@ -1530,15 +1559,24 @@ class AutoTrader:
         self.on_event("open", dict(pos))
         self._push()
 
-    def _check_stops(self):
+    def _check_stops(self, lp=None):
+        with self.pos_lock:
+            self._check_stops_locked(lp)
+
+    def _check_stops_locked(self, lp=None):
         """
         Стоп, тейки и трейлинг. Схема для формации:
           тейк1 — половина пути от входа до хая импульса: закрыть 50%, стоп в безубыток, включить трейлинг;
           тейк2 — хай импульса: закрыть 50% остатка; остальное ведёт трейлинг-стоп.
         """
-        lp = self.b.last_prices([p["ticker"] for p in self.positions])
+        live = lp is not None                     # цены пришли из потока — проверяем только эти бумаги
+        if lp is None:
+            lp = self.b.last_prices([p["ticker"] for p in self.positions])
         self.prices.update(lp)
+        changed = False
         for p in list(self.positions):
+            if p not in self.positions:
+                continue
             px = lp.get(p["ticker"])
             if not px:
                 continue
@@ -1553,6 +1591,7 @@ class AutoTrader:
                 trail = p["peak"] - s * self.sp["trail_r"] * p["R"]
                 if (trail - p["stop"]) * s > 0:
                     p["stop"] = trail
+                    changed = True
                     self._save()
             if (px - p["stop"]) * s <= 0:
                 why = "стоп" if stage == 0 else ("б/у" if abs(p["stop"] - p["entry"]) < 1e-9 else "трейлинг-стоп")
@@ -1577,7 +1616,8 @@ class AutoTrader:
                     p["stage"] = 2
                     self._save()
                     self.log(f"  {p['ticker']}: тейк2 взят, остаток {p['lots']} лот. ведёт трейлинг-стоп")
-        self._push()
+        if not live or changed:
+            self._push()
 
     def _day_exits(self, p, px, s):
         """«Движение дня»: тейк (весь или часть + стоп в б/у) и трейлинг-стоп в % от цены; стоп 3% — как раньше."""
@@ -1657,6 +1697,12 @@ class AutoTrader:
             self._close(p, lp.get(p["ticker"]) or p["entry"], why)
 
     def _close(self, p, px, why, lots=None):
+        with self.pos_lock:
+            if p not in self.positions:
+                return False                       # уже закрыта (поток цен или главный цикл успел раньше)
+            return self._close_locked(p, px, why, lots)
+
+    def _close_locked(self, p, px, why, lots=None):
         lots = lots or p["lots"]
         try:
             fill = self.b.order(p["ticker"], lots, -p["side"])

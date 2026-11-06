@@ -3,6 +3,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="false"
@@ -30,6 +33,16 @@
                 <data android:scheme="moexrobot" />
             </intent-filter>
         </activity>
+
+        <!-- связь с роботом в свёрнутом приложении: живые цены и уведомления о сделках -->
+        <service
+            android:name=".LiveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Live market prices and trade notifications from the user's own trading robot server" />
+        </service>
 
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"

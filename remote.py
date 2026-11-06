@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """Пульт сервера робота в программе на компьютере: тот же интерфейс, что у AutoTrader, но всё делает сервер."""
+import json
 import re
 import threading
+import time
 from datetime import datetime
 
 import requests
@@ -83,12 +85,45 @@ class RemoteRobot:
         self.ok = None
         self.server_version = ""
         self.on_settings = None
+        self.on_live = None                          # fn(prices, idx) — живые цены потоком с сервера
+        self.live_watch = set()                      # бумаги открытых окон графика
+        self._live_key = None
 
     @property
     def where(self):
         return f"{self.c.host}"
 
+    def _live_loop(self):
+        """Поток цен /api/live: строка JSON на каждое изменение цены (IMOEX, позиции, графики)."""
+        while not self.stop_event.is_set():
+            key = ",".join(sorted(self.live_watch))
+            self._live_key = key
+            try:
+                with self.c.s.get(self.c.base + "/api/live", params={"tk": key}, stream=True, timeout=(10, 40)) as r:
+                    r.raise_for_status()
+                    for line in r.iter_lines(chunk_size=1):
+                        if self.stop_event.is_set() or ",".join(sorted(self.live_watch)) != self._live_key:
+                            break                       # открыли/закрыли график — переподключиться с новым набором
+                        if not line or line == b"{}":
+                            continue
+                        try:
+                            m = json.loads(line)
+                        except ValueError:
+                            continue
+                        P = m.get("p") or {}
+                        for p in self.positions:
+                            px = P.get(p["ticker"])
+                            if px:
+                                p["last"] = px
+                                if p.get("mult"):
+                                    p["pnl_rub"] = round(p["side"] * (px - p["entry"]) * p["mult"], 2)
+                        if self.on_live:
+                            self.on_live(P, m.get("idx"))
+            except Exception:
+                self.stop_event.wait(2)
+
     def run(self):
+        threading.Thread(target=self._live_loop, daemon=True, name="live").start()
         while not self.stop_event.is_set():
             try:
                 st = self.c.get("/api/state", ev=self.ev or 0, log=self.log_seq)

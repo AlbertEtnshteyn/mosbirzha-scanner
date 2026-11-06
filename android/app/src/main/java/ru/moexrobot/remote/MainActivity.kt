@@ -80,6 +80,15 @@ class MainActivity : Activity() {
         intent?.data?.toString()?.let { parse(it) }?.let { save(it) }
         conn = load()
         if (conn == null) showSetup(null) else showWeb()
+        startLive()
+    }
+
+    /** Связь с роботом и в свёрнутом виде (живые цены, уведомления о сделках). */
+    private fun startLive() {
+        try {
+            val i = Intent(this, LiveService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+        } catch (e: Exception) { /* система не дала — работаем, пока приложение открыто */ }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -401,9 +410,13 @@ class MainActivity : Activity() {
         if (w != null && w.canGoBack()) w.goBack() else super.onBackPressed()
     }
 
-    override fun onResume() { super.onResume(); web?.onResume() }
-    override fun onPause() { web?.onPause(); super.onPause() }
-    override fun onDestroy() { web?.destroy(); super.onDestroy() }
+    override fun onResume() { super.onResume(); web?.onResume(); web?.resumeTimers() }
+    // web.onPause() не вызываем: в свёрнутом приложении страница продолжает получать цены и сделки
+    override fun onPause() { super.onPause() }
+    override fun onDestroy() {
+        try { stopService(Intent(this, LiveService::class.java)) } catch (e: Exception) {}
+        web?.destroy(); super.onDestroy()
+    }
 
     @Suppress("unused")
     private fun hide(v: View) { v.visibility = View.GONE }
