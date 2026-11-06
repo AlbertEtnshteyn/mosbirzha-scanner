@@ -19,7 +19,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
-            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long"}
+            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"]}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -105,12 +105,35 @@ def mid_cfg(s):
     return {"thr": float(s.get("mid_thr", 2.5) or 2.5) / 100,
             "from": hhmm(s.get("mid_from", "10:00"), 600), "to": hhmm(s.get("mid_to", "18:00"), 1080),
             "exit": hhmm(s.get("mid_exit", "23:45"), 1425), "tfs": sorted(set(tfs), reverse=True),
-            "idx": s.get("mid_dir") == "index", "share": float(s.get("mid_share", 10) or 10) / 100,
+            "idx": False, "share": float(s.get("mid_share", 10) or 10) / 100,
             "ref": 600 if str(s.get("mid_ref", "7")) == "10" else 420, "multi": bool(s.get("mid_multi", True)),
             "carry": s.get("mid_carry") if s.get("mid_carry") in ("all", "profit") else "none",
             "carry_days": int(s.get("mid_carry_days", 0) or 0),
-            "dir": "both" if s.get("mid_dir") == "index" else s.get("mid_dir") if s.get("mid_dir") in ("long", "short", "both") else "long",
-            "mode": s.get("mid_dir") if s.get("mid_dir") in ("index", "long", "short", "both") else "long"}
+            "modes": mid_modes(s)}
+
+
+MID_MODES = [("idx_long", "индекс идёт вверх — лонг"), ("idx_short", "индекс идёт вниз — шорт"),
+             ("both", "в обе стороны при любом индексе"), ("long", "только лонг при любом индексе"),
+             ("short", "только шорт при любом индексе")]
+
+
+def mid_modes(s):
+    """Режимы торговли (можно несколько): лонг разрешён при long/both или idx_long и растущем IMOEX; шорт — зеркально."""
+    v = s.get("mid_modes")
+    if isinstance(v, list):
+        out = [x for x in v if x in dict(MID_MODES)]
+    else:                                             # старая настройка mid_dir
+        d = s.get("mid_dir", "long")
+        out = ["idx_long", "idx_short"] if d == "index" else [d] if d in ("long", "short", "both") else ["long"]
+    return out or ["long"]
+
+
+mid_allowed = at.mid_allowed
+mid_sides = at.mid_sides
+
+
+def mid_modes_text(modes):
+    return ", ".join(n for k, n in MID_MODES if k in modes)
 
 
 def chart_sp(s):
@@ -647,7 +670,8 @@ def bt_run(data, m, imoex=None):
     Шорт (зеркально): бумага упала на порог → шорт на середине, стоп за хаем дня, тейк на лое."""
     trades = []
     ex = m["exit"]
-    d_ = m.get("dir", "long")
+    can_l, can_s = mid_sides(m.get("modes", ["long"]))
+    idx_need = any(x in m.get("modes", []) for x in ("idx_long", "idx_short"))
     for tk, rows in data.items():
         if len(rows) < 100:
             continue
@@ -675,10 +699,10 @@ def bt_run(data, m, imoex=None):
                 if x >= m["to"]:
                     break
                 mv = rows[r][4] / op - 1
-                if mv >= m["thr"] and d_ in ("long", "both"):
+                if mv >= m["thr"] and can_l:
                     q, sd = r, 1
                     break
-                if mv <= -m["thr"] and d_ in ("short", "both"):
+                if mv <= -m["thr"] and can_s:
                     q, sd = r, -1
                     break
             if q is None:
@@ -697,7 +721,8 @@ def bt_run(data, m, imoex=None):
                 if r <= busy:
                     r += 1
                     continue
-                if hit is None or (m["idx"] and imoex is not None and not ((imoex.get(t.replace(minute=t.minute - t.minute % 10)) or 0) * sd > 0)):
+                if hit is None or not mid_allowed(m.get("modes", ["long"]), sd,
+                                                  (imoex.get(t.replace(minute=t.minute - t.minute % 10)) if imoex is not None else None)):
                     for tf in m["tfs"]:
                         md = mids[tf][r]
                         if md is not None and (c - md) * sd > 0:
@@ -907,7 +932,7 @@ class Backtest:
                     fails.append(tk)
                     log(f"  {tk}: история не получена ({e})")
             imx = None
-            if m["idx"]:
+            if any(x in m["modes"] for x in ("idx_long", "idx_short")):
                 self.state["progress"] = "IMOEX…"
                 try:
                     imx = bt_imoex(since, log)
@@ -922,7 +947,7 @@ class Backtest:
                 "period": f"{since:%d.%m.%Y} — {datetime.now(sc.MSK):%d.%m.%Y}",
                 "settings": (f"движение {m['thr'] * 100:g}% от {at.hm(m['ref'])}, EMA {', '.join(tfn[x] for x in m['tfs'])}, "
                              f"входы {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}, "
-                             + {"long": "только лонг", "short": "только шорт", "both": "лонг и шорт", "index": "по индексу (IMOEX растёт — лонг, падает — шорт)"}[m["mode"]] + ", "
+                             + "режим: " + mid_modes_text(m["modes"]) + ", "
                              f"{'несколько входов' if m['multi'] else 'один вход'} в день"
                              + {"none": ", во время выхода всё закрыть", "all": ", перенос всех позиций", "profit": ", перенос позиций в плюсе"}[m["carry"]]
                              + (f" (до {m['carry_days']} дн.)" if m["carry"] != "none" and m["carry_days"] else "")

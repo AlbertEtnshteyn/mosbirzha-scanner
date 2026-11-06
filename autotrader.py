@@ -29,6 +29,27 @@ DAY_START = 7 * 60            # 07:00 — робот начинает рабоч
 DAY_END = 23 * 60 + 50        # 23:50 — мониторинг и торговля до конца вечерней сессии
 SESSION_CLOSE = 18 * 60 + 40  # 18:40 — конец основной сессии
 TRADE_END = 18 * 60 + 30      # 18:30 — к этому времени все позиции закрыты
+MID_MODE_NAMES = {"idx_long": "индекс идёт вверх — лонг", "idx_short": "индекс идёт вниз — шорт",
+                  "both": "в обе стороны при любом индексе", "long": "только лонг при любом индексе",
+                  "short": "только шорт при любом индексе"}
+
+
+def mid_allowed(modes, side, market):
+    if "both" in modes or ("long" in modes and side > 0) or ("short" in modes and side < 0):
+        return True
+    if market is None:
+        return False
+    return ("idx_long" in modes and side > 0 and market > 0) or ("idx_short" in modes and side < 0 and market < 0)
+
+
+def mid_sides(modes):
+    return (any(x in modes for x in ("both", "long", "idx_long")), any(x in modes for x in ("both", "short", "idx_short")))
+
+
+def rc_modes_text(modes):
+    return ", ".join(n for k, n in MID_MODE_NAMES.items() if k in modes)
+
+
 MID_STOP_BUF = 0.001          # стоп «Движения дня» — на 0,1% ниже лоя дня
 STOP_POLL = 15                # проверка стопов и тейков, секунд
 SCAN_EVERY = 60               # пересчёт рынка и поиск всплесков, секунд
@@ -853,8 +874,7 @@ class AutoTrader:
                  f"бумага выросла на {m['thr'] * 100:g}% от открытия → покупка, как только цена дошла до середины между EMA10 и EMA20 "
                  f"({', '.join(self._tf_name(x) for x in m['tfs'])}); стоп за лоем дня, тейк на хае дня. Покупки {hm(m['from'])}–{hm(m['to'])}, выход {hm(m['exit'])}"
                   + f", на сделку {m['share'] * 100:g}% счёта. "
-                 + {"long": "Только лонг.", "short": "Только шорт (бумага упала → шорт на середине EMA, стоп за хаем дня, тейк на лое).", "both": "Лонг и шорт.",
-                    "index": "По индексу: IMOEX растёт — лонг, падает — шорт."}[m.get("mode", m["dir"])])
+                 + "Режим: " + rc_modes_text(m["modes"]) + ".")
         if self.positions:
             self.log(f"Открытые позиции с прошлого запуска: {', '.join(p['ticker'] for p in self.positions)} — продолжаю сопровождать.")
         prepared_for = None
@@ -982,7 +1002,7 @@ class AutoTrader:
             self._set_status(f"ТОРГОВЛЯ: {mk}входы на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
 
     # ------------------------------------------------------------------ «Движение дня»: покупка на середине EMA10/EMA20
-    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0, "dir": "long"}
+    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0, "modes": ["long"]}
 
     def _mid(self):
         return dict(self.MID_DEFAULT, **(self.sp.get("mid") or {}))
@@ -1070,8 +1090,8 @@ class AutoTrader:
                     hit = (tf, lv)
             if not hit:
                 continue
-            if m["idx"] and not (self.market is not None and self.market * side > 0):
-                continue                                  # ждём, пока IMOEX в ту же сторону
+            if not mid_allowed(m["modes"], side, self.market):
+                continue                                  # режим торговли не разрешает эту сторону при нынешнем индексе
             tf, (mid, lo, hi) = hit
             for x in m["tfs"]:
                 arm[f"{tk}|{x}"] = False
@@ -1140,15 +1160,15 @@ class AutoTrader:
     def _rank(self, moves):
         rows = []
         m = self._mid()
-        d = m.get("dir", "long")
-        for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1]) if d == "both" else (-x[1] if d == "long" else x[1])):
+        can_l, can_s = mid_sides(m["modes"])
+        for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1]) if (can_l and can_s) else (-x[1] if can_l else x[1])):
             s_ = 1 if mv > 0 else -1
             if abs(mv) < m["thr"]:
                 why = "меньше порога"
-            elif (s_ > 0 and d == "short") or (s_ < 0 and d == "long"):
-                why = "растёт — только шорт" if s_ > 0 else "падает — только покупки"
-            elif m["idx"] and not (self.market is not None and self.market * s_ > 0):
-                why = "IMOEX " + ("не в плюсе" if s_ > 0 else "не в минусе")
+            elif (s_ > 0 and not can_l) or (s_ < 0 and not can_s):
+                why = "растёт — лонг выключен" if s_ > 0 else "падает — шорт выключен"
+            elif not mid_allowed(m["modes"], s_, self.market):
+                why = "IMOEX " + ("не растёт — лонг по индексу ждёт" if s_ > 0 else "не падает — шорт по индексу ждёт")
             else:
                 why = "СИГНАЛ"
             rows.append((tk, mv, why))
