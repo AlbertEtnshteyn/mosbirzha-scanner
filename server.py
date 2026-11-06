@@ -128,16 +128,33 @@ class Robot:
         threading.Thread(target=self._index_loop, daemon=True, name="index").start()
 
     def _index_loop(self):
-        """IMOEX в реальном времени для телефона: раз в 10 секунд днём, реже ночью и в выходные."""
+        """IMOEX для телефона. Мосбиржа (ISS) без подписки отдаёт индекс с задержкой 15 минут — берём её только
+        для закрытия прошлого дня (раз в минуту), а текущее значение — у Т-Инвестиций, раз в 2 секунды."""
+        iss, iss_t = None, 0.0
         while True:
+            n = now_msk()
+            day = n.weekday() < 5 and 6 <= n.hour < 24 or bool(self.s.get("trade_weekends"))
             try:
-                q = sc.index_quote()
-                if q:
-                    self.index = q
+                if time.time() - iss_t >= (60 if day else 300):
+                    q = sc.index_quote()
+                    if q:
+                        iss, iss_t = q, time.time()
+                        q["prev"] = q["value"] - q["chg"]
             except Exception:
                 pass
-            n = now_msk()
-            time.sleep(10 if n.weekday() < 5 and 6 <= n.hour < 24 else 300)
+            live = None
+            if self.has_token():
+                try:
+                    live = _tail_ti().index_last("IMOEX")
+                except Exception:
+                    live = None
+            if live and iss and iss.get("prev"):
+                v, prev = live["value"], iss["prev"]
+                self.index = {"code": "IMOEX", "value": v, "chg": round(v - prev, 2), "pct": round((v / prev - 1) * 100, 2),
+                              "time": live["time"][:5] or iss["time"], "live": True}
+            elif iss:
+                self.index = dict(iss, live=False)
+            time.sleep(2 if day else 60)
 
     # --- настройки
     def _apply(self):
@@ -361,9 +378,35 @@ class Robot:
         except Exception as e:
             print("Журнал за день:", e, flush=True)
 
+    def _live_positions(self, positions):
+        """Текущая цена позиций прямо на запрос телефона (робот сам обновляет их раз в 15 с вместе со стопами)."""
+        if not positions:
+            return positions
+        tks = sorted({p["ticker"] for p in positions})
+        key = tuple(tks)
+        c = getattr(self, "_lp_cache", None)
+        if c and c[0] == key and time.time() - c[1] < 1.0:
+            lp = c[2]
+        else:
+            try:
+                lp = _tail_ti().last_prices(tks)
+            except Exception:
+                lp = {}
+            self._lp_cache = (key, time.time(), lp)
+        out = []
+        for p in positions:
+            px = lp.get(p["ticker"])
+            if px:
+                m = p.get("mult")
+                p = dict(p, last=px, pnl_rub=round(p["side"] * (px - p["entry"]) * m, 2) if m else p.get("pnl_rub"))
+            out.append(p)
+        return out
+
     def state(self):
         snap = self.snap or {}
         r = self.robot if self.running() else None
+        if r and snap.get("positions"):
+            snap = dict(snap, positions=self._live_positions(snap["positions"]))
         return {"version": VERSION, "time": now_msk().strftime("%d.%m.%Y %H:%M:%S"),
                 "running": bool(r), "trade": bool(r and r.trade), "token_set": self.has_token(),
                 "status": snap.get("status") if r else ("ждёт токен в настройках" if not self.has_token() else "запускается…"),

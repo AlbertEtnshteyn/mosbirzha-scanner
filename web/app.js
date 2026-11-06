@@ -83,8 +83,10 @@ function showTab(t) {
 $$("nav.bottom button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 
 // ---------------------------------------------------------------- состояние робота
-let EV = -1, LOGSEQ = 0, ST = null;
+let EV = -1, LOGSEQ = 0, ST = null, POLL_BUSY = false;
 async function poll() {
+  if (POLL_BUSY) return;                       // медленная связь — не копим запросы
+  POLL_BUSY = true;
   try {
     const st = await api(`/api/state?ev=${Math.max(EV, 0)}&log=${LOGSEQ}`);
     ST = st;
@@ -99,7 +101,7 @@ async function poll() {
     LOGSEQ = st.log_seq;
   } catch (e) {
     if (e.message !== "401") { $("#tradeBadge").textContent = "нет связи"; $("#tradeBadge").className = "badge dead"; }
-  }
+  } finally { POLL_BUSY = false; }
 }
 
 function onEvent(e) {
@@ -114,8 +116,8 @@ function renderState(st) {
   $("#clock").textContent = "МСК " + st.time.slice(11) + " · v" + String(st.version).split(" ")[0];
   const ix = st.index;
   $("#idx").innerHTML = ix ? `IMOEX ${ix.value.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-    <small class="${cls(ix.pct)}">(${ix.chg > 0 ? "+" : ""}${ix.chg.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}; ${pct(ix.pct)})</small>` : "";
-  $("#idx").title = ix ? "обновлено " + ix.time + " МСК" : "";
+    <small class="${cls(ix.pct)}">(${ix.chg > 0 ? "+" : ""}${ix.chg.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}; ${pct(ix.pct)})</small>${ix.live === false ? ` <small class="muted">· ${ix.time}, задержка Мосбиржи</small>` : ""}` : "";
+  $("#idx").title = ix ? "обновлено " + ix.time + " МСК" + (ix.live === false ? " (Мосбиржа без подписки — с задержкой 15 мин)" : "") : "";
   const b = $("#tradeBadge");
   if (!st.running) { b.textContent = st.token_set ? "робот запускается" : "нужен токен"; b.className = "badge dead"; }
   else if (st.trade) { b.textContent = "● ТОРГОВЛЯ ВКЛ"; b.className = "badge on"; }
@@ -316,7 +318,12 @@ async function chartLive() {
     const B = CH.data && CH.data.bars;
     if (tk !== CH.ticker || !B || !B.length || !d.price) return;
     const b = B[B.length - 1];
-    if (CH.tf < 1440 && d.t >= b.t + CH.tf * 60) return;     // началась новая свеча — её добавит обновление свечей
+    if (CH.tf < 1440 && d.t >= b.t + CH.tf * 60) {          // началась новая свеча — рисуем её сразу, объём подтянет обновление свечей
+      const t = d.t - (d.t % (CH.tf * 60));
+      B.push({ t, o: d.price, h: d.price, l: d.price, c: d.price, v: 0 });
+      CH.candles.update({ time: t, open: d.price, high: d.price, low: d.price, close: d.price });
+      return;
+    }
     if (b.c === d.price) return;
     b.c = d.price; b.h = Math.max(b.h, d.price); b.l = Math.min(b.l, d.price);
     CH.candles.update({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c });
@@ -819,11 +826,11 @@ let timer = null;
 function start() {
   if (!KEY) { showLogin(""); return; }
   $("#login").hidden = true; $("#app").hidden = false;
-  poll(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) poll(); }, 3000);
+  poll(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
   loadResults(); setInterval(() => { if (!document.hidden) loadResults(); }, 60000);
   loadCalendar(); setInterval(() => { if (!document.hidden) loadCalendar(); }, 30 * 60000);
   setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) loadChart(true); }, 60000);
-  setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) chartTail(); }, 5000);   // последние свечи — каждые 5 с
+  setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) chartTail(); }, 3000);   // последние свечи — каждые 3 с
   setInterval(() => { if (!document.hidden && TAB === "chart" && CH.data) chartLive(); }, 1000);   // живая цена — каждую секунду
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && KEY) poll(); });

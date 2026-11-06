@@ -771,6 +771,33 @@ class TInvest:
                         "v": int(c.get("volume", 0) or 0)})
         return out
 
+    def index_last(self, code="IMOEX"):
+        """Индекс в реальном времени (индикатив Т-Инвестиций). None — если индекс не найден."""
+        if not hasattr(self, "_idx_uid"):
+            self._idx_uid = {}
+        if code not in self._idx_uid:
+            js = self.call("InstrumentsService", "Indicatives", {})
+            for ins in js.get("instruments", []):
+                if ins.get("ticker") == code and ins.get("uid"):
+                    self._idx_uid[code] = ins["uid"]
+                    break
+            else:
+                self._idx_uid[code] = None
+        uid = self._idx_uid[code]
+        if not uid:
+            return None
+        js = self.call("MarketDataService", "GetLastPrices", {"instrumentId": [uid]})
+        for p in js.get("lastPrices", []):
+            px = self.q(p.get("price"))
+            if px:
+                t = str(p.get("time") or "")[:19]          # "2026-11-06T05:39:58" (UTC)
+                try:
+                    t = datetime.fromisoformat(t).replace(tzinfo=timezone.utc).astimezone(MSK).strftime("%H:%M:%S")
+                except ValueError:
+                    t = ""
+                return {"value": px, "time": t}
+        return None
+
     def last_prices(self, tickers):
         uids = {self.share(t)["uid"]: t for t in tickers}
         js = self.call("MarketDataService", "GetLastPrices", {"instrumentId": list(uids)})

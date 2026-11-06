@@ -759,7 +759,8 @@ class AutoTrader:
         last = self.prices.get(p["ticker"])
         per_lot = p.get("per_lot") or (self._terms_cache.get(p["ticker"]) or (None, None))[1]
         pnl = p["side"] * (last - p["entry"]) * p["lots"] * per_lot if last and per_lot else None
-        return dict(p, last=last, pnl_rub=round(pnl, 2) if pnl is not None else None)
+        return dict(p, last=last, pnl_rub=round(pnl, 2) if pnl is not None else None,
+                    mult=p["lots"] * per_lot if per_lot else None)
 
     def _balance(self, now):
         """Стоимость счёта по текущим ценам (с открытыми позициями) раз в минуту; в файл — при изменении (не чаще 10 мин) или раз в 30 минут."""
