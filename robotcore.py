@@ -901,7 +901,7 @@ class Backtest:
             json.dump(self._state, f, ensure_ascii=False)
         self._proc = subprocess.Popen([_sys.executable, "-c", f"import robotcore as rc; rc._bt_child({job!r})"], cwd=sc.HERE,
                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                                      preexec_fn=lambda: os.nice(15))
+                                      preexec_fn=_bt_limits)
         pr = self._proc
 
         def pump():
@@ -944,17 +944,6 @@ class Backtest:
                     b.ti, b.log = ti, log
                     tickers = b.universe(dm, idx, log) or idx
             since = (datetime.now(sc.MSK) - timedelta(days=int(months * 30.5))).date()
-            data, fails = {}, []
-            for n, tk in enumerate(tickers, 1):
-                if self._stop.is_set():
-                    raise RuntimeError("остановлено")
-                self.state.update(progress=f"свечи {tk} ({n}/{len(tickers)})", pct=int(n / len(tickers) * 90))
-                pr = lambda txt, tk=tk, n=n: self.state.update(progress=f"свечи {tk} ({n}/{len(tickers)}): {txt}")
-                try:
-                    data[tk] = bt_bars(ti, token, tk, since, log, pr)
-                except Exception as e:
-                    fails.append(tk)
-                    log(f"  {tk}: история не получена ({e})")
             imx = None
             if any(x in m["modes"] for x in ("idx_long", "idx_short")):
                 self.state["progress"] = "IMOEX…"
@@ -962,12 +951,28 @@ class Backtest:
                     imx = bt_imoex(since, log)
                 except Exception as e:
                     log(f"IMOEX для фильтра не получен ({e}) — фильтр в проверке не учитывается")
-            self.state.update(progress="считаю сделки…", pct=95)
-            trades = bt_run(data, m, imx)
+            # по одной бумаге: скачать → посчитать → забыть свечи (память сервера не растёт с числом бумаг)
+            trades, fails, done_n = [], [], 0
+            for n, tk in enumerate(tickers, 1):
+                if self._stop.is_set():
+                    raise RuntimeError("остановлено")
+                self.state.update(progress=f"свечи {tk} ({n}/{len(tickers)})", pct=int(n / len(tickers) * 98))
+                pr = lambda txt, tk=tk, n=n: self.state.update(progress=f"свечи {tk} ({n}/{len(tickers)}): {txt}")
+                try:
+                    rows = bt_bars(ti, token, tk, since, log, pr)
+                except Exception as e:
+                    fails.append(tk)
+                    log(f"  {tk}: история не получена ({e})")
+                    continue
+                if rows:
+                    done_n += 1
+                    trades += bt_run({tk: rows}, m, imx)
+                del rows
+            trades.sort(key=lambda x: (x["date"], x["time"]))
             sm = bt_summary(trades, m["share"], capital)
             tfn = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}
             self.state["result"] = {
-                "summary": sm, "trades": trades[-400:], "tickers": len(data), "fails": fails,
+                "summary": sm, "trades": trades[-400:], "tickers": done_n, "fails": fails,
                 "period": f"{since:%d.%m.%Y} — {datetime.now(sc.MSK):%d.%m.%Y}",
                 "settings": (f"движение {m['thr'] * 100:g}% от {at.hm(m['ref'])}, EMA {', '.join(tfn[x] for x in m['tfs'])}, "
                              f"входы {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}, "
@@ -986,6 +991,16 @@ class Backtest:
 
 
 BACKTEST = Backtest()
+
+
+def _bt_limits():
+    """Для процесса проверки: низкий приоритет и не больше 700 МБ памяти — сервер робота не должен задыхаться."""
+    os.nice(15)
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (700 * 2 ** 20, 700 * 2 ** 20))
+    except Exception:
+        pass
 
 
 def _bt_child(job_path):
