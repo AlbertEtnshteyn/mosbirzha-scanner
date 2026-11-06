@@ -223,7 +223,7 @@ function renderState(st) {
     const res = p.last ? p.side * (p.last / p.entry - 1) * 100 : null;
     const take = p.take ? ((p.stage || 0) === 0 ? fmt(p.take) : (p.stage === 1 && p.take2 ? "т2 " + fmt(p.take2) : "трейл")) : "—";
     const tfl = { 5: "5м", 15: "15м", 60: "1ч" }[p.tf] || "";
-    const strat = p.strat === "spike" ? "всплеск " + (tfl || "15м") + (p.took ? " (б/у)" : "") : p.strat === "manual" ? "вручную" + (tfl ? " " + tfl : "") : "15:00";
+    const strat = p.strat === "spike" ? "всплеск " + (tfl || "15м") + (p.took ? " (б/у)" : "") : p.strat === "manual" ? "вручную" + (tfl ? " " + tfl : "") : p.strat === "mid" ? "день EMA " + (tfl || "1ч") : "15:00";
     return `<div class="item ${p.side > 0 ? "l" : "s"}">
       <div class="hd"><span class="tk">${esc(p.ticker)} <span class="small ${p.side > 0 ? "up" : "down"}">${p.side > 0 ? "ЛОНГ" : "ШОРТ"}</span></span>
         <span style="text-align:right"><span class="big ${cls(res)}" style="font-size:18px" data-lv-pct="${esc(p.ticker)}">${pct(res)}</span>
@@ -743,74 +743,23 @@ function renderSettings(s) {
       <input type="password" name="finam_secret" placeholder="${s.finam_set ? "••••••••" : "из личного кабинета Trade API → Токены"}" autocomplete="off"></label>
     ${inp("finam_account", "Номер счёта Финама (пусто — первый доступный токену)")}
   </div>
-  <div class="grp"><h3>Всплеск объёма + откат к EMA20</h3>
-    ${chk("spike_on", "Робот торгует по этой формации")}
-    <div class="f"><span>Таймфреймы</span>
-      <label class="c"><input type="checkbox" name="tf5" ${tfs.includes(5) ? "checked" : ""}><span>5 мин</span></label>
-      <label class="c"><input type="checkbox" name="tf15" ${tfs.includes(15) ? "checked" : ""}><span>15 мин</span></label>
-      <label class="c"><input type="checkbox" name="tf60" ${tfs.includes(60) ? "checked" : ""}><span>1 час</span></label></div>
-    ${chk("trend_on", "Искать трендовые откаты", "Импульс на объёме был в последние дни, EMA10 над EMA20, касание EMA20 + подтверждение.")}
-    ${chk("trend_trade", "…и торговать все трендовые откаты", "На истории в целом в минусе; по умолчанию только по профилю ниже.")}
-    ${chk("first_form", "Только первая формация после всплеска", "Если после всплеска на этом же ТФ уже была формация — повторную на нём не торговать, только уведомление. Формации на других ТФ (5м → 15м → 1ч) торгуются.")}
-    ${chk("tier_profile", "Профиль по эшелонам", "Индекс — формация 15 мин и 1 час; 2-й эшелон — формация 1 час и трендовый откат 15 мин; 3-й эшелон не торгуется.")}
-    ${chk("idx_form", "Только по направлению индекса", "Лонг — когда индекс растёт, шорт — когда падает. Если снять — входит в обе стороны.")}
-    ${chk("trade_5m", "Торговать и на 5 мин", "Формации 5 мин (акции индекса и 2-го эшелона) — тоже вход, а не только уведомление. На истории: 556 сделок за год, средняя −0,12% — в минусе.")}
-    ${chk("ema10_touch", "Формация и на откате к EMA10", "Если откат не дошёл до EMA20, но коснулся EMA10 и отскочил — тоже формация (стоп — под откатом).")}
-    ${chk("ema200", "Только по тренду EMA200", "Лонг — только если цена выше EMA200, шорт — только ниже. Если отмечено несколько ТФ — условие на всех.")}
-    <div class="row" style="margin:-4px 0 6px 30px">${[["form", "ТФ формации"], ["5", "5 мин"], ["15", "15 мин"], ["60", "1 час"], ["1440", "1 день"]].map(([k, n]) =>
-      `<label class="chk"><input type="checkbox" name="e2_${k}" ${(SET.ema200_tfs || ["form"]).includes(k) ? "checked" : ""}> ${n}</label>`).join("")}</div>
-    ${sel("entry_window", "Время входов", [["9-19", "09:00–19:00"], ["10-18", "10:00–18:00"]])}
-    <label class="f"><span>Время выхода</span>
-      <select name="exit_late" id="exitSel"></select></label>
-    <label class="f"><span>Во время выхода</span><select name="carry_all">
-      <option value="all" ${SET.carry_all === true || SET.carry_all === undefined ? "selected" : ""}>переносить все позиции (до стопа, тейка или трейлинга)</option>
-      <option value="loss" ${SET.carry_all === false ? "selected" : ""}>закрыть только в минусе (в плюсе — перенести, до 2 дней)</option>
-      <option value="none" ${SET.carry_all === "none" ? "selected" : ""}>закрыть все позиции</option></select></label>
+  <div class="grp"><h3>Стратегия «Движение дня»</h3>
+    <div class="hint" style="margin-left:0">Только покупки. Бумага выросла от открытия на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка. Стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Одна покупка по бумаге в день.</div>
+    ${inp("mid_thr", "Бумага выросла от открытия на, %", "number", 'step="0.1" inputmode="decimal"')}
+    ${sel("mid_tf", "EMA10 / EMA20 по графику", [[60, "1 час (лучше на истории)"], [15, "15 мин"], [5, "5 мин"]])}
+    ${chk("mid_idx", "Покупать только когда IMOEX в плюсе")}
     <div class="f"><span>Чем торговать</span>
-      ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="mk_${k}" ${mk.includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
-    ${sel("two_takes", "Тейки", [["true", "два тейка"], ["false", "один тейк"]])}
-    ${sel("spike_half", "Закрыть на тейке1, %", [30, 50, 70, 100].map((v) => [v, v]))}
-    ${sel("spike_trail", "Трейлинг, R (расстояние до стопа)", [0.5, 1, 1.5, 2].map((v) => [v, v]))}
-    ${sel("spike_max", "Макс. позиций", [[0, "без ограничения"]].concat([1, 2, 3, 5, 8, 10, 15, 20].map((v) => [v, v])))}
-    ${sel("spike_share", "Вход в позицию, % от портфеля", [1, 2, 3, 5, 10, 15, 20, 25, 33, 50, 100].map((v) => [v, v + "%"]))}
+      ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="dmk_${k}" ${(s.day_markets || ["imoex"]).includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
+    ${inp("mid_from", "Покупки с (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="10:00"')}
+    ${inp("mid_to", "Покупки до (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="18:00"')}
+    ${inp("mid_exit", "Выход в (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="23:45"')}
+    <div class="hint" style="margin-left:0">Рост до 10:00 считается от 07:00, после — от открытия 10:00.</div>
+    ${inp("mid_share", "На сделку, % счёта", "number", 'step="1" inputmode="decimal"')}
     ${sel("leverage", "Маржа", Object.entries(LEV))}
-    ${sel("direction", "Направление", [["both", "лонг и шорт"], ["long", "только лонг"], ["short", "только шорт"]])}
+    <div class="hint" style="margin-left:0">На истории (10.2025–10.2026, после затрат): акции индекса, 2,5%, EMA по 1 часу, с 10:00, выход 23:45 — 277 сделок, 60% в плюсе, +0,39% на сделку, просадка −1,8%. Выход 18:45 — вдвое хуже, EMA по 5 мин — около нуля.</div>
   </div>
   <div class="grp"><h3>Календарь</h3>
     ${chk("trade_weekends", "Торговать в выходные и праздничные дни (сессии выходного дня Мосбиржи)", "Робот смотрит календарь Мосбиржи: в праздники и выходные без торгов он не работает. Если галочка снята — в сессии выходного дня тоже не торгует (оборот там маленький, на истории не проверено).")}
-  </div>
-  <div class="grp"><h3>Время входов (обе стратегии)</h3>
-    ${sel("entry_from", "С какого времени робот может входить в позиции", [["", "как в окне формации / времени входа «Движения дня»"], ["7", "с открытия рынка — 07:00"], ["9", "с 09:00"], ["10", "с начала основной сессии — 10:00"]])}
-    <div class="hint" style="margin-left:0">Формация: начало окна входов (конец — по выбранному окну). «Движение дня»: с этого времени входит режим «сразу при сигнале». На истории проверены только окна 09:00–19:00 и 10:00–18:00.</div>
-  </div>
-  <div class="grp"><h3>Направление рынка (обе стратегии)</h3>
-    ${sel("idx_ref", "Как робот определяет, растёт рынок или падает", [["imoex", "IMOEX — реальное изменение к вчерашнему дню"], ["imoex_open", "IMOEX — от открытия основной сессии (10:00)"], ["open", "акции индекса с открытия дня (как в проверке на истории)"]])}
-    <div class="hint" style="margin-left:0">Влияет на фильтр «только по направлению индекса/рынка» и на закрытие при развороте. По умолчанию — реальный индекс IMOEX. Проверка на истории делалась по второму варианту (акции с открытия дня).</div>
-  </div>
-  <div class="grp"><h3>Разворот индекса (обе стратегии)</h3>
-    <label class="c"><input type="checkbox" name="flip_all" ${SET.idx_flip === "all" ? "checked" : ""}><span>При смене направления индекса закрыть все сделки</span></label>
-    <label class="c"><input type="checkbox" name="flip_profit" ${SET.idx_flip === "profit" ? "checked" : ""}><span>При смене направления индекса закрыть все сделки в плюсе</span></label>
-    <div class="hint">Направление — рост или падение индекса от открытия дня. Разворот засчитывается, когда индекс ушёл больше чем на 0,1% в другую сторону. Можно включить только один вариант.</div>
-  </div>
-  <div class="grp"><h3>Движение дня</h3>
-    ${chk("day_on", "Торговать «движение дня» (вход в заданное время)")}
-    ${chk("idx_day", "Только по направлению рынка", "Акция идёт туда же, куда рынок. Если снять — в обе стороны.")}
-    ${sel("day_mode", "Вход", [["fixed", "в заданное время (ниже) — проверено на истории"], ["signal", "сразу при сигнале 09:00–19:00 — на истории в минусе"]])}
-    ${sel("day_tp", "Тейк, % (лучше по истории — 8%)", [[0, "без тейка"], [3, "3%"], [5, "5%"], [8, "8%"], [10, "10%"]])}
-    ${sel("day_tp_half", "Закрыть на тейке", [[50, "50% (остаток — б/у и трейлинг)"], [100, "всю позицию"]])}
-    ${sel("day_trail", "Трейлинг-стоп, %", [[0, "нет"], [1, "1%"], [2, "2%"], [3, "3%"]])}
-    ${sel("day_act", "Трейлинг включается", [[0, "после тейка"], [1, "с +1%"], [2, "с +2%"], [3, "с +3%"]])}
-    ${sel("day_ref", "Движение бумаги считать", [["main", "от начала основной сессии (10:00)"], ["market", "от открытия рынка (07:00)"]])}
-    <div class="hint" style="margin-left:0">До 10:00 движение всегда считается от 07:00. На истории проверено «от 10:00».</div>
-    <div class="f"><span>Чем торговать (на истории проверены только акции индекса)</span>
-      ${(s.markets_all || []).map(([k, t]) => `<label class="c"><input type="checkbox" name="dmk_${k}" ${(s.day_markets || ["imoex"]).includes(k) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
-    ${sel("day_exit", "Время выхода (на истории 17:00 лучше)", [...new Set([...Array(14).keys()].map((i) => String(10 + i).padStart(2, "0") + ":00").concat(["18:45", "19:25", "23:45", SET.day_exit || "18:45"]))].sort().map((t) => [t, t]))}
-    ${sel("day_carry", "Переносить позиции (выход в выбранное время последнего дня, стоп 3% действует всё время)", [[0, "нет"], [1, "на 1 день"], [2, "на 2 дня"], [3, "на 3 дня"]])}
-    ${inp("threshold", "Порог движения, %", "number", 'step="0.1" inputmode="decimal"')}
-    ${sel("entry", "Время входа (МСК)", [...new Set([...Array(10).keys()].map((i) => String(9 + i).padStart(2, "0") + ":00").concat(["14:30", SET.entry || "15:00"]))].sort().map((t) => [t, t]))}
-    <div class="hint" style="margin-left:0">При входе в 09:00 и 10:00 движение считается от открытия утренней сессии (09:00); в 09:00 бумаги ещё почти не сдвинулись — сигналов будет мало.</div>
-    ${chk("rescan", "Добирать новые сигналы до 16:30")}
-    ${chk("auto_journal", "Считать журнал «движения дня» в 17:20")}
   </div>
   <div class="grp"><h3>Telegram</h3>
     <label class="f"><span>Токен бота ${s.tg_token_set ? "(сохранён; пусто — не менять)" : ""}</span>
@@ -829,19 +778,6 @@ function renderSettings(s) {
     ${NATIVE && NATIVE.updateServer ? '<button type="button" class="btn small" id="srvUpd">Обновить программу на сервере</button>' : ""}
   </div>
   <button type="submit" class="btn primary wide save">Сохранить настройки</button>`;
-  const fillExit = () => {
-    const f = $("#setForm"), early = f.entry_window.value === "10-18" ? "18:45" : "19:25";
-    const times = [...new Set([...Array(14).keys()].map((i) => String(10 + i).padStart(2, "0") + ":00").concat(["18:45", "19:25", "23:45", early]))].sort();
-    let cur = f.exit_late.value || (typeof SET.exit_late === "string" ? SET.exit_late : SET.exit_late === false ? early : "23:45");
-    if (cur === "19:25" || cur === "18:45") cur = times.includes(cur) ? cur : early;
-    f.exit_late.innerHTML = times.map((t) => `<option value="${t}">${t}</option>`).join("");
-    f.exit_late.value = times.includes(cur) ? cur : early;
-    f.exit_late.dataset.early = early;
-  };
-  fillExit(); $("#setForm").entry_window.onchange = fillExit;
-  const fA = $("#setForm").flip_all, fP = $("#setForm").flip_profit;     // только один из двух вариантов
-  fA.onchange = () => { if (fA.checked) fP.checked = false; };
-  fP.onchange = () => { if (fP.checked) fA.checked = false; };
   $("#tgFind").onclick = async () => {
     const r = await api("/api/tg_find", { tg_token: $("#setForm").tg_token.value.trim() });
     if (r.ok) { $("#setForm").tg_chat.value = r.chat; toast(`Найден чат ${r.name}. Нажмите «Сохранить».`); }
@@ -863,18 +799,15 @@ $("#setForm").addEventListener("submit", async (e) => {
     sandbox_token: c("sandbox_token"), broker: v("broker") || "tinvest", finam_account: (v("finam_account") || "").trim(),
     real_account: (v("real_account") || "").trim(), real_token: (v("real_token") || "").trim(),
     finam_secret: (v("finam_secret") || "").trim(), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
-    spike_on: c("spike_on"), spike_tfs: [5, 15, 60].filter((t) => c("tf" + t)),
-    trend_on: c("trend_on"), trend_trade: c("trend_trade"), tier_profile: c("tier_profile"), entry_window: v("entry_window"), exit_late: v("exit_late") === "23:45" ? true : v("exit_late") === f.exit_late.dataset.early ? false : v("exit_late"), carry_all: v("carry_all") === "none" ? "none" : v("carry_all") !== "loss",
-    spike_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("mk_" + k)),
     day_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("dmk_" + k)),
-    two_takes: v("two_takes") === "true", spike_half: +v("spike_half"), spike_trail: +v("spike_trail"), spike_max: +v("spike_max"),
-    spike_share: +v("spike_share"), leverage: v("leverage"), direction: v("direction"),
-    day_on: c("day_on"), day_carry: +v("day_carry") || 0, day_exit: v("day_exit") || "18:45", day_mode: v("day_mode") || "fixed", idx_form: c("idx_form"), ema10_touch: c("ema10_touch"), first_form: c("first_form"), trade_5m: c("trade_5m"), ema200: c("ema200"), ema200_tfs: ["form", "5", "15", "60", "1440"].filter((k) => c("e2_" + k)), idx_day: c("idx_day"), idx_flip: c("flip_all") ? "all" : c("flip_profit") ? "profit" : "off", trade_weekends: c("trade_weekends"), entry_from: v("entry_from") || "", day_ref: v("day_ref") || "main", idx_ref: v("idx_ref") || "imoex", day_tp: +v("day_tp") || 0, day_tp_half: +v("day_tp_half") || 100,
-    day_trail: +v("day_trail") || 0, day_act: +v("day_act") || 0, threshold: parseFloat(String(v("threshold")).replace(",", ".")) || 2, entry: v("entry") || "15:00",
-    rescan: c("rescan"), auto_journal: c("auto_journal"),
+    leverage: v("leverage"), trade_weekends: c("trade_weekends"),
+    mid_thr: parseFloat(String(v("mid_thr")).replace(",", ".")) || 2.5, mid_tf: +v("mid_tf") || 60, mid_idx: c("mid_idx"),
+    mid_from: (v("mid_from") || "10:00").trim(), mid_to: (v("mid_to") || "18:00").trim(), mid_exit: (v("mid_exit") || "23:45").trim(),
+    mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10,
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };
-  if (!out.spike_markets.length) out.spike_markets = ["imoex"];
+  const okT = (x) => /^([01]?\d|2[0-3])([:.][0-5]\d)?$/.test(x);
+  for (const k of ["mid_from", "mid_to", "mid_exit"]) if (!okT(out[k])) { toast(`Время «${out[k]}» — впишите как ЧЧ:ММ, например 10:00`, 5000); return; }
   if (!out.day_markets.length) out.day_markets = ["imoex"];
   const tok = (v("token") || "").trim(); if (tok) out.token = tok;
   const tgt = (v("tg_token") || "").trim(); if (tgt) out.tg_token = tgt;

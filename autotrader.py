@@ -29,6 +29,7 @@ DAY_START = 7 * 60            # 07:00 — робот начинает рабоч
 DAY_END = 23 * 60 + 50        # 23:50 — мониторинг и торговля до конца вечерней сессии
 SESSION_CLOSE = 18 * 60 + 40  # 18:40 — конец основной сессии
 TRADE_END = 18 * 60 + 30      # 18:30 — к этому времени все позиции закрыты
+MID_STOP_BUF = 0.001          # стоп «Движения дня» — на 0,1% ниже лоя дня
 STOP_POLL = 15                # проверка стопов и тейков, секунд
 SCAN_EVERY = 60               # пересчёт рынка и поиск всплесков, секунд
 MAX_POS_RESCAN = 8            # при добивке новых сигналов 15:00: доля капитала на сделку = 1/8
@@ -810,26 +811,11 @@ class AutoTrader:
 
     # ------------------------------------------------------------------ главный цикл
     def run(self):
-        self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Мониторинг в торговые дни по календарю Мосбиржи{' (и в сессии выходного дня)' if self.sp.get('trade_weekends') else ''} {hm(DAY_START)}–{hm(DAY_END)} МСК, "
-                 f"входы по формации: {trade_profile('index', 15, 'form', self.sp.get('window', '9-19'), self.sp.get('exit_late', True))['name']}; "
-                 + ("во время выхода закрываются все позиции. " if self.sp.get("carry_all", True) == "none" else
-                    "все позиции переносятся на следующий день, пока их не закроют стоп, тейк или трейлинг. "
-                    if self.sp.get("carry_all", True) else
-                    f"позиция в плюсе или с взятым тейком1 переносится на следующий день (до {MAX_CARRY_DAYS} дней). ")
-                 + 
-                 f"Направление: {self._dir_name()}.")
-        if not self.day_on:
-            self.log("Стратегия «движение дня» (вход в заданное время) выключена в настройках.")
-        else:
-            self.log(f"Стратегия «{hm(sc.ENTRY_MIN)}»: порог {sc.THRESHOLD * 100:g}%, стоп {sc.STOP * 100:g}%, выход {hm(self._day_exit())}"
-                 + (", добор новых сигналов до 16:30" if self.rescan else "") + ".")
-        sp = self.sp
-        tfs = ", ".join(("1 час" if tf == 60 else f"{tf} мин") for tf in sp["tfs"]) or "нет"
-        self.log(f"Всплески объёма + откат к EMA20 (таймфреймы: {tfs}): слежу всегда, торговля "
-                 f"{'ВКЛЮЧЕНА' if sp['on'] else 'выключена'}. Касание EMA20 → свеча-подтверждение → вход; стоп под низом всего отката; "
-                 f"тейк1 на половине пути до хая ({sp['half'] * 100:.0f}%) → стоп в б/у и трейлинг {sp['trail_r']:g}R; "
-                 f"тейк2 на хае импульса (50% остатка); остаток — трейлинг; "
-                 f"шорт только при падающем индексе.")
+        m = self._mid()
+        self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Стратегия одна — «Движение дня»: "
+                 f"бумага выросла на {m['thr'] * 100:g}% от открытия → покупка, как только цена дошла до середины между EMA10 и EMA20 "
+                 f"({self._tf_name(m['tf'])}); стоп за лоем дня, тейк на хае дня. Покупки {hm(m['from'])}–{hm(m['to'])}, выход {hm(m['exit'])}"
+                 + (", только когда IMOEX в плюсе" if m["idx"] else "") + f", на сделку {m['share'] * 100:g}% счёта. Только покупки.")
         if self.positions:
             self.log(f"Открытые позиции с прошлого запуска: {', '.join(p['ticker'] for p in self.positions)} — продолжаю сопровождать.")
         prepared_for = None
@@ -937,63 +923,106 @@ class AutoTrader:
                     self._close_all(hm(p.get("exit_min", sc.EXIT_MIN)), only=[p])
             if self.positions:
                 self._check_stops()
-        if self.st["entered"] and secs >= self._day_exit() * 60 - 10 and not self.st["done"] \
-                and not any(p.get("strat") == "15" for p in self.positions):
-            self.st["done"] = True
-            self._save()
-            self._day_summary()
-        # 2) до открытия основной сессии только ждём (и загружаем историю свечей для EMA20)
-        if t < sc.OPEN_MIN + 1:
-            if t >= DAY_START and (self.last_scan is None or (now - self.last_scan).total_seconds() >= SCAN_EVERY - 1):
-                self._scan(now)                           # рынок от открытия утренней сессии — для фильтра индекса и входов с 9:00
-            if self._day_signal_mode():
-                self._enter_signal(now)
-            elif self.trade and self.day_on and self._day_early() and not self.st["entered"] and sc.ENTRY_MIN <= t:
-                self._scan(now)
-                self._enter(now)                          # «Движение дня» с входом в 09:00
-            mk = f"рынок {self.market * 100:+.2f}% · " if self.market is not None else ""
-            self._set_status(f"{'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}: {mk}утренняя сессия, ищу формации")
-            self._scan_pullbacks(now)
-            return
-        # 3) сканирование рынка раз в минуту (в момент входа — обязательно свежее)
-        if not self.day_on and not self.st["entered"]:
-            self.st.update(entered=True, done=True)      # стратегия «движение дня» выключена
-            self._save()
-        if self._day_signal_mode() and not self.st["entered"]:
-            self.st["entered"] = True                    # вход не по времени, а сразу при сигнале
-            self._save()
-        entry_due = self.trade and (not self.st["entered"]) and sc.ENTRY_MIN <= t < sc.LATE_CUTOFF_MIN
-        if t < DAY_END and (entry_due or self.last_scan is None or (now - self.last_scan).total_seconds() >= SCAN_EVERY - 1):
+        # 2) рынок раз в минуту, 3) покупки на середине EMA10/EMA20
+        if self.last_scan is None or (now - self.last_scan).total_seconds() >= SCAN_EVERY - 1:
             self._scan(now)
-        # 4) вход
-        if self._day_signal_mode():
-            self._enter_signal(now)
-        elif entry_due:
-            self._enter(now)
-        elif self.trade and self.day_on and self.rescan and self.st["entered"] and t < sc.LATE_CUTOFF_MIN:
-            self._enter_new(now)
-        elif self.trade and not self.st["entered"] and t >= sc.LATE_CUTOFF_MIN and not self.st["done"]:
-            self.log(f"Время входа пропущено (сейчас {hm(t)}, входить позже {hm(sc.LATE_CUTOFF_MIN)} нельзя) — сегодня без сделок по «{hm(sc.ENTRY_MIN)}».")
-            self.st.update(entered=True, done=True)
-            self._save()
-        # 5) всплески объёма и откаты к EMA20
-        self._scan_pullbacks(now)
-        # 6) статус
+        self._mid_step(now)
+        # 4) статус
+        m = self._mid()
         mk = f"рынок {self.market * 100:+.2f}% · " if self.market is not None else ""
+        wait = [tk for tk in self.st.get("mid_q", {}) if tk not in self.st["traded"]]
         if not self.trade:
-            self._set_status(f"НАБЛЮДЕНИЕ: {mk}ищу формации до {hm(DAY_END)}"
-                             + (f" · ведёт позиции: {len(self.positions)}" if self.positions else "") + " — для торговли нажмите «Старт»")
-        elif self.positions:
-            self._set_status(f"{mk}в позициях: {len(self.positions)}")
-        elif not self.st["entered"] and not (self.sp["on"] and self.sp["tfs"]):
-            self._set_status(f"{mk}сканирую рынок — вход «движение дня» в {hm(sc.ENTRY_MIN)}")
-        elif not self.st["entered"]:
-            self._set_status(f"{mk}ищу формации (вход сразу при подтверждении); «движение дня» — в {hm(sc.ENTRY_MIN)}")
-        elif self.sp["on"] and t < trade_profile("index", 15, "form", self.sp.get("window", "9-19"), self.sp.get("exit_late", True))["to"]:
-            w = trade_profile("index", 15, "form", self.sp.get("window", "9-19"), self.sp.get("exit_late", True))
-            self._set_status(f"ТОРГОВЛЯ: {mk}ищу формации, входы {hm(w['from'])}–{hm(w['to'])}")
+            self._set_status(f"НАБЛЮДЕНИЕ: {mk}кандидаты дня до {hm(DAY_END)} — для торговли нажмите «Старт»"
+                             + (f" · ведёт позиции: {len(self.positions)}" if self.positions else ""))
+        elif t < m["from"]:
+            self._set_status(f"ТОРГОВЛЯ: {mk}покупки с {hm(m['from'])}" + (f" · в позициях: {len(self.positions)}" if self.positions else ""))
+        elif t < m["to"]:
+            self._set_status(f"ТОРГОВЛЯ: {mk}жду середины EMA10/EMA20" + (f" — {', '.join(wait[:6])}" if wait else "")
+                             + (f" · в позициях: {len(self.positions)}" if self.positions else ""))
         else:
-            self._set_status(f"ТОРГОВЛЯ: {mk}входы на сегодня закончены — мониторинг до {hm(DAY_END)}")
+            self._set_status(f"ТОРГОВЛЯ: {mk}покупки на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
+
+    # ------------------------------------------------------------------ «Движение дня»: покупка на середине EMA10/EMA20
+    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tf": 60, "idx": False, "share": 0.10}
+
+    def _mid(self):
+        return dict(self.MID_DEFAULT, **(self.sp.get("mid") or {}))
+
+    def _mid_levels(self, tk, now, tf):
+        """(середина EMA10/EMA20 по последней закрытой свече ТФ, лой дня, хай дня) — пересчёт не чаще раза в минуту."""
+        c = getattr(self, "_mid_cache", {}).get(tk)
+        if c and (now - c[0]).total_seconds() < 60:
+            return c[1]
+        self._mid_cache = getattr(self, "_mid_cache", {})
+        b5 = self._bars5(tk, now)
+        naive = now.replace(tzinfo=None)
+        bars = [b for b in aggregate([dict(b) for b in b5], tf) if b["t"] + timedelta(minutes=tf) <= naive]
+        day = [b for b in b5 if b["t"].date() == naive.date() and b["t"].hour >= 7]
+        if len(bars) < 21 or not day:
+            self._mid_cache[tk] = (now, None)
+            return None
+        closes = [b["c"] for b in bars]
+        mid = (ema(closes, 10)[-1] + ema(closes, 20)[-1]) / 2
+        lv = (mid, min(b["l"] for b in day), max(b["h"] for b in day))
+        self._mid_cache[tk] = (now, lv)
+        return lv
+
+    def _mid_step(self, now):
+        m = self._mid()
+        t = now.hour * 60 + now.minute
+        if not self.trade or not (m["from"] <= t < m["to"]):
+            return
+        q = self.st.setdefault("mid_q", {})
+        traded = self.st["traded"]
+        held = {p["ticker"] for p in self.positions}
+        for tk, mv, why in self.scan_rows:
+            if why == "СИГНАЛ" and tk not in q and tk not in traded and tk not in held:
+                q[tk] = now.strftime("%H:%M")
+                self.log(f"«Движение дня»: {tk} {mv * 100:+.2f}% от открытия — жду цену на середине EMA10/EMA20 ({self._tf_name(m['tf'])}).")
+                self._save()
+        watch = [tk for tk in q if tk not in traded and tk not in held]
+        if not watch:
+            return
+        try:
+            lp = self.b.last_prices(watch)
+        except sc.CertError:
+            raise
+        except Exception:
+            return
+        self.prices.update(lp)
+        self.mid_view = getattr(self, "mid_view", {})
+        for tk in watch:
+            px = lp.get(tk)
+            try:
+                lv = self._mid_levels(tk, now, m["tf"])
+            except sc.CertError:
+                raise
+            except Exception as e:
+                self.log(f"  {tk}: свечи для EMA не получены ({e})")
+                continue
+            if not px or not lv:
+                continue
+            mid, lo, hi = lv
+            self.mid_view[tk] = mid
+            if px > mid:
+                continue
+            if m["idx"] and not (self.market is not None and self.market > 0):
+                continue                                  # ждём, пока IMOEX в плюсе
+            stop, take = lo * (1 - MID_STOP_BUF), hi
+            traded.append(tk)
+            self._save()
+            if not (stop < px < take):
+                self.log(f"«Движение дня»: {tk} дошла до середины EMA ({px:.4g}), но цена уже "
+                         + ("у лоя дня" if px <= stop else "у хая дня") + " — не покупаю.")
+                continue
+            base = self.capital
+            try:
+                base = self.b.portfolio_value() or self.capital
+            except Exception:
+                pass
+            self.log(f"«Движение дня»: {tk} дошла до середины EMA10/EMA20 ({mid:.4g}), цена {px:.4g} — ПОКУПКА "
+                     f"({m['share'] * 100:g}% счёта), стоп {stop:.4g} (лой дня), тейк {take:.4g} (хай дня), выход {hm(m['exit'])}.")
+            self._open(tk, 1, base * m["share"], strat="mid", stop_level=stop, t1=take, exit_min=m["exit"], tf=m["tf"])
 
     # ------------------------------------------------------------------ сканирование
     def _real_index(self, own):
@@ -1036,11 +1065,12 @@ class AutoTrader:
 
     def _rank(self, moves):
         rows = []
-        for tk, mv in sorted(moves.items(), key=lambda x: -abs(x[1])):
-            if abs(mv) < sc.THRESHOLD:
-                why = "меньше порога"
-            elif self.sp.get("idx_day", True) and (self.market == 0 or (mv > 0) != (self.market > 0)):
-                why = "против рынка"
+        m = self._mid()
+        for tk, mv in sorted(moves.items(), key=lambda x: -x[1]):
+            if mv < m["thr"]:
+                why = "меньше порога" if mv >= 0 else "падает — только покупки"
+            elif m["idx"] and not (self.market is not None and self.market > 0):
+                why = "IMOEX не в плюсе"
             else:
                 why = "СИГНАЛ"
             rows.append((tk, mv, why))
@@ -1071,7 +1101,7 @@ class AutoTrader:
                 self.opens[tk] = first[0]["o"]
             elif t > sc.OPEN_MIN + 5:
                 self.opens[tk] = None      # не торговалась в начале сессии — как в бэктесте, пропускаем
-        if self.sp.get("day_ref", "main") == "market" or t < sc.OPEN_MIN + 1:
+        if self._mid()["from"] < sc.OPEN_MIN or t < sc.OPEN_MIN + 1:
             ref = {tk: o for tk, o in self.pre_opens.items() if o}  # от открытия рынка 07:00 (до 10:00 — всегда так)
         else:
             ref = {tk: o for tk, o in self.opens.items() if o}
@@ -1088,7 +1118,6 @@ class AutoTrader:
                        if self.pre_opens.get(tk) and self.prices.get(tk)}
                 if mvs:
                     self.market = self._real_index(self._own_market(mvs))
-                    self._idx_flip("утро")
                     self.scan_rows = self._rank(self._day_only(mvs))        # кандидаты с 09:01 — движение от открытия утренней сессии
                     self.last_scan = now
                     self._push()
@@ -1098,7 +1127,6 @@ class AutoTrader:
         if not moves:
             return
         self.market = self._real_index(self._own_market(moves))
-        self._idx_flip("сигнал" if self._day_signal_mode() else "день")
         self.scan_rows = self._rank(self._day_only(moves))
         self.last_scan = now
         self._push()
@@ -1558,7 +1586,7 @@ class AutoTrader:
             return
         entry = fill or px
         stop = stop_level if stop_level is not None else entry * (1 - side * sc.STOP)
-        if strat == "manual":
+        if strat in ("manual", "mid"):
             take1, take2 = t1, None                                                # ручная позиция: один тейк — закрыть всё
         elif self.sp.get("two_takes", True):
             take1, take2 = (entry + 0.5 * (t1 - entry), t1) if t1 else (None, None)   # тейк1 — полпути до хая, тейк2 — хай
@@ -1584,6 +1612,12 @@ class AutoTrader:
             pos["overnight"] = True
         self.positions.append(pos)
         self._save()
+        if strat == "mid":
+            self.log(f"  {tk}: КУПЛЕНО {lots} лот. по ~{entry:.4g}, стоп {pos['stop']:.4g} (лой дня), "
+                     f"тейк {pos['take']:.4g} (хай дня), выход {hm(pos['exit_min'])}")
+            self.on_event("open", dict(pos))
+            self._push()
+            return
         self.log(f"  {tk}: {'КУПЛЕНО' if side > 0 else 'ПРОДАНО (шорт)'} {lots} лот. по ~{entry:.4g}, стоп {pos['stop']:.4g}"
                  + (f", тейк1 {pos['take']:.4g} ({self.sp['half'] * 100:.0f}%, затем б/у и трейлинг)"
                     + (f", тейк2 {pos['take2']:.4g} (50% остатка)" if pos["take2"] else "")
@@ -1615,6 +1649,12 @@ class AutoTrader:
             if not px:
                 continue
             s = p["side"]
+            if p.get("strat") == "mid":
+                if (px - p["stop"]) * s <= 0:
+                    self._close(p, px, "стоп (лой дня)")
+                elif p.get("take") and (px - p["take"]) * s >= 0:
+                    self._close(p, px, "тейк (хай дня)")
+                continue
             if p.get("strat") in ("15", "manual") and (p.get("dtp") or p.get("dtrail")):
                 self._day_exits(p, px, s)
                 continue

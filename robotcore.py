@@ -17,7 +17,9 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed",
             "day_tp": 8, "day_tp_half": 50, "day_trail": 2, "day_act": 0,
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
-            "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": ""}
+            "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
+            # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
+            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_idx": False, "mid_share": 10}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -82,7 +84,28 @@ def spike_cfg(s):
             "day_tp": float(s.get("day_tp", 8) or 0) / 100, "day_tp_half": float(s.get("day_tp_half", 50) or 100) / 100,
             "day_trail": float(s.get("day_trail", 2) or 0) / 100, "day_act": float(s.get("day_act", 0) or 0) / 100,
             "index": bool(s.get("idx_form", True)), "ema10_touch": bool(s.get("ema10_touch", False)), "first_form": bool(s.get("first_form", True)), "trade_5m": bool(s.get("trade_5m", False)), "ema200": bool(s.get("ema200", False)), "ema200_tfs": list(s.get("ema200_tfs") or ["form"]), "idx_day": bool(s.get("idx_day", True)),
-            "idx_flip": s.get("idx_flip", "off") if s.get("idx_flip") in ("all", "profit") else "off"}
+            "idx_flip": s.get("idx_flip", "off") if s.get("idx_flip") in ("all", "profit") else "off",
+            "mid": mid_cfg(s)}
+
+
+def hhmm(v, default):
+    """«10:00» / «10» / «9:30» → минуты от полуночи."""
+    try:
+        v = str(v).strip().replace(".", ":")
+        hh, mm = (v.split(":") + ["0"])[:2]
+        m = int(hh) * 60 + int(mm or 0)
+        return m if 0 <= m < 24 * 60 else default
+    except (ValueError, TypeError):
+        return default
+
+
+def mid_cfg(s):
+    """Настройки «Движения дня»: покупка на середине EMA10/EMA20."""
+    tf = int(s.get("mid_tf", 60) or 60)
+    return {"thr": float(s.get("mid_thr", 2.5) or 2.5) / 100,
+            "from": hhmm(s.get("mid_from", "10:00"), 600), "to": hhmm(s.get("mid_to", "18:00"), 1080),
+            "exit": hhmm(s.get("mid_exit", "23:45"), 1425), "tf": tf if tf in (5, 15, 60) else 60,
+            "idx": bool(s.get("mid_idx", False)), "share": float(s.get("mid_share", 10) or 10) / 100}
 
 
 def chart_sp(s):

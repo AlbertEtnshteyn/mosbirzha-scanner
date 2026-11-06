@@ -527,7 +527,7 @@ class App(tk.Tk):
         ttk.Label(f, foreground="#555", text=" (пусто — первый доступный)").pack(side="left")
         r += 1
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
-        ttk.Checkbutton(f, text="Включать торговлю сразу при открытии программы (поиск формаций включается всегда)", variable=self.v_autostart).pack(side="left")
+        ttk.Checkbutton(f, text="Включать торговлю сразу при открытии программы", variable=self.v_autostart).pack(side="left")
         ttk.Checkbutton(f, text="Звук при входе и выходе из позиции", variable=self.v_sound).pack(side="left", padx=(16, 0))
         r += 1
         self.DIRS = {"both": "лонг и шорт", "long": "только лонг", "short": "только шорт"}
@@ -568,76 +568,31 @@ class App(tk.Tk):
             for i, (k, name) in enumerate(at.MARKETS):
                 ttk.Checkbutton(fr, text=name, variable=vars_[k]).grid(row=i // 3, column=1 + i % 3, sticky="w", padx=(0, 14))
 
-        # --- общее для обеих стратегий
-        b0 = box("Общее для обеих стратегий")
-        row(b0, "Сделки:", cb(self.v_dir, list(self.DIRS.values()), 14),
-            "Направление рынка — по:", cb(self.v_idxref, list(self.IDXREF.values()), 50))
-        row(b0, "Входы не раньше:", cb(self.v_efrom, list(self.EFROM.values()), 46),
-            "При развороте рынка:", cb(self.v_flip, list(self.FLIP.values()), 24),
-            ("hint", "разворот — рынок ушёл больше чем на 0,1% в другую сторону"))
-        f = row(b0, "Размер позиции, % портфеля:", lambda fr: ttk.Combobox(fr, textvariable=self.v_spk_share, width=5,
-                values=["1", "2", "3", "5", "10", "15", "20", "25", "33", "50", "100"]), cb(self.v_lev, list(LEV.values()), 32),
-                ck("торговать в выходные и праздники (сессии выходного дня)", self.v_wkend))
-        self.share_lbl = ttk.Label(b0, text="", foreground=GREY)
-        self.share_lbl.pack(anchor="w")
-
-        # --- формация
-        b1 = box("1. Всплеск объёма + откат к EMA20 — вход сразу после подтверждения формации")
-        f = row(b1, ck("Торговать по этой формации", self.v_spk), "   Таймфреймы:",
-                *[ck("1 час" if tf == 60 else f"{tf} мин", self.v_spk_tf[tf]) for tf in (5, 15, 60)])
-        markets(b1, self.v_mk)
-        fe = row(b1, ck("Только по направлению рынка", self.v_idx_form), ck("Только по тренду EMA200 на:", self.v_e200),
-                 *[ck(n, self.v_e2tf[k]) for k, n in self.E2TF])
-        fw = row(b1, "Окно входов:")
-        cw = ttk.Combobox(fw, textvariable=self.v_win, width=13, state="readonly", values=list(self.WIN.values()))
-        cw.pack(side="left", padx=(0, 12))
-        ttk.Label(fw, text="выход:").pack(side="left", padx=(0, 4))
-        ce = ttk.Combobox(fw, textvariable=self.v_exit, width=7, state="readonly")
-        ce.pack(side="left", padx=(0, 12))
-        ttk.Label(fw, text="во время выхода:").pack(side="left", padx=(0, 4))
-        ttk.Combobox(fw, textvariable=self.v_carry_all, width=62, state="readonly", values=list(self.CARRY.values())).pack(side="left")
-
-        def _exits(*_):
-            k = {v: k for k, v in self.WIN.items()}.get(self.v_win.get(), "9-19")
-            vals = sorted(set(at.EXIT_CHOICES) | {self.EXIT_EARLY[k]})
-            ce.configure(values=vals)
-            if self.v_exit.get() not in vals:
-                self.v_exit.set(self.EXIT_EARLY[k])
-        cw.bind("<<ComboboxSelected>>", _exits)
-        _exits()
-        self._exits_cb = _exits
-        row(b1, "Тейки:", cb(self.v_takes, ["два тейка", "один тейк у хая"], 15), "закрыть на тейке1, %:",
-            cb(self.v_spk_half, ["30", "50", "70", "100"], 5), "трейлинг, R:", cb(self.v_spk_trail, ["0.5", "1", "1.5", "2"], 5),
-            "макс. позиций:", cb(self.v_spk_max, ["без ограничения", "1", "2", "3", "5", "8", "10", "15", "20"], 15))
-        row(b1, ck("Только первая формация после всплеска", self.v_first),
-            ("hint", "если после всплеска на этом же ТФ уже была формация — повторную на нём не торговать (на других ТФ — торгуется)"))
-        row(b1, ck("Профиль по эшелонам", self.v_tier), ("hint", "индекс — формация 15 мин и 1 час; 2-й эшелон — 1 час и трендовый откат 15 мин; "
-                                                         "3-й эшелон — только уведомления"))
-        row(b1, "Дополнительно (на истории хуже):", ck("входить и на 5 мин", self.v_t5), ck("откат к EMA10", self.v_e10),
-            ck("все трендовые откаты", self.v_trend_trade), ck("искать трендовые откаты (уведомления)", self.v_trend_on))
-        tk.Label(b1, text="На истории (152 акции, 10.2025–10.2026, после затрат): формация 15 мин и 1 час — около +0,24% на сделку; "
-                          "5 мин — −0,12%. Стоп — под низом отката с запасом; тейк1 — полпути до хая импульса, тейк2 — хай, дальше трейлинг.",
-                 justify="left", anchor="w", font=("Segoe UI", 9), fg=GREY, bg=bg, wraplength=980).pack(anchor="w", pady=(4, 0))
-
-        # --- движение дня
-        b2 = box("2. Движение дня — бумаги, которые сильно ушли от открытия в сторону рынка")
-        row(b2, ck("Торговать по этой стратегии", self.v_day), "Вход:", cb(self.v_dmode, list(self.DMODE.values()), 34),
-            "в", cb(self.v_entry, sc.ENTRY_CHOICES, 6), "порог, %:", cb(self.v_thr, [f"{x:g}" for x in sc.THRESHOLD_CHOICES], 5))
-        row(b2, ck("Только по направлению рынка", self.v_idx_day), "Движение бумаги считать:", cb(self.v_dref, list(self.DREF.values()), 34),
-            ("hint", "до 10:00 — всегда от 07:00"))
+        # --- единственная стратегия: «Движение дня» — покупка на середине EMA10/EMA20
+        self.MTF = {5: "5 мин", 15: "15 мин", 60: "1 час"}
+        self.v_mthr = tk.StringVar(value=f"{float(self.s.get('mid_thr', 2.5)):g}")
+        self.v_mtf = tk.StringVar(value=self.MTF.get(int(self.s.get("mid_tf", 60) or 60), "1 час"))
+        self.v_midx = tk.BooleanVar(value=bool(self.s.get("mid_idx", False)))
+        self.v_mfrom = tk.StringVar(value=str(self.s.get("mid_from", "10:00")))
+        self.v_mto = tk.StringVar(value=str(self.s.get("mid_to", "18:00")))
+        self.v_mexit = tk.StringVar(value=str(self.s.get("mid_exit", "23:45")))
+        self.v_mshare = tk.StringVar(value=f"{float(self.s.get('mid_share', 10)):g}")
+        ent = lambda var, w: (lambda fr: ttk.Entry(fr, textvariable=var, width=w))
+        b2 = box("Стратегия «Движение дня» — покупка на середине между EMA10 и EMA20")
+        row(b2, "Бумага выросла от открытия на, %:", ent(self.v_mthr, 5), "EMA по графику:", cb(self.v_mtf, list(self.MTF.values()), 8),
+            ck("покупать только когда IMOEX в плюсе", self.v_midx))
         markets(b2, self.v_dmk)
-        row(b2, "Выход в", cb(self.v_dexit, sorted(set(at.EXIT_CHOICES)), 6), "перенос позиций:", cb(self.v_dayc, list(self.DAYC.values()), 10),
-            ("hint", "стоп 3% действует всегда"))
-        row(b2, "Тейк, %:", cb(self.v_dtp, ["0", "3", "5", "8", "10"], 4), "закрыть на тейке, %:", cb(self.v_dhalf, ["50", "100"], 4),
-            "трейлинг, %:", cb(self.v_dtrail, ["0", "1", "2", "3"], 4), "трейлинг с +%:", cb(self.v_dact, ["0", "1", "2", "3"], 4),
-            ("hint", "лучше на истории: тейк 8%, закрыть 50%, трейлинг 2%"))
-        self.bt_lbl = tk.Label(b2, text="", justify="left", anchor="w", font=("Segoe UI", 9), bg=bg)
-        self.bt_lbl.pack(anchor="w")
-        self.v_thr.trace_add("write", lambda *_: self._show_bt())
-        self.v_entry.trace_add("write", lambda *_: self._show_bt())
-        self._show_bt()
-        row(b2, ck("Добирать новые сигналы до 16:30 (на истории хуже)", self.v_rescan), ck("сигналы со звуком", self.v_as),
-            ck("журнал форвард-теста в 17:20", self.v_aj))
+        row(b2, "Покупки с", ent(self.v_mfrom, 6), "до", ent(self.v_mto, 6), "   выход в", ent(self.v_mexit, 6),
+            ("hint", "время вписывается вручную, ЧЧ:ММ; рост до 10:00 считается от 07:00, после — от открытия 10:00"))
+        row(b2, "На сделку, % счёта:", ent(self.v_mshare, 5), cb(self.v_lev, list(LEV.values()), 32),
+            ck("торговать в выходные и праздники", self.v_wkend))
+        tk.Label(b2, text="Только покупки. Бумага выросла на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка; "
+                          "стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Одна покупка по бумаге в день.\n"
+                          "На истории (10.2025–10.2026, после затрат): акции индекса, 2,5%, EMA по 1 часу, с 10:00, выход 23:45 — "
+                          "277 сделок, 60% в плюсе, +0,39% на сделку, просадка −1,8%; выход 18:45 — вдвое хуже; EMA по 5 мин — около нуля.",
+                 justify="left", anchor="w", font=("Segoe UI", 9), fg=GREY, bg=bg, wraplength=980).pack(anchor="w", pady=(4, 0))
+        self.share_lbl = ttk.Label(b2, text="", foreground=GREY)
+        self.bt_lbl = tk.Label(b2, text="", bg=bg)
 
         def _upd_share(*_):
             try:
@@ -658,10 +613,6 @@ class App(tk.Tk):
                 self.share_lbl.configure(text=txt, foreground="#b3261e" if (lk == "1" and pct * mx > 100) else GREY)
             except ValueError:
                 self.share_lbl.configure(text="введите число")
-        self.v_spk_share.trace_add("write", _upd_share)
-        self.v_spk_max.trace_add("write", _upd_share)
-        self.v_lev.trace_add("write", _upd_share)
-        _upd_share()
         r += 1
         ttk.Button(g, text="Сохранить настройки", command=self.save).grid(row=r, column=0, columnspan=2, sticky="w", pady=12)
         ttk.Label(t4, text="Без токена данные берутся с сайта Мосбиржи; бесплатные данные там обычно идут с задержкой около 15 минут.\n"
@@ -765,8 +716,8 @@ class App(tk.Tk):
             auto.append("робот работает")
         if self.s["auto_journal"]:
             auto.append("журнал в 17:20")
-        self.status.configure(text=(f"Движение дня: порог {self.s['threshold']:g}%, вход {self.s['entry']}" if self.s.get("day_on", True)
-                                    else "Движение дня выключено") + f" · формация EMA20: {'вкл' if self.s.get('spike_on', True) else 'выкл'} · {busy}"
+        self.status.configure(text=f"Движение дня: рост {float(self.s.get('mid_thr', 2.5)):g}% → покупка на середине EMA10/EMA20, "
+                                   f"покупки {self.s.get('mid_from', '10:00')}–{self.s.get('mid_to', '18:00')}, выход {self.s.get('mid_exit', '23:45')} · {busy}"
                                    + (f" · авто: {', '.join(auto)}" if auto else ""))
         self.after(1000, self._tick)
 
@@ -812,6 +763,22 @@ class App(tk.Tk):
             self.v_rtok.set("")
             self.rtok_lbl.configure(text="  сохранён — оставьте пустым, чтобы не менять")
         self.s.update(broker=broker, finam_account=self.v_facc.get().strip(), real_account=self.v_racc.get().strip())
+        try:
+            mthr = float(self.v_mthr.get().replace(",", ".")); mshare = float(self.v_mshare.get().replace(",", "."))
+            assert 0 < mthr < 50 and 0 < mshare <= 100
+        except (ValueError, AssertionError):
+            messagebox.showerror(APP_TITLE, "Порог и доля на сделку — числа, например 2.5 и 10.")
+            return
+        times = {}
+        for k, var in (("mid_from", self.v_mfrom), ("mid_to", self.v_mto), ("mid_exit", self.v_mexit)):
+            m = rc.hhmm(var.get(), -1)
+            if m < 0:
+                messagebox.showerror(APP_TITLE, f"Время «{var.get()}» — впишите как ЧЧ:ММ, например 10:00.")
+                return
+            times[k] = f"{m // 60:02d}:{m % 60:02d}"
+            var.set(times[k])
+        self.s.update(mid_thr=mthr, mid_share=mshare, mid_idx=self.v_midx.get(),
+                      mid_tf={v: k for k, v in self.MTF.items()}.get(self.v_mtf.get(), 60), **times)
         self.s.update(threshold=float(self.v_thr.get()), entry=self.v_entry.get(), capital=cap,
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
@@ -1297,7 +1264,8 @@ class App(tk.Tk):
                 res = p["side"] * (last / p["entry"] - 1) if last else None
                 tfl = {5: "5м", 15: "15м", 60: "1ч"}.get(int(p.get("tf") or 0), "")
                 strat = ("всплеск " + (tfl or "15м") + (" (б/у)" if p.get("took") else "")) if p.get("strat") == "spike" else \
-                    ("вручную" + (" " + tfl if tfl else "")) if p.get("strat") == "manual" else "15:00"
+                    ("вручную" + (" " + tfl if tfl else "")) if p.get("strat") == "manual" else \
+                    ("день EMA " + (tfl or "1ч")) if p.get("strat") == "mid" else "15:00"
                 strat += {"carry": " · перенести", "close": " · закрыть"}.get(p.get("carry_pick"), "")
                 self._pos_rows.append((self.pos_tree.insert("", "end", tags=(("pos" if res > 0 else "neg"),) if res is not None else (), values=(
                     p["ticker"], strat, "лонг" if p["side"] > 0 else "шорт", p["lots"], f"{p['entry']:.4g}", f"{p['stop']:.4g}",
@@ -1431,7 +1399,8 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets", "day_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal"]
+                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal",
+                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_idx", "mid_share"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1455,6 +1424,9 @@ class App(tk.Tk):
             v.set(k in (s.get("ema200_tfs") or ["form"]))
         self.v_idx_form.set(bool(s.get("idx_form", True))); self.v_idx_day.set(bool(s.get("idx_day", True)))
         self.v_wkend.set(bool(s.get("trade_weekends", False)))
+        self.v_mthr.set(f"{float(s.get('mid_thr', 2.5)):g}"); self.v_mshare.set(f"{float(s.get('mid_share', 10)):g}")
+        self.v_mtf.set(self.MTF.get(int(s.get("mid_tf", 60) or 60), "1 час")); self.v_midx.set(bool(s.get("mid_idx", False)))
+        self.v_mfrom.set(str(s.get("mid_from", "10:00"))); self.v_mto.set(str(s.get("mid_to", "18:00"))); self.v_mexit.set(str(s.get("mid_exit", "23:45")))
         self.v_idxref.set(self.IDXREF.get(s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))
         self.v_efrom.set(self.EFROM.get(str(s.get("entry_from") or ""), self.EFROM[""]))
         self.v_dref.set(self.DREF.get(s.get("day_ref", "main"), self.DREF["main"]))
