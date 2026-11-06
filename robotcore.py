@@ -19,7 +19,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
-            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True}
+            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -106,7 +106,9 @@ def mid_cfg(s):
             "from": hhmm(s.get("mid_from", "10:00"), 600), "to": hhmm(s.get("mid_to", "18:00"), 1080),
             "exit": hhmm(s.get("mid_exit", "23:45"), 1425), "tfs": sorted(set(tfs), reverse=True),
             "idx": bool(s.get("mid_idx", False)), "share": float(s.get("mid_share", 10) or 10) / 100,
-            "ref": 600 if str(s.get("mid_ref", "7")) == "10" else 420, "multi": bool(s.get("mid_multi", True))}
+            "ref": 600 if str(s.get("mid_ref", "7")) == "10" else 420, "multi": bool(s.get("mid_multi", True)),
+            "carry": s.get("mid_carry") if s.get("mid_carry") in ("all", "profit") else "none",
+            "carry_days": int(s.get("mid_carry_days", 0) or 0)}
 
 
 def chart_sp(s):
@@ -652,6 +654,7 @@ def bt_run(data, m, imoex=None):
                 for j in range(start, i):
                     didx[j] = len(days)
                 days.append((start, i)); start = i
+        busy = -1                                     # строка, до которой по бумаге открыта (перенесённая) позиция
         for di, (a, z) in enumerate(days):
             tm = [r[0].hour * 60 + r[0].minute for r in rows[a:z]]
             ii = [k for k, x in enumerate(tm) if x >= m["ref"]]
@@ -682,6 +685,9 @@ def bt_run(data, m, imoex=None):
                         continue
                     if arm[tf] and l <= md and hit is None:
                         hit = (tf, md)
+                if r <= busy:
+                    r += 1
+                    continue
                 if hit is None or (m["idx"] and imoex is not None and not ((imoex.get(t.replace(minute=t.minute - t.minute % 10)) or 0) > 0)):
                     for tf in m["tfs"]:
                         md = mids[tf][r]
@@ -709,8 +715,14 @@ def bt_run(data, m, imoex=None):
                         tk_t = rows[k][0]
                         kd = didx[k]
                         if kd > ex_day or (kd == ex_day and tk_t.hour * 60 + tk_t.minute >= ex):
-                            res, why, xr = rows[k - 1][4] / px - 1, "время", k - 1
-                            break
+                            last_c = rows[k - 1][4]
+                            held = ex_day - (di if tm[r - a] < ex else di + 1)       # сколько раз уже переносили
+                            if m.get("carry", "none") != "none" and (m["carry"] == "all" or last_c > px) \
+                                    and (not m.get("carry_days") or held < m["carry_days"]) and k < len(rows) - 1:
+                                ex_day += 1                                        # перенос на следующий день
+                            else:
+                                res, why, xr = last_c / px - 1, "время" if held == 0 else f"время (+{held} дн.)", k - 1
+                                break
                         if rows[k][3] <= stop:
                             res, why, xr = min(rows[k][1], stop) / px - 1, "стоп", k
                             break
@@ -721,10 +733,11 @@ def bt_run(data, m, imoex=None):
                     if res is None:
                         res, why, xr = rows[-1][4] / px - 1, "конец данных", len(rows) - 1
                 xp = px * (1 + res)
+                busy = xr
                 trades.append({"date": t.strftime("%Y-%m-%d"), "time": t.strftime("%H:%M"), "ticker": tk, "tf": tf,
                                "entry": round(px, 6), "stop": round(stop, 6), "take": round(take, 6), "exit": round(xp, 6),
                                "exit_time": rows[xr][0].strftime("%d.%m %H:%M"), "reason": why, "pct": round((res - BT_COST) * 100, 3)})
-                if not m["multi"] or why != "стоп" and why != "тейк" or xr >= z:
+                if not m["multi"] or why not in ("стоп", "тейк") or xr >= z:
                     break
                 r = xr + 1
     trades.sort(key=lambda x: (x["date"], x["time"]))
@@ -826,7 +839,10 @@ class Backtest:
                 "settings": (f"рост {m['thr'] * 100:g}% от {at.hm(m['ref'])}, EMA {', '.join(tfn[x] for x in m['tfs'])}, "
                              f"покупки {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}, "
                              f"{'несколько покупок' if m['multi'] else 'одна покупка'} в день"
-                             + (", только при IMOEX в плюсе" if m["idx"] else "") + f", {m['share'] * 100:g}% счёта на сделку; "
+                             + (", только при IMOEX в плюсе" if m["idx"] else "")
+                             + {"none": ", во время выхода всё закрыть", "all": ", перенос всех позиций", "profit": ", перенос позиций в плюсе"}[m["carry"]]
+                             + (f" (до {m['carry_days']} дн.)" if m["carry"] != "none" and m["carry_days"] else "")
+                             + f", {m['share'] * 100:g}% счёта на сделку; "
                              f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}"),
                 "done": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
             self.state.update(progress="готово", pct=100)

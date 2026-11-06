@@ -600,6 +600,9 @@ class App(tk.Tk):
         self.MREF = {"7": "от открытия рынка 07:00", "10": "от открытия основной сессии 10:00 (лучше на истории)"}
         self.v_mref = tk.StringVar(value=self.MREF.get(str(self.s.get("mid_ref", "7")), self.MREF["7"]))
         self.v_mmulti = tk.BooleanVar(value=bool(self.s.get("mid_multi", True)))
+        self.MCARRY = {"none": "закрыть все позиции", "all": "переносить все (до стопа или тейка)", "profit": "переносить только позиции в плюсе"}
+        self.v_mcarry = tk.StringVar(value=self.MCARRY.get(self.s.get("mid_carry", "none"), self.MCARRY["none"]))
+        self.v_mcdays = tk.StringVar(value=str(int(self.s.get("mid_carry_days", 0) or 0)))
         ent = lambda var, w: (lambda fr: ttk.Entry(fr, textvariable=var, width=w))
         b2 = box("Стратегия «Движение дня» — покупка на середине между EMA10 и EMA20")
         row(b2, "Бумага выросла от открытия на, %:", ent(self.v_mthr, 5), "EMA по графикам:",
@@ -609,13 +612,16 @@ class App(tk.Tk):
             ck("несколько покупок по бумаге за день (на истории хуже)", self.v_mmulti))
         row(b2, "Покупки с", ent(self.v_mfrom, 6), "до", ent(self.v_mto, 6), "   выход в", ent(self.v_mexit, 6),
             ("hint", "время вписывается вручную, ЧЧ:ММ"))
+        row(b2, "Во время выхода:", cb(self.v_mcarry, list(self.MCARRY.values()), 36), "не дольше, дней:", ent(self.v_mcdays, 4),
+            ("hint", "0 — без ограничения; стоп и тейк остаются; у каждой позиции можно выбрать вручную (правая кнопка)"))
         row(b2, "На сделку, % счёта:", ent(self.v_mshare, 5), cb(self.v_lev, list(LEV.values()), 32),
             ck("торговать в выходные и праздники", self.v_wkend))
         tk.Label(b2, text="Только покупки. Бумага выросла на порог → ждём, пока цена опустится до середины между EMA10 и EMA20 → сразу покупка; "
                           "стоп — чуть ниже лоя дня, тейк — хай дня, иначе выход по времени. Если отмечено несколько графиков — покупка на том, где цена первой дошла до середины.\n"
                           "С галочкой «несколько покупок» — после закрытия позиции снова, когда цена отойдёт выше середины и вернётся к ней.\n"
                           "На истории (10.2025–10.2026, после затрат, акции индекса, 2,5%, EMA 1ч, выход 23:45): рост от 10:00 и одна покупка — +0,39% на сделку, "
-                          "просадка −1,5%; рост от 07:00 — +0,09%; от 07:00 и несколько покупок — +0,02%; EMA по дневке — −0,06%; выход 18:45 — вдвое хуже. "
+                          "просадка −1,5%; рост от 07:00 — +0,09%; от 07:00 и несколько покупок — +0,02%; EMA по дневке — −0,06%; выход 18:45 — вдвое хуже; "
+                          "перенос всех позиций до стопа или тейка — +0,72% на сделку, просадка −3,1%. "
                           "Свои настройки можно прогнать во вкладке «Проверка на истории».",
                  justify="left", anchor="w", font=("Segoe UI", 9), fg=GREY, bg=bg, wraplength=980).pack(anchor="w", pady=(4, 0))
         self.share_lbl = ttk.Label(b2, text="", foreground=GREY)
@@ -800,7 +806,9 @@ class App(tk.Tk):
             var.set(times[k])
         self.s.update(mid_thr=mthr, mid_share=mshare, mid_idx=self.v_midx.get(),
                       mid_tfs=[k for k, v in self.v_mtfs.items() if v.get()] or [60],
-                      mid_ref={v: k for k, v in self.MREF.items()}.get(self.v_mref.get(), "7"), mid_multi=self.v_mmulti.get(), **times)
+                      mid_ref={v: k for k, v in self.MREF.items()}.get(self.v_mref.get(), "7"), mid_multi=self.v_mmulti.get(),
+                      mid_carry={v: k for k, v in self.MCARRY.items()}.get(self.v_mcarry.get(), "none"),
+                      mid_carry_days=int(self.v_mcdays.get()) if self.v_mcdays.get().strip().isdigit() else 0, **times)
         self.s.update(threshold=float(self.v_thr.get()), entry=self.v_entry.get(), capital=cap,
                       token=self.v_tok.get().strip(), sandbox_token=self.v_sbtok.get(), remember_token=self.v_rem.get(),
                       auto_signals=self.v_as.get(), auto_journal=self.v_aj.get(),
@@ -1406,7 +1414,9 @@ class App(tk.Tk):
         self.robot_help.configure(text=(
             f"Стратегия «Движение дня» (только покупки): бумага выросла от {at.hm(m['ref'])} на {m['thr'] * 100:g}% → робот следит → цена опустилась до середины "
             f"между EMA10 и EMA20 ({tfs}) → покупка {m['share'] * 100:g}% счёта; стоп чуть ниже лоя дня, тейк на хае дня. "
-            f"Покупки {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}" + (", только когда IMOEX в плюсе" if m["idx"] else "")
+            f"Покупки {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}"
+            + {"none": "", "all": " (позиции переносятся до стопа или тейка)", "profit": " (позиции в плюсе переносятся)"}[m["carry"]]
+            + (", только когда IMOEX в плюсе" if m["idx"] else "")
             + ". «Старт торговли» — робот покупает и продаёт сам; «Стоп торговли» — только наблюдение. Всё меняется во вкладке «Настройки»."))
 
     def show_robot(self, snap):
@@ -1599,7 +1609,7 @@ class App(tk.Tk):
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
                    "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal",
-                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi"]
+                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi", "mid_carry", "mid_carry_days"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1627,6 +1637,7 @@ class App(tk.Tk):
         for k, v in self.v_mtfs.items():
             v.set(k in [int(x) for x in (s.get("mid_tfs") or [s.get("mid_tf", 60) or 60])])
         self.v_mref.set(self.MREF.get(str(s.get("mid_ref", "7")), self.MREF["7"])); self.v_mmulti.set(bool(s.get("mid_multi", True)))
+        self.v_mcarry.set(self.MCARRY.get(s.get("mid_carry", "none"), self.MCARRY["none"])); self.v_mcdays.set(str(int(s.get("mid_carry_days", 0) or 0)))
         self.v_midx.set(bool(s.get("mid_idx", False)))
         self.v_mfrom.set(str(s.get("mid_from", "10:00"))); self.v_mto.set(str(s.get("mid_to", "18:00"))); self.v_mexit.set(str(s.get("mid_exit", "23:45")))
         self.v_idxref.set(self.IDXREF.get(s.get("idx_ref", "imoex"), self.IDXREF["imoex"]))

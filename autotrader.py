@@ -742,6 +742,18 @@ class AutoTrader:
         return self.st["positions"]
 
     def _carry_ok(self, p):
+        if p.get("strat") == "mid":                  # «Движение дня»: перенос по настройке (до стопа за лоем дня или тейка на хае)
+            m = self._mid()
+            if m["carry"] == "none" or (m["carry_days"] and p.get("carried", 0) >= m["carry_days"]):
+                return False
+            if m["carry"] == "all":
+                return True
+            lp = self.prices.get(p["ticker"])
+            try:
+                lp = self.b.last_prices([p["ticker"]]).get(p["ticker"]) or lp
+            except Exception:
+                pass
+            return lp is not None and p["side"] * (lp / p["entry"] - 1) > 0
         if p.get("strat") == "15":                  # «движение дня»: перенос на заданное число дней (стоп 3% действует всё время)
             return bool(p.get("carry")) and p.get("carried", 0) < p.get("carry_max", 0)
         if p.get("strat") != "spike" or not p.get("carry"):
@@ -968,7 +980,7 @@ class AutoTrader:
             self._set_status(f"ТОРГОВЛЯ: {mk}покупки на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
 
     # ------------------------------------------------------------------ «Движение дня»: покупка на середине EMA10/EMA20
-    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True}
+    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0}
 
     def _mid(self):
         return dict(self.MID_DEFAULT, **(self.sp.get("mid") or {}))

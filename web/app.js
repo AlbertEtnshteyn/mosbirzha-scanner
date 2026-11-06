@@ -747,9 +747,12 @@ function renderSettings(s) {
     ${inp("mid_exit", "Выход в (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="23:45"')}
     ${sel("mid_ref", "Рост считать", [["7", "от открытия рынка 07:00"], ["10", "от открытия основной сессии 10:00 (лучше на истории)"]])}
     ${chk("mid_multi", "Несколько покупок по бумаге за день", "После закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней. На истории хуже одной покупки.")}
+    ${sel("mid_carry", "Во время выхода", [["none", "закрыть все позиции"], ["all", "переносить все (до стопа или тейка)"], ["profit", "переносить только позиции в плюсе"]])}
+    ${inp("mid_carry_days", "Переносить не дольше, дней (0 — без ограничения)", "number", 'step="1" inputmode="numeric"')}
+    <div class="hint" style="margin-left:0">Стоп и тейк перенесённой позиции остаются. У каждой позиции выбор можно поменять вручную (кнопки у позиции).</div>
     ${inp("mid_share", "На сделку, % счёта", "number", 'step="1" inputmode="decimal"')}
     ${sel("leverage", "Маржа", Object.entries(LEV))}
-    <div class="hint" style="margin-left:0">На истории (10.2025–10.2026, после затрат, акции индекса, 2,5%, EMA 1ч, выход 23:45): рост от 10:00 и одна покупка — +0,39% на сделку, просадка −1,5%; от 07:00 — +0,09%; от 07:00 и несколько покупок — +0,02%; EMA по дневке — −0,06%; выход 18:45 — вдвое хуже. Свои настройки — во вкладке «История».</div>
+    <div class="hint" style="margin-left:0">На истории (10.2025–10.2026, после затрат, акции индекса, 2,5%, EMA 1ч, выход 23:45): рост от 10:00 и одна покупка — +0,39% на сделку, просадка −1,5%; от 07:00 — +0,09%; от 07:00 и несколько покупок — +0,02%; EMA по дневке — −0,06%; выход 18:45 — вдвое хуже; перенос всех позиций до стопа или тейка — +0,72% на сделку, просадка −3,1%. Свои настройки — во вкладке «История».</div>
   </div>
   <div class="grp"><h3>Календарь</h3>
     ${chk("trade_weekends", "Торговать в выходные и праздничные дни (сессии выходного дня Мосбиржи)", "Робот смотрит календарь Мосбиржи: в праздники и выходные без торгов он не работает. Если галочка снята — в сессии выходного дня тоже не торгует (оборот там маленький, на истории не проверено).")}
@@ -793,7 +796,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     leverage: v("leverage"), trade_weekends: c("trade_weekends"),
     mid_thr: parseFloat(String(v("mid_thr")).replace(",", ".")) || 2.5, mid_tfs: [5, 15, 60, 1440].filter((k) => c("mtf_" + k)), mid_idx: c("mid_idx"),
     mid_from: (v("mid_from") || "10:00").trim(), mid_to: (v("mid_to") || "18:00").trim(), mid_exit: (v("mid_exit") || "23:45").trim(),
-    mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10, mid_ref: v("mid_ref") || "7", mid_multi: c("mid_multi"),
+    mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10, mid_ref: v("mid_ref") || "7", mid_multi: c("mid_multi"), mid_carry: v("mid_carry") || "none", mid_carry_days: parseInt(v("mid_carry_days")) || 0,
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };
   if (!out.mid_tfs.length) out.mid_tfs = [60];
