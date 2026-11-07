@@ -595,6 +595,14 @@ class App(tk.Tk):
         ttk.Combobox(f, textvariable=self.v_broker, width=42, state="readonly", values=list(self.BROKERS.values())).pack(side="left")
         ttk.Label(f, foreground="#a33", text="  реальный счёт Т-Инвестиций и Финам — сделки на реальные деньги").pack(side="left")
         r += 1
+        self.FEE_TARIFFS = {"auto": "определять у брокера автоматически", "investor": "Инвестор — 0,3% за сделку",
+                            "trader": "Трейдер — 0,05% за сделку (+390 ₽/мес)", "premium": "Премиум — 0,04% за сделку"}
+        self.v_feet = tk.StringVar(value=self.FEE_TARIFFS.get(self.s.get("fee_tariff", "auto"), self.FEE_TARIFFS["auto"]))
+        ttk.Label(g, text="Тариф брокера (комиссия):").grid(row=r, column=0, sticky="w", pady=4)
+        f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
+        ttk.Combobox(f, textvariable=self.v_feet, width=42, state="readonly", values=list(self.FEE_TARIFFS.values())).pack(side="left")
+        ttk.Label(f, foreground=TH["muted"], text="  авто — по комиссиям последних сделок счёта и ответу брокера; если ошибается — выберите свой").pack(side="left")
+        r += 1
         ttk.Label(g, text="Токен реального счёта Т-Инв.:").grid(row=r, column=0, sticky="w", pady=4)
         f = ttk.Frame(g); f.grid(row=r, column=1, sticky="w")
         ttk.Entry(f, textvariable=self.v_rtok, width=40, show="•").pack(side="left")
@@ -896,7 +904,8 @@ class App(tk.Tk):
         if new_theme != self.s.get("theme", "classic"):
             self.after(300, lambda: messagebox.showinfo(APP_TITLE, "Тема сохранена — она применится, когда вы закроете и снова откроете программу."))
         self.s["theme"] = new_theme
-        self.s.update(broker=broker, finam_account=self.v_facc.get().strip(), real_account=self.v_racc.get().strip())
+        self.s.update(broker=broker, finam_account=self.v_facc.get().strip(), real_account=self.v_racc.get().strip(),
+                      fee_tariff={v: k for k, v in self.FEE_TARIFFS.items()}.get(self.v_feet.get(), "auto"))
         try:
             mthr = float(self.v_mthr.get().replace(",", ".")); mshare = float(self.v_mshare.get().replace(",", "."))
             assert 0 < mthr < 50 and 0 < mshare <= 100
@@ -1771,7 +1780,7 @@ class App(tk.Tk):
     SERVER_KEYS = ["threshold", "entry", "capital", "sandbox_token", "rescan", "day_on", "spike_on", "spike_tfs", "spike_markets", "day_markets",
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
-                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "finam_account", "real_account", "auto_journal",
+                   "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "fee_tariff", "finam_account", "real_account", "auto_journal",
                    "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi", "mid_carry", "mid_carry_days", "mid_dir", "mid_modes", "mid_liq", "mid_min_turn", "mid_liq_on", "mid_minv_on", "mid_vol_on", "mid_vol", "mid_prev_stop", "mid_take_mode", "mid_take_part", "mid_trail"]
 
     def _settings_from_server(self, srv):
@@ -1784,6 +1793,7 @@ class App(tk.Tk):
         self.v_thr.set(f"{float(s['threshold']):g}"); self.v_entry.set(s["entry"]); self.v_cap.set(str(int(float(s["capital"]))))
         self.v_sbtok.set(bool(s["sandbox_token"])); self.v_aj.set(bool(s.get("auto_journal", True)))
         self.v_broker.set(self.BROKERS.get(s.get("broker", "tinvest"), self.BROKERS["tinvest"])); self.v_facc.set(s.get("finam_account", "")); self.v_racc.set(s.get("real_account", ""))
+        self.v_feet.set(self.FEE_TARIFFS.get(s.get("fee_tariff", "auto"), self.FEE_TARIFFS["auto"]))
         if srv.get("real_set"):
             self.rtok_lbl.configure(text="  сохранён на сервере — оставьте пустым, чтобы не менять")
         if srv.get("finam_set"):

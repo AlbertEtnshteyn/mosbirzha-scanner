@@ -485,12 +485,35 @@ class SandboxBroker:
     # --- комиссия брокера
     fee_rate, fee_name, _last_fee = sc.SANDBOX_FEE[0], "песочница Т-Инвестиций", None
 
+    fee_pref = "auto"
+
     def detect_fee(self):
-        """Узнать у брокера тариф счёта; если по прошлым сделкам этого брокера уже известна фактическая ставка — взять её."""
+        """Тариф: заданный вручную в настройках; иначе — фактическая ставка по последним сделкам счёта (реальный счёт);
+        иначе — тариф, который сообщил брокер. Ставка по сделкам этого счёта, если уже известна, — важнее."""
+        pref = getattr(self, "fee_pref", "auto") or "auto"
+        if pref in sc.TARIFF_MANUAL:
+            r, nm = sc.TARIFF_FEES[pref]
+            self.fee_rate, self.fee_name, self.fee_manual = r, f"тариф «{nm}» (задан в настройках)", True
+            sc.save_fee_info(key=f"{type(self).__name__}:{pref}", rate=r, name=self.fee_name, observed=0, src="настройки")
+            self.log(f"Комиссия брокера: {r * 100:.3g}% за каждую сделку — {self.fee_name}. Учитывается в результатах и в проверке на истории.")
+            return
+        self.fee_manual = False
         try:
             r, name, code = self.ti.tariff()
         except Exception as e:
             r, name, code = sc.FEE_FALLBACK[0], f"тариф не получен ({e}) — {sc.FEE_FALLBACK[1]}", ""
+        if self.ti.mode != "sandbox" and self.acc:
+            try:
+                fr, n = self.ti.fee_from_ops(self.acc)
+                if fr:
+                    near = min(sc.TARIFF_FEES.items(), key=lambda kv: abs(kv[1][0] - fr))
+                    if abs(near[1][0] - fr) / fr < 0.25:
+                        code, r = near[0], near[1][0]
+                        name = f"тариф «{near[1][1]}» — по фактическим комиссиям последних сделок счёта ({fr * 100:.3g}%)"
+                    else:
+                        r, name = fr, f"по фактическим комиссиям последних сделок счёта ({fr * 100:.3g}%)"
+            except Exception:
+                pass
         d = sc.fee_info()
         key = f"{type(self).__name__}:{code}"
         if d.get("key") == key and d.get("observed"):
@@ -510,7 +533,7 @@ class SandboxBroker:
             kind, per_lot = "share", 1.0
         val = abs(px * lots * per_lot) if px else 0.0
         if fee is not None and fee > 0:
-            if kind == "share" and val > 0 and 0 < fee / val < 0.01:      # фактическая ставка по сделке — запомнить
+            if kind == "share" and val > 0 and 0 < fee / val < 0.01 and not getattr(self, "fee_manual", False):  # фактическая ставка — запомнить
                 r = fee / val
                 d = sc.fee_info()
                 n = int(d.get("observed") or 0)
@@ -612,6 +635,8 @@ class FinamBroker(SandboxBroker):
         self.detect_fee()
 
     def detect_fee(self):
+        if getattr(self, "fee_pref", "auto") in sc.TARIFF_MANUAL:
+            return SandboxBroker.detect_fee(self)
         d = sc.fee_info()
         if d.get("key") == "FinamBroker" and d.get("rate"):
             self.fee_rate, self.fee_name = float(d["rate"]), d.get("name")
@@ -690,10 +715,13 @@ BROKER_NAMES = {"tinvest": "Т-Инвестиции — песочница (де
 def make_broker(s, log=print):
     """Брокер по настройкам: песочница Т-Инвестиций (по умолчанию), реальный счёт Т-Инвестиций или Финам."""
     if s.get("broker") == "tinvest_real":
-        return TInvestRealBroker(s.get("real_token"), float(s["capital"]), s.get("real_account", ""), log=log)
-    if s.get("broker") == "finam":
-        return FinamBroker(s.get("token"), float(s["capital"]), s.get("finam_secret"), s.get("finam_account", ""), log=log)
-    return SandboxBroker(s.get("token"), float(s["capital"]), log=log)
+        b = TInvestRealBroker(s.get("real_token"), float(s["capital"]), s.get("real_account", ""), log=log)
+    elif s.get("broker") == "finam":
+        b = FinamBroker(s.get("token"), float(s["capital"]), s.get("finam_secret"), s.get("finam_account", ""), log=log)
+    else:
+        b = SandboxBroker(s.get("token"), float(s["capital"]), log=log)
+    b.fee_pref = s.get("fee_tariff", "auto") or "auto"
+    return b
 
 
 def net_pct(p, last):

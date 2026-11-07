@@ -17,7 +17,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "tg_trend": True, "trend_on": True, "trend_trade": False, "tier_profile": True, "entry_window": "9-19", "exit_late": True, "carry_all": True, "day_carry": 0, "day_mode": "fixed",
             "day_tp": 8, "day_tp_half": 50, "day_trail": 2, "day_act": 0,
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
-            "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
+            "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "fee_tariff": "auto", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
             "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"], "mid_liq": 1.0, "mid_min_turn": 20, "mid_liq_on": True, "mid_minv_on": False, "mid_vol_on": False, "mid_vol": 5,
             "mid_prev_stop": True, "mid_take_mode": "all", "mid_take_part": 50, "mid_trail": 1.0}

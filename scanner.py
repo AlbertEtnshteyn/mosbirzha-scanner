@@ -871,10 +871,38 @@ class TInvest:
             return SANDBOX_FEE[0], "песочница Т-Инвестиций", "sandbox"
         js = self.call("UsersService", "GetInfo", {})
         code = str(js.get("tariff") or "").lower()
-        if code in TARIFF_FEES:
-            r, name = TARIFF_FEES[code]
-            return r, f"тариф «{name}»", code
+        for k in TARIFF_FEES:                                # «trader», «new_trader», «trader_2024»… — по слову в коде
+            if k in code:
+                r, name = TARIFF_FEES[k]
+                return r, f"тариф «{name}» (брокер сообщил: {code})", k
         return FEE_FALLBACK[0], f"тариф «{code or '?'}» — {FEE_FALLBACK[1]}", code
+
+    def fee_from_ops(self, acc, days=180, last=5):
+        """Фактическая ставка комиссии по последним сделкам с акциями на счёте: комиссия брокера / сумма сделки.
+        Возвращает (ставка, число сделок) или (None, 0). Последние сделки — чтобы смена тарифа учитывалась сразу."""
+        fmt = lambda d: d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(timezone.utc)
+        js = self.call("OperationsService", "GetOperations", {"accountId": acc, "from": fmt(now - timedelta(days=days)),
+                                                              "to": fmt(now), "state": "OPERATION_STATE_EXECUTED"})
+        ops = js.get("operations", [])
+        trades = {o.get("id"): o for o in ops if o.get("operationType") in ("OPERATION_TYPE_BUY", "OPERATION_TYPE_SELL")
+                  and o.get("instrumentType", "share") == "share"}
+        rates = []
+        for o in ops:
+            if o.get("operationType") != "OPERATION_TYPE_BROKER_FEE":
+                continue
+            t = trades.get(o.get("parentOperationId"))
+            if not t:
+                continue
+            amt, fee = abs(self.q(t.get("payment"))), abs(self.q(o.get("payment")))
+            if amt > 0 and 0 < fee / amt < 0.01:
+                rates.append((t.get("date", ""), fee / amt))
+        if not rates:
+            return None, 0
+        rates.sort()
+        day = rates[-1][0][:10]                              # день последней сделки: тариф мог смениться — важна свежая ставка
+        r = sorted(x for d, x in rates if d[:10] == day)[-last:]
+        return r[len(r) // 2], len(rates)
 
     def margin_fees(self, since, acc=None):
         """Сколько брокер фактически списал за перенос непокрытых позиций с момента since, ₽."""
@@ -1186,6 +1214,7 @@ class Finam:
 # считается и проверка на истории.
 FEE_FILE = os.path.join(HERE, "fee_info.json")
 SLIPPAGE = 0.0006                 # проскальзывание рыночной заявки туда-обратно (для проверки на истории и журнала)
+TARIFF_MANUAL = {"investor", "trader", "premium"}     # тариф, заданный вручную в настройках («auto» — узнать у брокера)
 TARIFF_FEES = {                   # комиссия за сделку с акциями (каждая покупка и каждая продажа), доля от суммы
     "investor": (0.003, "Инвестор"), "trader": (0.0005, "Трейдер"), "premium": (0.0004, "Премиум"),
 }

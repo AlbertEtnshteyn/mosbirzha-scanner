@@ -745,6 +745,8 @@ function renderSettings(s) {
   <div class="grp"><h3>Брокер для торговли</h3>
     ${sel("broker", "Через кого робот торгует", s.brokers || [["tinvest", "Т-Инвестиции — песочница (демо-счёт)"], ["tinvest_real", "Т-Инвестиции — реальный счёт"], ["finam", "Финам — Trade API"]])}
     <div class="hint" style="margin-left:0"><b>Реальный счёт Т-Инвестиций и Финам — сделки на реальные деньги.</b></div>
+    ${sel("fee_tariff", "Тариф брокера (комиссия)", [["auto", "определять у брокера автоматически"], ["investor", "Инвестор — 0,3% за сделку"], ["trader", "Трейдер — 0,05% за сделку (+390 ₽/мес)"], ["premium", "Премиум — 0,04% за сделку"]])}
+    <div class="hint" style="margin-left:0">Авто — по комиссиям последних сделок счёта и ответу брокера. Если определилось неверно — выберите свой тариф.</div>
     <h3>Т-Инвестиции — реальный счёт</h3>
     <label class="f"><span>Токен с полным доступом ${s.real_set ? `(сохранён: ${esc(s.real_hint)}; оставьте пустым, чтобы не менять)` : "(не введён)"}</span>
       <input type="password" name="real_token" placeholder="${s.real_set ? "••••••••" : "Т-Инвестиции → Настройки → Токены → полный доступ"}" autocomplete="off"></label>
@@ -827,7 +829,7 @@ $("#setForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target, v = (n) => f[n] ? f[n].value : undefined, c = (n) => !!(f[n] && f[n].checked);
   const out = {
-    sandbox_token: c("sandbox_token"), broker: v("broker") || "tinvest", finam_account: (v("finam_account") || "").trim(),
+    sandbox_token: c("sandbox_token"), broker: v("broker") || "tinvest", fee_tariff: v("fee_tariff") || "auto", finam_account: (v("finam_account") || "").trim(),
     real_account: (v("real_account") || "").trim(), real_token: (v("real_token") || "").trim(),
     finam_secret: (v("finam_secret") || "").trim(), capital: parseFloat(String(v("capital")).replace(/\s/g, "")) || 1000000,
     day_markets: (SET.markets_all || []).map(([k]) => k).filter((k) => c("dmk_" + k)),

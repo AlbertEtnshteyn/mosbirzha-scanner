@@ -202,10 +202,23 @@ class Robot:
                     a = next((x for x in accs if x["id"] == want), None) or \
                         next((x for x in accs if x.get("type") == "ACCOUNT_TYPE_TINKOFF"), accs[0])
                     v = ti.real_live_value(a["id"])
-                    try:
-                        tariff = ti.tariff()[1]
-                    except Exception:
-                        tariff = ""
+                    tariff = ""
+                    pref = self.s.get("fee_tariff", "auto")
+                    if pref in sc.TARIFF_MANUAL:
+                        tariff = f"тариф «{sc.TARIFF_FEES[pref][1]}» (задан в настройках)"
+                    else:
+                        try:
+                            fr, n = ti.fee_from_ops(a["id"])
+                            if fr:
+                                near = min(sc.TARIFF_FEES.values(), key=lambda v: abs(v[0] - fr))
+                                tariff = f"комиссия по последним сделкам {fr * 100:.3g}%" + (f" — тариф «{near[1]}»" if abs(near[0] - fr) / fr < 0.25 else "")
+                        except Exception:
+                            pass
+                        if not tariff:
+                            try:
+                                tariff = ti.tariff()[1]
+                            except Exception:
+                                pass
                     full = a.get("accessLevel") in (None, "ACCOUNT_ACCESS_LEVEL_FULL_ACCESS")
                     info = {"ok": True, "acc": a["id"], "name": a.get("name", ""), "value": round(v, 2), "tariff": tariff,
                             "full": full, "accounts": len(accs)}
