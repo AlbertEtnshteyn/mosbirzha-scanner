@@ -771,6 +771,7 @@ class AutoTrader:
         self._px_ev = threading.Event()
         self._mid_watch = set()                   # бумаги, где ждём касания середины EMA — их цены тоже идут из потока
         self._mid_fast_t = {}
+        self._b5_key = {}
         self.mid_lock = threading.RLock()
         self.perf = {}                            # скорость: длительность шагов, сек
         self._close_wake = None
@@ -851,7 +852,7 @@ class AutoTrader:
             self._store_found()
             tmp = self.state_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self.st, f, ensure_ascii=False, indent=1)
+                json.dump(self.st, f, ensure_ascii=False, separators=(",", ":"))   # без отступов — в 10 раз быстрее
             os.replace(tmp, self.state_path)
 
     # ------------------------------------------------------------------ стопы и тейки по живому потоку цен
@@ -1100,6 +1101,7 @@ class AutoTrader:
         self.pre_opens = {}
         self.spikes, self.seen_spikes, self.hist, self.hist_loaded, self.waits = [], set(), {}, {}, {}
         self._mid_watch, self._mid_cache, self.mid_view, self._mid_fast_t = set(), {}, {}, {}   # уровни и подписки — заново
+        self._b5_key = {}
         self._save()
 
     def _step(self, now):
@@ -1189,6 +1191,10 @@ class AutoTrader:
             return c[1]
         self._mid_cache = getattr(self, "_mid_cache", {})
         b5 = self._bars5(tk, now)
+        last5 = b5[-1]["t"] if b5 else None
+        if c and len(c) > 2 and c[2] == last5 and c[0].date() == now.date():
+            self._mid_cache[(tk, tf)] = (now, c[1], last5)
+            return c[1]                                # новых закрытых свечей нет — уровни те же, пересчёт не нужен
         naive = now.replace(tzinfo=None)
         if tf >= 1440:                                 # дневка: EMA по закрытым дням (сегодняшний не считается)
             dk = getattr(self, "_mid_daily", {})
@@ -1201,12 +1207,12 @@ class AutoTrader:
             bars = [b for b in aggregate([dict(b) for b in b5], tf) if b["t"] + timedelta(minutes=tf) <= naive]
         day = [b for b in b5 if b["t"].date() == naive.date() and b["t"].hour >= 7]
         if len(bars) < 21 or not day:
-            self._mid_cache[(tk, tf)] = (now, None)
+            self._mid_cache[(tk, tf)] = (now, None, last5)
             return None
         closes = [b["c"] for b in bars]
         mid = (ema(closes, 10)[-1] + ema(closes, 20)[-1]) / 2
         lv = (mid, min(b["l"] for b in day), max(b["h"] for b in day))
-        self._mid_cache[(tk, tf)] = (now, lv)
+        self._mid_cache[(tk, tf)] = (now, lv, last5)
         return lv
 
     def _liq(self, tk, now):
@@ -1523,13 +1529,19 @@ class AutoTrader:
         if self.hist_loaded.get(tk) != now.date():
             self.hist[tk] = self._load_hist(tk, now)
             self.hist_loaded[tk] = now.date()
-        else:
+            self.__dict__.setdefault("_b5_out", {}).pop(tk, None)
+        elif self._b5_key.get(tk) != (now - timedelta(seconds=15)).replace(second=0, microsecond=0, minute=(now - timedelta(seconds=15)).minute // 5 * 5):
+            # свечи 5 мин нужны только закрытые: запрос — один раз на каждую новую свечу (через 15 с после её закрытия),
+            # а не на каждом шаге и каждом ТФ (раньше было до 3 запросов на бумагу каждые 15 с — упирались в лимиты брокера)
+            k5 = now - timedelta(seconds=15)
+            self._b5_key[tk] = k5.replace(second=0, microsecond=0, minute=k5.minute // 5 * 5)
             frm = now - timedelta(minutes=20)
             if self.hist[tk]:                          # бумагу давно не обновляли (например, пока была позиция) — добрать пропуск
                 last = self.hist[tk][-1]["t"].replace(tzinfo=sc.MSK)
                 day0 = datetime(now.year, now.month, now.day, 6, 50, tzinfo=sc.MSK)
                 frm = max(day0, min(frm, last))
             fresh = self.b.candles(tk, now.date(), frm, now, 5)
+            self.__dict__.setdefault("_b5_out", {}).pop(tk, None)
             known = {r["t"]: i for i, r in enumerate(self.hist[tk])}
             for r in fresh:
                 if r["t"] in known:
@@ -1537,9 +1549,17 @@ class AutoTrader:
                 else:
                     self.hist[tk].append(r)
             self.hist[tk] = self.hist[tk][-1500:]
+        h = self.hist[tk]
+        key = (id(h), len(h), h[0]["t"] if h else None, h[-1]["t"] if h else None, h[-1]["c"] if h else None,
+               bool(h) and h[-1]["t"] + timedelta(minutes=5) <= naive)
+        oc = self.__dict__.setdefault("_b5_out", {}).get(tk)
+        if oc and oc[0] == key:
+            return oc[1]                               # те же свечи — готовый список (не собирать заново каждый раз)
         kind, per_lot, _ = self._terms(tk)
-        return [dict(r, val=r["v"] * per_lot * (r["h"] + r["l"] + r["c"]) / 3)
-                for r in self.hist[tk] if r["t"] + timedelta(minutes=5) <= naive]      # только закрытые свечи
+        out = [dict(r, val=r["v"] * per_lot * (r["h"] + r["l"] + r["c"]) / 3)
+               for r in h if r["t"] + timedelta(minutes=5) <= naive]      # только закрытые свечи
+        self._b5_out[tk] = (key, out)
+        return out
 
     def _carry_fees(self, keep, prev_date, now):
         """Плата брокера за перенос: шорт и лонг на заёмные деньги — за каждый календарный день по таблице тарифа
@@ -2254,7 +2274,11 @@ class AutoTrader:
                     except Exception:
                         pass
                     if p.get("_close_lots"):             # частичный тейк — через обычную проверку (там же безубыток и трейлинг)
+                        n0, t0 = p["lots"], p.get("_close_tries")
                         self._check_stops(lp={p["ticker"]: px})
+                        if p in self.positions and p["lots"] == n0 and p.get("_close_tries") == t0:
+                            for k in ("_close_tries", "_close_why", "_close_lots", "_close_fail"):
+                                p.pop(k, None)           # цена ушла от тейка — повторять нечего, дальше обычные проверки
                     else:
                         self._close(p, px, p.get("_close_why") or "повтор закрытия")
                 except Exception:

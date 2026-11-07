@@ -658,8 +658,8 @@ async function loadResults() {
       <td class="${cls(p.pnl_rub)}">${rub(p.pnl_rub, true)}</td></tr>` +
       [["всплеск", "Всплеск + EMA20"], ["15:00", "Движение дня"], ["вручную", "Вручную"]].map(([k, n]) => { const x = (p.by_strat || {})[k] || { n: 0 };
         return `<tr class="sub"><td>↳ ${n}</td><td></td><td class="${cls(x.avg_pct)}">${x.n ? pct(x.avg_pct) + " ср." : ""}</td><td>${x.n}${x.n ? " · " + Math.round(x.wins / x.n * 100) + "%" : ""}</td><td class="${cls(x.pnl_rub)}">${rub(x.pnl_rub, true)}</td></tr>`; }).join("")
-      + (p.fees_rub ? `<tr class="sub"><td colspan="5" class="muted">↳ из них комиссия брокера: ${rub(p.fees_rub)}</td></tr>` : "")).join("")
-    + `<tr><td colspan="5" class="muted small">Все результаты — после комиссии брокера: ${esc(RES.fee || "")}.</td></tr>`;
+      + (p.fees_rub ? `<tr class="sub"><td colspan="5" class="muted">↳ из них комиссия брокера: ${rub(p.fees_rub)}</td></tr>` : "")).join("");
+  $("#resFee").textContent = RES.fee ? "Все результаты — после комиссии брокера: " + RES.fee.replace(/^комиссия /, "") + "." : "";
   const el = $("#resChart");
   if (!RCH) {
     RCH = LightweightCharts.createChart(el, { width: el.clientWidth, height: 220, layout: { background: { color: CSSV("--ch-bg") }, textColor: CSSV("--ch-fg"), fontSize: 11 },

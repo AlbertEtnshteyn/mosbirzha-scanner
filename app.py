@@ -1372,12 +1372,15 @@ class App(tk.Tk):
         self.bt_pb.pack(side="left", padx=(12, 6))
         self.bt_st = ttk.Label(bar, text="", foreground=TH["muted"])
         self.bt_st.pack(side="left")
-        ttk.Label(t, text="Прогоняет «Движение дня» с сохранёнными настройками (вкладка «Настройки») по 5-минутным свечам за выбранный период: "
-                          "те же правила, что у робота, затраты 0,16% на сделку. Первый раз скачивает историю (несколько минут), потом берёт из кэша. "
+        _intro = ttk.Label(t, text="Прогоняет «Движение дня» с сохранёнными настройками (вкладка «Настройки») по 5-минутным свечам за выбранный период: "
+                          "те же правила, что у робота; комиссия брокера — по тарифу вашего счёта (покупка и продажа), проскальзывание 0,06%, плата за перенос шортов. Первый раз скачивает историю (несколько минут), потом берёт из кэша. "
                           "Чтобы сравнить варианты — поменяйте настройки, сохраните и прогоните снова.",
-                  foreground=TH["muted"], wraplength=1500, justify="left").pack(anchor="w", pady=(6, 4))
+                  foreground=TH["muted"], wraplength=1500, justify="left")
+        _intro.pack(anchor="w", fill="x", pady=(6, 4))
         self.bt_set = ttk.Label(t, text="", foreground=TH["fg"], wraplength=1500, justify="left")
-        self.bt_set.pack(anchor="w")
+        self.bt_set.pack(anchor="w", fill="x")
+        for _l in (_intro, self.bt_set):                 # перенос строк по ширине окна, а не обрезка справа
+            _l.bind("<Configure>", lambda e, l=_l: l.configure(wraplength=max(300, e.width - 8)))
         self.bt_sum = tk.Label(t, text="Результатов пока нет — нажмите «Прогнать на истории».", font=("Segoe UI", 12, "bold"), justify="left", anchor="w",
                                bg=ttk.Style().lookup("TFrame", "background") or None)
         self.bt_sum.pack(anchor="w", pady=(6, 6))
@@ -2013,7 +2016,7 @@ class App(tk.Tk):
         fmt = lambda v, sign=False: "—" if v is None else ((("+" if sign and v > 0 else "") + f"{v:,.0f}").replace(",", " "))
         bal = data.get("balance")
         self.res_bal.configure(text=(f"Баланс: {fmt(bal)} ₽ (на {data.get('time', '')} МСК)" if bal else "Баланс: появится после запуска робота")
-                               + (f"   ·   результаты после комиссии: {data['fee']}" if data.get("fee") else ""))
+                               + (f"   ·   все результаты — после комиссии брокера: {data['fee'].removeprefix('комиссия ')}" if data.get("fee") else ""))
         self.res_tree.delete(*self.res_tree.get_children())
         for p in data.get("periods", []):
             ch = p.get("change")

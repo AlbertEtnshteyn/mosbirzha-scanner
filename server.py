@@ -315,10 +315,12 @@ class Robot:
             path = os.path.join(sc.HERE, os.path.basename(name))
             if path not in (sc.SANDBOX_LOG, sc.SPIKE_LOG, sc.MANUAL_LOG):
                 continue
-            have = {tuple(sorted(x.items())) for x in read_csv(path)}
-            new = [x for x in rows if tuple(sorted(x.items())) not in have]
+            key = lambda x: (x.get("ticker"), x.get("time"), x.get("entry"), x.get("lots"), x.get("reason"))   # одна и та же сделка
+            have = {key(x) for x in read_csv(path)}
+            new = [x for x in rows if key(x) not in have]
             if new:
-                sc.append_rows(path, list(new[0].keys()), new); n_tr += len(new)
+                cols = at.LOG_COLS if set(new[0]) <= set(at.LOG_COLS) else list(new[0].keys())
+                sc.append_rows(path, cols, [{k: x.get(k, "") for k in cols} for x in new]); n_tr += len(new)
         if added or n_tr:
             log(f"Пара серверов: от резервного получено позиций {len(added)} ({', '.join(p['ticker'] for p in added) or '—'}) и сделок {n_tr} — веду их дальше.")
         return {"ok": True, "added": len(added)}

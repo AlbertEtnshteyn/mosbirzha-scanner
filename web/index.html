@@ -96,7 +96,7 @@
     <!-- Проверка на истории -->
     <section id="tab-history" class="tab" hidden>
       <h2>Проверка на истории</h2>
-      <p class="muted small">«Движение дня» с текущими настройками по 5-минутным свечам: те же правила, что у робота, затраты 0,16% на сделку. Первый раз сервер скачивает историю (несколько минут), потом берёт из кэша. Чтобы сравнить варианты — поменяйте настройки, сохраните и прогоните снова.</p>
+      <p class="muted small">«Движение дня» с текущими настройками по 5-минутным свечам: те же правила, что у робота; комиссия брокера — по тарифу вашего счёта (на покупку и продажу), плюс проскальзывание 0,06% и плата за перенос шортов. Первый раз сервер скачивает историю (несколько минут), потом берёт из кэша. Чтобы сравнить варианты — поменяйте настройки, сохраните и прогоните снова.</p>
       <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
         <select id="btPer"><option value="1">1 месяц</option><option value="3">3 месяца</option><option value="6">6 месяцев</option><option value="12" selected>12 месяцев</option><option value="24">24 месяца</option></select>
         <span class="muted small">Стартовая сумма, ₽</span>
@@ -174,6 +174,7 @@
         <div class="card"><div class="label">Баланс счёта</div><div id="resBal" class="big">—</div><div id="resTime" class="muted small"></div></div>
         <div id="resChart" style="height:220px;border-radius:12px;overflow:hidden;border:1px solid var(--line)"></div>
         <div style="overflow-x:auto"><table class="tbl" id="resTbl"></table></div>
+        <p class="muted small" id="resFee"></p>
         <p class="muted small">Изменение баланса — по стоимости портфеля песочницы (пополнения счёта вычитаются), с учётом открытых позиций.
           Сделки и «итог сделок, ₽» — по закрытым сделкам (₽ и % — после комиссии брокера по тарифу счёта).</p>
         <button class="btn danger wide" id="resetBtn">Сбросить баланс и начать сначала</button>
