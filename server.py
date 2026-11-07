@@ -1033,7 +1033,7 @@ class Handler(BaseHTTPRequestHandler):
                 if b.get("reset"):
                     rc.BACKTEST.reset()
                     return self._send(200, {"ok": True})
-                s_ = dict(ROBOT.s, **{k: v for k, v in (b.get("settings") or {}).items() if str(k).startswith("mid_") or k == "day_markets"})
+                s_ = dict(ROBOT.s, **{k: v for k, v in (b.get("settings") or {}).items() if str(k).startswith("mid_") or k in ("day_markets", "fee_tariff")})
                 ok = rc.BACKTEST.start(s_.get("token"), bool(s_.get("sandbox_token", True)), s_, int(b.get("months") or 12), log=log,
                                        capital=float(b.get("capital") or 0) or None)
                 return self._send(200, {"ok": ok, "msg": "" if ok else "Проверка уже идёт."})

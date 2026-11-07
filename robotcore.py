@@ -1130,6 +1130,10 @@ class Backtest:
             ti = sc.TInvest(token, "sandbox" if sandbox else "prod")
             m = mid_cfg(s)
             m["fee"], fee_name, fee_month = bt_fee(ti)
+            pref = s.get("fee_tariff", "auto")
+            if pref in sc.TARIFF_MANUAL:                          # тариф задан в настройках — он важнее
+                m["fee"], nm = sc.TARIFF_FEES[pref]
+                fee_name, fee_month = f"тариф «{nm}» (задан в настройках)", (390.0 if pref == "trader" else 0.0)
             dm = list(s.get("day_markets") or ["imoex"])
             if not tickers:
                 self.state["progress"] = "список бумаг…"
