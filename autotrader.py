@@ -52,6 +52,7 @@ def rc_modes_text(modes):
 
 MID_PREV_MIN = 0.003          # стоп за лоем предыдущего движения — не ближе 0,3% к цене, иначе — за лоем дня
 MID_STOP_BUF = 0.001          # стоп «Движения дня» — на 0,1% ниже лоя дня
+CLOSE_RETRY = 1.0             # повтор закрытия после отказа брокера, секунд
 STOP_POLL = 15                # проверка стопов и тейков, секунд
 SCAN_EVERY = 20               # пересчёт рынка (рост бумаг от открытия) — одним запросом цен, секунд
 MAX_POS_RESCAN = 8            # при добивке новых сигналов 15:00: доля капитала на сделку = 1/8
@@ -663,6 +664,7 @@ class AutoTrader:
         self._mid_fast_t = {}
         self.mid_lock = threading.RLock()
         self.perf = {}                            # скорость: длительность шагов, сек
+        self._close_wake = None
         self.in_session = False                   # главный цикл сейчас в торговых часах — можно проверять стопы по потоку
         self._sleep = sleep or self._wait
         self.rescan = rescan
@@ -2034,6 +2036,24 @@ class AutoTrader:
             self.log(f"  {p['ticker']}: стоп в безубыток {e:.4g}" + (f", трейлинг {m['trail'] * 100:g}% от лучшей цены" if m["trail"] else ""))
             self._save()
 
+    def _close_retry_loop(self):
+        """Пока есть позиции, которые не удалось закрыть, — проверять стопы раз в секунду, даже если поток цен молчит."""
+        while not self.stop_event.is_set() and any(p.get("_close_tries") for p in self.positions):
+            time.sleep(CLOSE_RETRY)
+            for p in [p for p in self.positions if p.get("_close_tries")]:
+                try:                                     # повторить то же закрытие (стоп, тейк, время, кнопка)
+                    px = self.prices.get(p["ticker"]) or p["entry"]
+                    try:
+                        px = self.b.last_prices([p["ticker"]]).get(p["ticker"]) or px
+                    except Exception:
+                        pass
+                    if p.get("_close_lots"):             # частичный тейк — через обычную проверку (там же безубыток и трейлинг)
+                        self._check_stops(lp={p["ticker"]: px})
+                    else:
+                        self._close(p, px, p.get("_close_why") or "повтор закрытия")
+                except Exception:
+                    pass
+
     def _close(self, p, px, why, lots=None):
         with self.pos_lock:
             if p not in self.positions:
@@ -2042,16 +2062,27 @@ class AutoTrader:
 
     def _close_locked(self, p, px, why, lots=None):
         lots = lots or p["lots"]
-        if time.time() - p.get("_close_fail", 0) < STOP_POLL:
-            return False                               # недавно не получилось — не долбить брокера на каждой сделке потока
+        if time.time() - p.get("_close_fail", 0) < CLOSE_RETRY:
+            return False                               # повтор — раз в секунду (поток цен даёт сделки чаще)
         try:
             fill = self.b.order(p["ticker"], lots, -p["side"])
         except sc.CertError:
             raise
         except Exception as e:
             p["_close_fail"] = time.time()
-            self.log(f"  {p['ticker']}: не удалось закрыть ({e}) — повторю через {STOP_POLL} с")
+            p["_close_tries"] = p.get("_close_tries", 0) + 1
+            p["_close_why"], p["_close_lots"] = why, (lots if lots < p["lots"] else None)
+            if time.time() - p.get("_close_logged", 0) >= 15:          # в журнал — не чаще раза в 15 с
+                p["_close_logged"] = time.time()
+                self.log(f"  {p['ticker']}: не удалось закрыть ({e}) — пробую снова каждую секунду (попыток: {p['_close_tries']})")
+            if self._close_wake is None or not self._close_wake.is_alive():
+                self._close_wake = threading.Thread(target=self._close_retry_loop, daemon=True)
+                self._close_wake.start()
             return False
+        if p.get("_close_tries"):
+            self.log(f"  {p['ticker']}: закрыто с {p['_close_tries'] + 1}-й попытки")
+            for k in ("_close_tries", "_close_why", "_close_lots"):
+                p.pop(k, None)
         exit_px = fill or px
         res = p["side"] * (exit_px / p["entry"] - 1)
         if lots < p["lots"]:
