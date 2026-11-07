@@ -1512,11 +1512,15 @@ class LiveFeed:
         r = self._robot()
         if r is not None:
             tks |= {p["ticker"] for p in r.positions}
+            try:
+                tks |= set(r.stream_watch()) if hasattr(r, "stream_watch") else set()   # ждут входа — тоже по потоку
+            except Exception:
+                pass
         return tuple(sorted(tks))
 
     def _active(self):
         r = self._robot()
-        return self.always or self.clients > 0 or bool(r is not None and r.positions)
+        return self.always or self.clients > 0 or bool(r is not None and (r.positions or (hasattr(r, "stream_watch") and r.stream_watch())))
 
     def _put(self, tk, price):
         if not price:

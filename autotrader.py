@@ -53,7 +53,7 @@ def rc_modes_text(modes):
 MID_PREV_MIN = 0.003          # стоп за лоем предыдущего движения — не ближе 0,3% к цене, иначе — за лоем дня
 MID_STOP_BUF = 0.001          # стоп «Движения дня» — на 0,1% ниже лоя дня
 STOP_POLL = 15                # проверка стопов и тейков, секунд
-SCAN_EVERY = 60               # пересчёт рынка и поиск всплесков, секунд
+SCAN_EVERY = 20               # пересчёт рынка (рост бумаг от открытия) — одним запросом цен, секунд
 MAX_POS_RESCAN = 8            # при добивке новых сигналов 15:00: доля капитала на сделку = 1/8
 STATE_FILE = os.path.join(sc.HERE, "auto_state.json")
 
@@ -659,6 +659,10 @@ class AutoTrader:
         self.pos_lock = threading.RLock()         # стопы/тейки по живому потоку цен и главный цикл не закрывают позицию дважды
         self._px_new = {}                         # свежие цены из потока, ждут проверки стопов
         self._px_ev = threading.Event()
+        self._mid_watch = set()                   # бумаги, где ждём касания середины EMA — их цены тоже идут из потока
+        self._mid_fast_t = {}
+        self.mid_lock = threading.RLock()
+        self.perf = {}                            # скорость: длительность шагов, сек
         self.in_session = False                   # главный цикл сейчас в торговых часах — можно проверять стопы по потоку
         self._sleep = sleep or self._wait
         self.rescan = rescan
@@ -742,9 +746,13 @@ class AutoTrader:
     # ------------------------------------------------------------------ стопы и тейки по живому потоку цен
     def on_price(self, ticker, price):
         """Цена из потока сделок (вызывает сервер на каждую сделку). Проверка — в отдельном потоке, чтобы не тормозить поток цен."""
-        if price and any(p["ticker"] == ticker for p in self.positions):
+        if price and (ticker in self._mid_watch or any(p["ticker"] == ticker for p in self.positions)):
             self._px_new[ticker] = price
             self._px_ev.set()
+
+    def stream_watch(self):
+        """Какие бумаги нужны в потоке цен, кроме позиций: ждущие касания середины EMA (вход за доли секунды)."""
+        return set(self._mid_watch) if self.trade else set()
 
     def _stops_worker(self):
         while not self.stop_event.is_set():
@@ -754,10 +762,20 @@ class AutoTrader:
             lp, self._px_new = self._px_new, {}
             if not lp or not self.in_session:
                 continue
+            held = {p["ticker"] for p in self.positions}
             try:
-                self._check_stops(lp=lp)
+                if any(tk in held for tk in lp):
+                    self._check_stops(lp={k: v for k, v in lp.items() if k in held})
             except Exception as e:
                 self.log(f"Проверка стопов по потоку цен: {e}")
+            w = {k: v for k, v in lp.items() if k in self._mid_watch and k not in held}
+            if w:
+                try:
+                    self._mid_step(self.clock(), lp=w)       # вход по потоку цен — сразу, а не на следующем шаге
+                except sc.CertError:
+                    pass
+                except Exception as e:
+                    self.log(f"Вход по потоку цен: {e}")
 
     @property
     def positions(self):
@@ -959,6 +977,19 @@ class AutoTrader:
         self._save()
 
     def _step(self, now):
+        t0_ = time.time()
+        self._step_body(now)
+        self.perf["step"] = round(time.time() - t0_, 2)
+        last = getattr(self, "_perf_logged", 0)
+        if time.time() - last >= 1800:                 # раз в 30 минут — строка о скорости в журнал
+            self._perf_logged = time.time()
+            op = self.perf.get("opens")
+            self.log(f"Скорость: шаг {self.perf.get('step', 0):.1f} с (каждые {STOP_POLL} с), рынок {self.perf.get('scan', 0):.1f} с "
+                     f"({len(self._scan_list())} бумаг), вход {self.perf.get('mid', 0):.1f} с"
+                     + (f"; открытия {op[0]} бумаг за {op[1]:.1f} с" if op else "")
+                     + f"; ждут входа по потоку цен: {len(self._mid_watch)}")
+
+    def _step_body(self, now):
         t = now.hour * 60 + now.minute
         secs = t * 60 + now.second
         self._balance(now)
@@ -1050,19 +1081,28 @@ class AutoTrader:
         self._liq_cache = c
         return v
 
-    def _mid_step(self, now):
+    def _mid_step(self, now, lp=None):
+        t0 = time.time()
+        with self.mid_lock:
+            self._mid_step_locked(now, lp)
+        if lp is None:
+            self.perf["mid"] = round(time.time() - t0, 2)
+
+    def _mid_step_locked(self, now, lp=None):
         """Бумага ушла на порог от открытия (вверх — для лонга, вниз — для шорта) → следим; цена побывала за серединой
         EMA10/EMA20 и вернулась к ней → вход. Лонг: стоп за лоем дня, тейк на хае; шорт: стоп за хаем, тейк на лое.
         Входов за день по бумаге может быть несколько (настройка), но одна позиция по бумаге за раз."""
         m = self._mid()
         t = now.hour * 60 + now.minute
         if not self.trade or not (m["from"] <= t < m["to"]):
+            self._mid_watch = set()
             return
+        fast = lp is not None                        # вызов из потока цен: только проверка касания по готовым уровням
         q = self.st.setdefault("mid_q", {})
         qs = self.st.setdefault("mid_side", {})
         arm = self.st.setdefault("mid_arm", {})
         held = {p["ticker"] for p in self.positions}
-        for tk, mv, why in self.scan_rows:
+        for tk, mv, why in ([] if fast else self.scan_rows):
             if why == "СИГНАЛ" and tk not in q:
                 q[tk] = now.strftime("%H:%M")
                 qs[tk] = 1 if mv > 0 else -1
@@ -1070,14 +1110,22 @@ class AutoTrader:
                          f"{'покупка' if mv > 0 else 'шорт'} на середине EMA10/EMA20 ({', '.join(self._tf_name(x) for x in m['tfs'])}).")
                 self._save()
         watch = [tk for tk in q if tk not in held and (m["multi"] or tk not in self.st["traded"])]
+        if not fast:
+            self._mid_watch = set(watch)
+        if fast:
+            nowt = time.time()                        # из потока — не чаще раза в 0,3 с на бумагу
+            watch = [tk for tk in watch if tk in lp and nowt - self._mid_fast_t.get(tk, 0) >= 0.3]
+            for tk in watch:
+                self._mid_fast_t[tk] = nowt
         if not watch:
             return
-        try:
-            lp = self.b.last_prices(watch)
-        except sc.CertError:
-            raise
-        except Exception:
-            return
+        if not fast:
+            try:
+                lp = self.b.last_prices(watch)
+            except sc.CertError:
+                raise
+            except Exception:
+                return
         self.prices.update(lp)
         self.mid_view = getattr(self, "mid_view", {})
         for tk in watch:
@@ -1088,7 +1136,11 @@ class AutoTrader:
             hit = None                                   # ТФ, на котором цена дошла до середины EMA (старший из сработавших)
             for tf in m["tfs"]:
                 try:
-                    lv = self._mid_levels(tk, now, tf)
+                    if fast:                             # из потока — готовые уровни, без запросов к брокеру
+                        c_ = getattr(self, "_mid_cache", {}).get((tk, tf))
+                        lv = c_[1] if c_ else None
+                    else:
+                        lv = self._mid_levels(tk, now, tf)
                 except sc.CertError:
                     raise
                 except Exception as e:
@@ -1234,22 +1286,36 @@ class AutoTrader:
         return rows
 
     def _scan(self, now):
+        t0_ = time.time()
         day = now.date()
         t = now.hour * 60 + now.minute
+        need = []
         for tk in self._scan_list():
             if tk in self.opens:
                 continue
+            if tk in self.pre_opens and t <= sc.OPEN_MIN + 1:
+                continue                                  # до 10:00 открытие 07:00 уже есть — ждать 10:00, не дёргать брокера
             last_try = self.open_tries.get(tk)
             if last_try and (now - last_try).total_seconds() < 300:
                 continue
             self.open_tries[tk] = now
-            try:   # с 07:00: открытие рынка — точка отсчёта до 10:00 (по умолчанию свечи берутся только с 09:55)
-                rows = self.b.candles(tk, day, datetime(day.year, day.month, day.day, 6, 59, tzinfo=sc.MSK))
-            except sc.CertError:
-                raise
-            except Exception as e:
-                self.log(f"  {tk}: свечи не получены ({e})")
-                continue
+            need.append(tk)
+
+        def fetch(tk):   # с 07:00: открытие рынка — точка отсчёта до 10:00 (по умолчанию свечи берутся только с 09:55)
+            return self.b.candles(tk, day, datetime(day.year, day.month, day.day, 6, 59, tzinfo=sc.MSK))
+        got = {}
+        if need:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(8, len(need))) as ex:   # параллельно — утром сотни бумаг за секунды
+                futs = {tk: ex.submit(fetch, tk) for tk in need}
+                for tk, f in futs.items():
+                    try:
+                        got[tk] = f.result()
+                    except sc.CertError:
+                        raise
+                    except Exception as e:
+                        self.log(f"  {tk}: свечи не получены ({e})")
+        for tk, rows in got.items():
             pre9 = [r for r in rows if sc.minute_of(r["t"]) >= 7 * 60]
             if pre9 and tk not in self.pre_opens:
                 self.pre_opens[tk] = pre9[0]["o"]          # открытие рынка (07:00) — до 10:00 и в режиме «от открытия рынка»
@@ -1258,6 +1324,8 @@ class AutoTrader:
                 self.opens[tk] = first[0]["o"]
             elif t > sc.OPEN_MIN + 5:
                 self.opens[tk] = None      # не торговалась в начале сессии — как в бэктесте, пропускаем
+        if need:
+            self.perf["opens"] = (len(need), round(time.time() - t0_, 2))
         if self._mid()["ref"] < sc.OPEN_MIN or t < sc.OPEN_MIN + 1:   # рост от 07:00 (настройка) или от 10:00
             ref = {tk: o for tk, o in self.pre_opens.items() if o}  # от открытия рынка 07:00 (до 10:00 — всегда так)
         else:
@@ -1286,6 +1354,7 @@ class AutoTrader:
         self.market = self._real_index(self._own_market(moves))
         self.scan_rows = self._rank(self._day_only(moves))
         self.last_scan = now
+        self.perf["scan"] = round(time.time() - t0_, 2)
         self._push()
 
     def _signals_now(self):
@@ -1774,7 +1843,8 @@ class AutoTrader:
         if now_t.hour * 60 + now_t.minute >= pos["exit_min"]:
             pos["carry_date"] = now_t.date().isoformat()     # вошли после времени выхода — выход завтра
             pos["overnight"] = True
-        self.positions.append(pos)
+        with self.pos_lock:
+            self.positions.append(pos)
         self._save()
         if strat == "mid":
             self.log(f"  {tk}: {'КУПЛЕНО' if side > 0 else 'ПРОДАНО (шорт)'} {lots} лот. по ~{entry:.4g}, стоп {pos['stop']:.4g}, "
@@ -1972,11 +2042,14 @@ class AutoTrader:
 
     def _close_locked(self, p, px, why, lots=None):
         lots = lots or p["lots"]
+        if time.time() - p.get("_close_fail", 0) < STOP_POLL:
+            return False                               # недавно не получилось — не долбить брокера на каждой сделке потока
         try:
             fill = self.b.order(p["ticker"], lots, -p["side"])
         except sc.CertError:
             raise
         except Exception as e:
+            p["_close_fail"] = time.time()
             self.log(f"  {p['ticker']}: не удалось закрыть ({e}) — повторю через {STOP_POLL} с")
             return False
         exit_px = fill or px
