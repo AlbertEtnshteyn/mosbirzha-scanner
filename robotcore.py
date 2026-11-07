@@ -792,7 +792,41 @@ def _bt_mids(rows, tf):
     return out
 
 
-def bt_run(data, m, imoex=None):
+def _bt_trend(rows, tf, daily=None):
+    """(EMA200, SMA200) по последней закрытой свече ТФ — для каждой 5-мин свечи (None, пока закрытых свечей < 200).
+    Дневной ТФ — по дневным свечам daily [(дата, close)], если даны (история длиннее периода проверки)."""
+    from collections import deque
+    k = 2 / 201
+    out = [None] * len(rows)
+    if tf >= 1440 and daily:
+        days = sorted(daily)
+        ser, e, win, j = {}, None, deque(maxlen=200), 0
+        dates = sorted({r[0].date() for r in rows})
+        for d in dates:
+            while j < len(days) and days[j][0] < d:      # дни до текущего — закрытые
+                c = days[j][1]
+                e = c if e is None else e + k * (c - e)
+                win.append(c)
+                j += 1
+            ser[d] = (e, sum(win) / 200) if len(win) == 200 else None
+        for i, r in enumerate(rows):
+            out[i] = ser.get(r[0].date())
+        return out
+    e, win, cur_key, cur_close, val = None, deque(maxlen=200), None, None, None
+    for i, (t, o, h, l, c, *_) in enumerate(rows):
+        key = t.date() if tf >= 1440 else (t.date(), (t.hour * 60 + t.minute) // tf)
+        if key != cur_key:
+            if cur_close is not None:
+                e = cur_close if e is None else e + k * (cur_close - e)
+                win.append(cur_close)
+                val = (e, sum(win) / 200) if len(win) == 200 else None
+            cur_key = key
+        cur_close = c
+        out[i] = val
+    return out
+
+
+def bt_run(data, m, imoex=None, daily=None):
     """Проверка «Движения дня» по 5-мин свечам. data: {тикер: [(t,o,h,l,c), …]}. Возвращает список сделок.
     Лонг: бумага выросла на порог → покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае.
     Шорт (зеркально): бумага упала на порог → шорт на середине, стоп за хаем дня, тейк на лое."""
@@ -805,6 +839,7 @@ def bt_run(data, m, imoex=None):
         if len(rows) < 100:
             continue
         mids = {tf: _bt_mids(rows, tf) for tf in m["tfs"]}
+        trend = {tf: _bt_trend(rows, tf, (daily or {}).get(tk)) for tf in m["tfs"]}   # фильтр EMA200 + SMA200 (всегда)
         days, start = [], 0
         didx = [0] * len(rows)
         for i in range(1, len(rows) + 1):
@@ -852,7 +887,10 @@ def bt_run(data, m, imoex=None):
                     if md is None:
                         continue
                     if arm[tf] and hit is None and ((l <= md) if sd > 0 else (h >= md)):
-                        hit = (tf, md)
+                        pe = (o if o <= md else md) if sd > 0 else (o if o >= md else md)     # цена входа
+                        tv = trend[tf][r]
+                        if tv and (pe > tv[0] and pe > tv[1] if sd > 0 else pe < tv[0] and pe < tv[1]):
+                            hit = (tf, md)
                 if r <= busy:
                     r += 1
                     continue
@@ -1167,7 +1205,15 @@ class Backtest:
                     continue
                 if rows:
                     done_n += 1
-                    trades += bt_run({tk: rows}, m, imx)
+                    dly = None
+                    if 1440 in m["tfs"]:                     # EMA200/SMA200 по дням — нужна история длиннее периода проверки
+                        try:
+                            dd = ti.candles_range(tk, datetime.combine(since, datetime.min.time()).replace(tzinfo=sc.MSK) - timedelta(days=420),
+                                                  datetime.now(sc.MSK), 1440)
+                            dly = {tk: [(r["t"].date(), r["c"]) for r in dd]}
+                        except Exception as e:
+                            log(f"  {tk}: дневные свечи для EMA200/SMA200 не получены ({e}) — по дням считаю из периода проверки")
+                    trades += bt_run({tk: rows}, m, imx, dly)
                 del rows
             trades.sort(key=lambda x: (x["date"], x["time"]))
             sm = bt_summary(trades, m["share"], capital, fee_month)
@@ -1189,7 +1235,8 @@ class Backtest:
                              + (f", оборот не меньше {m['min_turn'] / 1e6:g} млн ₽/день" if m["min_turn"] else "")
                              + (f", объём сегодня не меньше {m['min_vol'] / 1e6:g} млн ₽" if m.get("min_vol") else "")
                              + (f", на хае дня закрыть {m['take_part'] * 100:g}% → безубыток → трейлинг {m['trail'] * 100:g}%" if m["take_part"] < 1 else "")
-                             + (", 2-й и следующие входы — стоп за лоем предыдущего движения" if m["multi"] and m["prev_stop"] else "") + "; "
+                             + (", 2-й и следующие входы — стоп за лоем предыдущего движения" if m["multi"] and m["prev_stop"] else "")
+                             + ", вход только по тренду: лонг — цена выше EMA200 и SMA200, шорт — ниже (на графике входа); "
                              f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}; "
                              f"комиссия брокера {m['fee'] * 100:.3g}% за каждую покупку и продажу — {fee_name}"
                              + (f", абонплата {fee_month:g} ₽ в месяц со сделками" if fee_month else "")

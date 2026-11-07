@@ -1055,7 +1055,8 @@ class AutoTrader:
         m = self._mid()
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Стратегия одна — «Движение дня»: "
                  f"бумага выросла на {m['thr'] * 100:g}% от открытия → покупка, как только цена дошла до середины между EMA10 и EMA20 "
-                 f"({', '.join(self._tf_name(x) for x in m['tfs'])}); стоп за лоем дня, тейк на хае дня. Покупки {hm(m['from'])}–{hm(m['to'])}, выход {hm(m['exit'])}"
+                 f"({', '.join(self._tf_name(x) for x in m['tfs'])}), если цена выше EMA200 и SMA200 на том же графике (шорт — ниже обеих); "
+                 f"стоп за лоем дня, тейк на хае дня. Покупки {hm(m['from'])}–{hm(m['to'])}, выход {hm(m['exit'])}"
                   + f", на сделку {m['share'] * 100:g}% счёта. "
                  + "Режим: " + rc_modes_text(m["modes"]) + ".")
         if self.positions:
@@ -1333,7 +1334,7 @@ class AutoTrader:
             if not px:
                 continue
             side = qs.get(tk, 1)
-            hit = None                                   # ТФ, на котором цена дошла до середины EMA (старший из сработавших)
+            hits = []                                    # ТФ, на которых цена дошла до середины EMA (по порядку настроек)
             for tf in m["tfs"]:
                 try:
                     if fast:                             # из потока — готовые уровни, без запросов к брокеру
@@ -1354,12 +1355,32 @@ class AutoTrader:
                     if not arm.get(key):
                         arm[key] = True                  # цена за серединой — следующее касание будет входом
                         self._save()
-                elif arm.get(key) and hit is None:
-                    hit = (tf, lv)
-            if not hit:
+                elif arm.get(key):
+                    hits.append((tf, lv))
+                if not fast:
+                    try:
+                        self._trend200(tk, tf, now)      # EMA200/SMA200 наготове — вход из потока цен не ждёт брокера
+                    except sc.CertError:
+                        raise
+                    except Exception:
+                        pass
+            if not hits:
                 continue
             if not mid_allowed(m["modes"], side, self.market):
                 continue                                  # режим торговли не разрешает эту сторону при нынешнем индексе
+            # фильтр тренда (всегда): лонг — цена выше EMA200 и SMA200, шорт — ниже обеих, на графике входа
+            hit, why200 = None, ""
+            for tf_, lv_ in hits:
+                ok, why200 = self._trend_ok(tk, tf_, side, px, now, fast)
+                if ok:
+                    hit = (tf_, lv_)
+                    break
+            if not hit:
+                k200 = f"{tk}|{side}"                    # в журнал — не чаще раза в 30 минут по бумаге
+                if self.__dict__.setdefault("_t200_logged", {}).get(k200, 0) < time.time() - 1800:
+                    self._t200_logged[k200] = time.time()
+                    self.log(f"  {tk}: цена у середины EMA10/EMA20, но {why200} — не вхожу")
+                continue
             tf, (mid, lo, hi) = hit
             for x in m["tfs"]:
                 arm[f"{tk}|{x}"] = False
@@ -2437,6 +2458,45 @@ class AutoTrader:
         self.log("Торговля ВКЛЮЧЕНА — робот сам входит и выходит." if on else
                  "Торговля выключена — робот только наблюдает (открытые позиции продолжает вести до стопа/тейка/выхода).")
         self.wake.set()
+
+    def _trend200(self, tk, tf, now):
+        """(EMA200, SMA200) по закрытым свечам ТФ tf — для фильтра тренда «Движения дня». Обновление раз в 5 минут."""
+        c = self.__dict__.setdefault("_t200", {})
+        v = c.get((tk, tf))
+        if v and (now - v[0]).total_seconds() < 300 and v[0].date() == now.date():
+            return v[1]
+        naive = now.replace(tzinfo=None)
+        rows = None
+        ti = getattr(self.b, "ti", None)
+        if ti is not None and hasattr(ti, "candles_range"):
+            days = {5: 6, 15: 14, 60: 60, 1440: 600}.get(tf, 14)
+            rows = ti.candles_range(tk, now - timedelta(days=days), now, tf)
+        else:                                            # нет запроса истории (тест) — из загруженных 5-мин свечей
+            rows = aggregate([dict(b) for b in self._bars5(tk, now)], tf) if tf < 1440 else []
+        cl = [r["c"] for r in rows if (r["t"].date() < naive.date() if tf >= 1440 else r["t"] + timedelta(minutes=tf) <= naive)]
+        res = (ema(cl, 200)[-1], sum(cl[-200:]) / 200) if len(cl) >= 200 else None
+        c[(tk, tf)] = (now, res)
+        return res
+
+    def _trend_ok(self, tk, tf, side, px, now, fast=False):
+        """Лонг — цена выше и EMA200, и SMA200; шорт — ниже обеих (на ТФ входа). (можно, почему нет)."""
+        tfn = self._tf_name(tf)
+        try:
+            if fast:
+                v = self.__dict__.get("_t200", {}).get((tk, tf))
+                lv = v[1] if v else None
+            else:
+                lv = self._trend200(tk, tf, now)
+        except sc.CertError:
+            raise
+        except Exception as e:
+            return False, f"EMA200/SMA200 ({tfn}) не посчитаны: {e}"
+        if not lv:
+            return False, f"мало истории для EMA200/SMA200 ({tfn})"
+        e, s_ = lv
+        if side > 0 and px > e and px > s_ or side < 0 and px < e and px < s_:
+            return True, ""
+        return False, (f"цена {px:.4g} {'не выше' if side > 0 else 'не ниже'} EMA200 {e:.4g} и SMA200 {s_:.4g} ({tfn})")
 
     def _ema200_all(self, tk, tf_form, s, now):
         """EMA200 на всех выбранных ТФ: «form» — ТФ формации, 5 / 15 / 60 / 1440 (день)."""
