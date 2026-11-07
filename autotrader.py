@@ -50,6 +50,7 @@ def rc_modes_text(modes):
     return ", ".join(n for k, n in MID_MODE_NAMES.items() if k in modes)
 
 
+MID_PREV_MIN = 0.003          # стоп за лоем предыдущего движения — не ближе 0,3% к цене, иначе — за лоем дня
 MID_STOP_BUF = 0.001          # стоп «Движения дня» — на 0,1% ниже лоя дня
 STOP_POLL = 15                # проверка стопов и тейков, секунд
 SCAN_EVERY = 60               # пересчёт рынка и поиск всплесков, секунд
@@ -767,8 +768,8 @@ class AutoTrader:
             m = self._mid()
             if m["carry"] == "none" or (m["carry_days"] and p.get("carried", 0) >= m["carry_days"]):
                 return False
-            if m["carry"] == "all":
-                return True
+            if m["carry"] == "all" or p.get("mtook"):
+                return True                          # после частичного тейка позиция считается в плюсе
             lp = self.prices.get(p["ticker"])
             try:
                 lp = self.b.last_prices([p["ticker"]]).get(p["ticker"]) or lp
@@ -1002,7 +1003,7 @@ class AutoTrader:
             self._set_status(f"ТОРГОВЛЯ: {mk}входы на сегодня закончены" + (f" · в позициях: {len(self.positions)}, выход {hm(m['exit'])}" if self.positions else ""))
 
     # ------------------------------------------------------------------ «Движение дня»: покупка на середине EMA10/EMA20
-    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0, "modes": ["long"], "liq": 0.01, "min_turn": 0, "min_vol": 0}
+    MID_DEFAULT = {"thr": 0.025, "from": 600, "to": 1080, "exit": 1425, "tfs": [60], "idx": False, "share": 0.10, "ref": 420, "multi": True, "carry": "none", "carry_days": 0, "modes": ["long"], "liq": 0.01, "min_turn": 0, "min_vol": 0, "prev_stop": True, "take_part": 1.0, "trail": 0.01}
 
     def _mid(self):
         return dict(self.MID_DEFAULT, **(self.sp.get("mid") or {}))
@@ -1115,6 +1116,24 @@ class AutoTrader:
                 stop, take = lo * (1 - MID_STOP_BUF), hi
             else:
                 stop, take = hi * (1 + MID_STOP_BUF), lo
+            stop_why = "лой дня" if side > 0 else "хай дня"
+            last_in = self.st.setdefault("mid_last", {}).get(tk)
+            if m["multi"] and m["prev_stop"] and last_in:
+                # 2-й и следующие входы: стоп за дном (вершиной для шорта) отката после прошлого входа
+                try:
+                    t0 = datetime.fromisoformat(last_in)
+                    seg = [b for b in self._bars5(tk, now) if b["t"] >= t0.replace(tzinfo=None)]
+                except Exception:
+                    seg = []
+                if seg:
+                    ext = min(b["l"] for b in seg) if side > 0 else max(b["h"] for b in seg)
+                    st2 = ext * (1 - MID_STOP_BUF) if side > 0 else ext * (1 + MID_STOP_BUF)
+                    if (px - st2) * side / px < MID_PREV_MIN:
+                        self.log(f"  {tk}: дно отката {ext:.4g} ближе {MID_PREV_MIN * 100:g}% к цене — стоп оставляю за "
+                                 + ("лоем" if side > 0 else "хаем") + " дня")
+                    elif (st2 - stop) * side > 0:
+                        stop = st2
+                        stop_why = "лой предыдущего движения" if side > 0 else "хай предыдущего движения"
             what = "ПОКУПКА" if side > 0 else "ШОРТ"
             if not ((px - stop) * side > 0 and (take - px) * side > 0):
                 self.log(f"«Движение дня»: {tk} дошла до середины EMA ({px:.4g}), но цена уже "
@@ -1150,10 +1169,12 @@ class AutoTrader:
                 alloc = liq * m["liq"]
             n = sum(1 for x in self.st["traded"] if x == tk) + 1
             self.st["traded"].append(tk)
-            lo_n, hi_n = ("лой", "хай") if side > 0 else ("хай", "лой")
+            lo_n, hi_n = (stop_why, "хай дня") if side > 0 else (stop_why, "лой дня")
+            self.st["mid_last"][tk] = now.replace(tzinfo=None).isoformat(timespec="minutes")
             self.log(f"«Движение дня»: {tk} дошла до середины EMA10/EMA20 на {self._tf_name(tf)} ({mid:.4g}), цена {px:.4g} — {what}"
-                     + (f" №{n} за день" if n > 1 else "") + f" (на {alloc:,.0f} ₽)".replace(",", " ") + f", стоп {stop:.4g} ({lo_n} дня), "
-                     f"тейк {take:.4g} ({hi_n} дня), выход {hm(m['exit'])}.")
+                     + (f" №{n} за день" if n > 1 else "") + f" (на {alloc:,.0f} ₽)".replace(",", " ") + f", стоп {stop:.4g} ({lo_n}), "
+                     f"тейк {take:.4g} ({hi_n}" + (f", закрыть {m['take_part'] * 100:g}%, затем безубыток и трейлинг {m['trail'] * 100:g}%"
+                                                  if m["take_part"] < 1 else "") + f"), выход {hm(m['exit'])}.")
             self._open(tk, side, alloc, strat="mid", stop_level=stop, t1=take, exit_min=m["exit"], tf=tf)
 
     # ------------------------------------------------------------------ сканирование
@@ -1291,7 +1312,12 @@ class AutoTrader:
             self.hist[tk] = self._load_hist(tk, now)
             self.hist_loaded[tk] = now.date()
         else:
-            fresh = self.b.candles(tk, now.date(), now - timedelta(minutes=20), now, 5)
+            frm = now - timedelta(minutes=20)
+            if self.hist[tk]:                          # бумагу давно не обновляли (например, пока была позиция) — добрать пропуск
+                last = self.hist[tk][-1]["t"].replace(tzinfo=sc.MSK)
+                day0 = datetime(now.year, now.month, now.day, 6, 50, tzinfo=sc.MSK)
+                frm = max(day0, min(frm, last))
+            fresh = self.b.candles(tk, now.date(), frm, now, 5)
             known = {r["t"]: i for i, r in enumerate(self.hist[tk])}
             for r in fresh:
                 if r["t"] in known:
@@ -1751,8 +1777,8 @@ class AutoTrader:
         self.positions.append(pos)
         self._save()
         if strat == "mid":
-            self.log(f"  {tk}: КУПЛЕНО {lots} лот. по ~{entry:.4g}, стоп {pos['stop']:.4g} (лой дня), "
-                     f"тейк {pos['take']:.4g} (хай дня), выход {hm(pos['exit_min'])}")
+            self.log(f"  {tk}: {'КУПЛЕНО' if side > 0 else 'ПРОДАНО (шорт)'} {lots} лот. по ~{entry:.4g}, стоп {pos['stop']:.4g}, "
+                     f"тейк {pos['take']:.4g}, выход {hm(pos['exit_min'])}")
             self.on_event("open", dict(pos))
             self._push()
             return
@@ -1788,10 +1814,7 @@ class AutoTrader:
                 continue
             s = p["side"]
             if p.get("strat") == "mid":
-                if (px - p["stop"]) * s <= 0:
-                    self._close(p, px, "стоп (лой дня)")
-                elif p.get("take") and (px - p["take"]) * s >= 0:
-                    self._close(p, px, "тейк (хай дня)")
+                self._mid_exits(p, px, s)
                 continue
             if p.get("strat") in ("15", "manual") and (p.get("dtp") or p.get("dtrail")):
                 self._day_exits(p, px, s)
@@ -1907,6 +1930,39 @@ class AutoTrader:
             lp = {}
         for p in targets:
             self._close(p, lp.get(p["ticker"]) or p["entry"], why)
+
+    def _mid_exits(self, p, px, s):
+        """«Движение дня»: стоп; тейк на хае дня — весь или часть, затем стоп в безубыток и трейлинг от лучшей цены."""
+        m = self._mid()
+        e = p["entry"]
+        if p.get("mtook"):
+            if (px - p.get("best", e)) * s > 0:
+                p["best"] = px
+            tr = p.get("mtrail") or 0
+            if tr:
+                ts = p["best"] * (1 - s * tr)
+                if (ts - p["stop"]) * s > 0:
+                    p["stop"] = ts
+        if (px - p["stop"]) * s <= 0:
+            why = ("трейлинг" if (p["stop"] - e) * s > 0 else "безубыток") if p.get("mtook") else \
+                  ("стоп (лой дня)" if s > 0 else "стоп (хай дня)")
+            self._close(p, px, why)
+            return
+        if p.get("mtook") or not p.get("take") or (px - p["take"]) * s < 0:
+            return
+        part = int(p["lots"] * m["take_part"]) if m["take_part"] < 1 else p["lots"]
+        if part >= p["lots"] or part < 1:
+            self._close(p, px, "тейк (хай дня)" if s > 0 else "тейк (лой дня)")
+            return
+        if self._close(p, px, f"тейк {m['take_part'] * 100:g}% ({'хай' if s > 0 else 'лой'} дня)", lots=part):
+            p["mtook"] = True
+            p["best"] = px
+            p["mtrail"] = m["trail"]
+            p["stage"] = 2                                 # на экране вместо тейка — «трейл»
+            if (e - p["stop"]) * s > 0:
+                p["stop"] = e
+            self.log(f"  {p['ticker']}: стоп в безубыток {e:.4g}" + (f", трейлинг {m['trail'] * 100:g}% от лучшей цены" if m["trail"] else ""))
+            self._save()
 
     def _close(self, p, px, why, lots=None):
         with self.pos_lock:

@@ -19,7 +19,8 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "idx_form": True, "ema10_touch": False, "first_form": True, "trade_5m": False, "ema200": False, "ema200_tfs": ["form"], "idx_day": True, "idx_flip": "off",
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
-            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"], "mid_liq": 1.0, "mid_min_turn": 20, "mid_liq_on": True, "mid_minv_on": False, "mid_vol_on": False, "mid_vol": 5}
+            "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"], "mid_liq": 1.0, "mid_min_turn": 20, "mid_liq_on": True, "mid_minv_on": False, "mid_vol_on": False, "mid_vol": 5,
+            "mid_prev_stop": True, "mid_take_mode": "all", "mid_take_part": 50, "mid_trail": 1.0}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -112,7 +113,10 @@ def mid_cfg(s):
             "modes": mid_modes(s),
             "liq": float(s.get("mid_liq", 1.0) or 0) / 100 if s.get("mid_liq_on", True) else 0.0,       # доля дневного оборота
             "min_turn": float(s.get("mid_min_turn", 0) or 0) * 1e6 if s.get("mid_minv_on", False) else 0.0,  # мин. оборот, ₽ в день
-            "min_vol": float(s.get("mid_vol", 0) or 0) * 1e6 if s.get("mid_vol_on", False) else 0.0}      # мин. объём сегодня, ₽
+            "min_vol": float(s.get("mid_vol", 0) or 0) * 1e6 if s.get("mid_vol_on", False) else 0.0,     # мин. объём сегодня, ₽
+            "prev_stop": bool(s.get("mid_prev_stop", True)),               # 2-й и следующие входы — стоп за лоем предыдущего движения
+            "take_part": (min(95.0, max(5.0, float(s.get("mid_take_part", 50) or 50))) / 100) if s.get("mid_take_mode") == "part" else 1.0,
+            "trail": max(0.0, float(s.get("mid_trail", 1.0) or 0)) / 100}
 
 
 MID_MODES = [("idx_long", "индекс идёт вверх — лонг"), ("idx_short", "индекс идёт вниз — шорт"),
@@ -762,6 +766,7 @@ def bt_run(data, m, imoex=None):
         dval = [sum(rows[j][5] if len(rows[j]) > 5 else 0 for j in range(a_, z_)) for a_, z_ in days]
         busy = -1                                     # строка, до которой по бумаге открыта (перенесённая) позиция
         for di, (a, z) in enumerate(days):
+            last_in = None                            # строка прошлого входа в этот день (для стопа за предыдущим движением)
             prev = [v for v in dval[max(0, di - 10):di] if v > 0]
             liq = sum(prev) / len(prev) if prev else 0.0          # средний дневной оборот за 10 прошлых дней, ₽
             if m.get("min_turn") and liq and liq < m["min_turn"]:
@@ -823,10 +828,20 @@ def bt_run(data, m, imoex=None):
                     stop, take = lo_d * (1 - at.MID_STOP_BUF), hi_d
                 else:
                     stop, take = hi_d * (1 + at.MID_STOP_BUF), lo_d
+                if m.get("multi") and m.get("prev_stop", True) and last_in is not None and last_in < r:
+                    # 2-й и следующие входы за день: стоп за дном (вершиной) отката после прошлого входа
+                    ext = min(x[3] for x in rows[last_in:r]) if sd > 0 else max(x[2] for x in rows[last_in:r])
+                    st2 = ext * (1 - at.MID_STOP_BUF) if sd > 0 else ext * (1 + at.MID_STOP_BUF)
+                    if (px - st2) * sd / px >= at.MID_PREV_MIN and (st2 - stop) * sd > 0:
+                        stop = st2
                 if not ((px - stop) * sd > 0 and (take - px) * sd > 0):
                     r += 1; continue
+                last_in = r
                 ex_day = di if tm[r - a] < ex else di + 1          # вошли после времени выхода — выход на следующий день
                 ret = lambda p_: sd * (p_ / px - 1)
+                part = m.get("take_part", 1.0)
+                trail = m.get("trail", 0.0)
+                took, part_res, best = False, 0.0, px               # после частичного тейка: стоп в безубыток и трейлинг
                 hit_stop = lambda k_: (rows[k_][3] <= stop) if sd > 0 else (rows[k_][2] >= stop)
                 hit_take = lambda k_: (rows[k_][2] >= take) if sd > 0 else (rows[k_][3] <= take)
                 res, why, xr = None, "", r
@@ -840,30 +855,45 @@ def bt_run(data, m, imoex=None):
                         if kd > ex_day or (kd == ex_day and tk_t.hour * 60 + tk_t.minute >= ex):
                             last_c = rows[k - 1][4]
                             held = ex_day - (di if tm[r - a] < ex else di + 1)       # сколько раз уже переносили
-                            if m.get("carry", "none") != "none" and (m["carry"] == "all" or ret(last_c) > 0) \
+                            if m.get("carry", "none") != "none" and (m["carry"] == "all" or took or ret(last_c) > 0) \
                                     and (not m.get("carry_days") or held < m["carry_days"]) and k < len(rows) - 1:
                                 ex_day += 1                                        # перенос на следующий день
                             else:
                                 res, why, xr = ret(last_c), "время" if held == 0 else f"время (+{held} дн.)", k - 1
                                 break
+                        if took and trail:                                     # трейлинг от лучшей цены (по прошлым свечам)
+                            ts = best * (1 - sd * trail)
+                            if (ts - stop) * sd > 0:
+                                stop = ts
                         if hit_stop(k):
                             fill = min(rows[k][1], stop) if sd > 0 else max(rows[k][1], stop)
-                            res, why, xr = ret(fill), "стоп", k
+                            res, why, xr = ret(fill), ("трейлинг" if (stop - px) * sd > 0 else "безубыток") if took else "стоп", k
                             break
-                        if hit_take(k):
+                        if not took and hit_take(k):
                             fill = max(rows[k][1], take) if sd > 0 else min(rows[k][1], take)
-                            res, why, xr = ret(fill), "тейк", k
-                            break
+                            if part >= 1:
+                                res, why, xr = ret(fill), "тейк", k
+                                break
+                            took, part_res, best = True, ret(fill), fill
+                            if (px - stop) * sd > 0:
+                                stop = px                                      # стоп в безубыток
+                            k += 1
+                            continue
+                        if took:
+                            best = max(best, rows[k][2]) if sd > 0 else min(best, rows[k][3])
                         k += 1
                     if res is None:
                         res, why, xr = ret(rows[-1][4]), "конец данных", len(rows) - 1
+                if took:
+                    res = part * part_res + (1 - part) * res
+                    why = f"тейк {part * 100:g}% + {why}"
                 xp = px * (1 + sd * res)
                 busy = xr
                 trades.append({"date": t.strftime("%Y-%m-%d"), "time": t.strftime("%H:%M"), "ticker": tk, "tf": tf, "side": sd,
                                "liq": round(liq), "cap": round(liq * m["liq"]) if m.get("liq") and liq else None,
                                "entry": round(px, 6), "stop": round(stop, 6), "take": round(take, 6), "exit": round(xp, 6),
                                "exit_time": rows[xr][0].strftime("%d.%m %H:%M"), "reason": why, "pct": round((res - BT_COST) * 100, 3)})
-                if not m["multi"] or why not in ("стоп", "тейк") or xr >= z:
+                if not m["multi"] or not (why in ("стоп", "тейк") or why.startswith("тейк ")) or xr >= z:
                     break
                 r = xr + 1
     trades.sort(key=lambda x: (x["date"], x["time"]))
@@ -1058,7 +1088,9 @@ class Backtest:
                              + f", {m['share'] * 100:g}% счёта на сделку"
                              + (f", но не больше {m['liq'] * 100:g}% дневного оборота бумаги" if m["liq"] else "")
                              + (f", оборот не меньше {m['min_turn'] / 1e6:g} млн ₽/день" if m["min_turn"] else "")
-                             + (f", объём сегодня не меньше {m['min_vol'] / 1e6:g} млн ₽" if m.get("min_vol") else "") + "; "
+                             + (f", объём сегодня не меньше {m['min_vol'] / 1e6:g} млн ₽" if m.get("min_vol") else "")
+                             + (f", на хае дня закрыть {m['take_part'] * 100:g}% → безубыток → трейлинг {m['trail'] * 100:g}%" if m["take_part"] < 1 else "")
+                             + (", 2-й и следующие входы — стоп за лоем предыдущего движения" if m["multi"] and m["prev_stop"] else "") + "; "
                              f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}"),
                 "done": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
             self.state.update(progress="готово", pct=100)

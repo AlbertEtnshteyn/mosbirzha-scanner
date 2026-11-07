@@ -761,6 +761,10 @@ function renderSettings(s) {
     ${inp("mid_exit", "Выход в (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="23:45"')}
     ${sel("mid_ref", "Рост считать", [["7", "от открытия рынка 07:00"], ["10", "от открытия основной сессии 10:00 (лучше на истории)"]])}
     ${chk("mid_multi", "Несколько покупок по бумаге за день", "После закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней. На истории хуже одной покупки.")}
+    ${chk("mid_prev_stop", "2-й и следующие входы — стоп за лоем предыдущего движения", "Работает, если включено несколько входов. Стоп — за дном отката после прошлого входа (для шорта — за вершиной); если оно ближе 0,3% к цене — за лоем дня.")}
+    ${sel("mid_take_mode", "Тейк на хае дня (для шорта — на лое)", [["all", "закрыть всю позицию"], ["part", "закрыть часть → стоп в безубыток → трейлинг-стоп"]])}
+    ${inp("mid_take_part", "…часть, %", "number", 'step="5" inputmode="decimal"')}
+    ${inp("mid_trail", "…трейлинг, % от лучшей цены", "number", 'step="0.1" inputmode="decimal"')}
     ${sel("mid_carry", "Во время выхода", [["none", "закрыть все позиции"], ["all", "переносить все (до стопа или тейка)"], ["profit", "переносить только позиции в плюсе"]])}
     ${inp("mid_carry_days", "Переносить не дольше, дней (0 — без ограничения)", "number", 'step="1" inputmode="numeric"')}
     <div class="hint" style="margin-left:0">Стоп и тейк перенесённой позиции остаются. У каждой позиции выбор можно поменять вручную (кнопки у позиции).</div>
@@ -820,7 +824,9 @@ $("#setForm").addEventListener("submit", async (e) => {
     mid_thr: parseFloat(String(v("mid_thr")).replace(",", ".")) || 2.5, mid_tfs: [5, 15, 60, 1440].filter((k) => c("mtf_" + k)),
     mid_from: (v("mid_from") || "10:00").trim(), mid_to: (v("mid_to") || "18:00").trim(), mid_exit: (v("mid_exit") || "23:45").trim(),
     mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10,
-    mid_liq: parseFloat(v("mid_liq")) || 1, mid_min_turn: parseFloat(v("mid_min_turn")) || 20, mid_liq_on: c("mid_liq_on"), mid_minv_on: c("mid_minv_on"), mid_vol_on: c("mid_vol_on"), mid_vol: parseFloat(v("mid_vol")) || 5, mid_ref: v("mid_ref") || "7", mid_multi: c("mid_multi"), mid_carry: v("mid_carry") || "none", mid_modes: ["idx_long", "idx_short", "both", "long", "short"].filter((k) => c("mm_" + k)), mid_carry_days: parseInt(v("mid_carry_days")) || 0,
+    mid_liq: parseFloat(v("mid_liq")) || 1, mid_min_turn: parseFloat(v("mid_min_turn")) || 20, mid_liq_on: c("mid_liq_on"), mid_minv_on: c("mid_minv_on"), mid_vol_on: c("mid_vol_on"), mid_vol: parseFloat(v("mid_vol")) || 5,
+    mid_prev_stop: c("mid_prev_stop"), mid_take_mode: v("mid_take_mode") || "all",
+    mid_take_part: Math.min(95, Math.max(5, parseFloat(String(v("mid_take_part")).replace(",", ".")) || 50)), mid_trail: Math.max(0, parseFloat(String(v("mid_trail")).replace(",", ".")) || 0), mid_ref: v("mid_ref") || "7", mid_multi: c("mid_multi"), mid_carry: v("mid_carry") || "none", mid_modes: ["idx_long", "idx_short", "both", "long", "short"].filter((k) => c("mm_" + k)), mid_carry_days: parseInt(v("mid_carry_days")) || 0,
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };
   if (!out.mid_tfs.length) out.mid_tfs = [60];
