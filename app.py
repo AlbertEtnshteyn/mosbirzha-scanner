@@ -1484,7 +1484,8 @@ class App(tk.Tk):
                 f"макс. просадка {rub(sm['dd_rub'])} ({sm['dd']:.1f}%)\n"
                 f"Сделок {sm['n']} · в плюсе {sm['win']:g}% · средняя {sm['avg']:+.2f}%" + (f" · профит-фактор {sm['pf']:g}" if sm.get("pf") else "")
                 + f"\nсредняя прибыльная {sm.get('avg_win') or 0:+.2f}%, убыточная {sm.get('avg_loss') or 0:+.2f}% · выходы: {rs}"
-                + (f"\nвсё после комиссии брокера: уплачено бы {rub(sm['fees_rub'])}" if sm.get("fees_rub") is not None else "")))
+                + (f"\nвсё после комиссии брокера: уплачено бы {rub(sm['fees_rub'])}" if sm.get("fees_rub") is not None else "")
+                + (f", из них за перенос шортов {rub(sm['carry_rub'])}" if sm.get("carry_rub") else "")))
         self.bt_mon.delete(*self.bt_mon.get_children())
         for m in sm.get("months", []):
             self.bt_mon.insert("", "end", tags=("pos" if m["rub"] > 0 else "neg",),

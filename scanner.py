@@ -876,6 +876,26 @@ class TInvest:
             return r, f"тариф «{name}»", code
         return FEE_FALLBACK[0], f"тариф «{code or '?'}» — {FEE_FALLBACK[1]}", code
 
+    def margin_fees(self, since, acc=None):
+        """Сколько брокер фактически списал за перенос непокрытых позиций с момента since, ₽."""
+        if self.mode == "sandbox":
+            js = self.call("SandboxService", "GetSandboxAccounts", {})
+            accs = js.get("accounts", [])
+            acc = acc or (accs[0]["id"] if accs else None)
+            svc, meth = "SandboxService", "GetSandboxOperations"
+        else:
+            if not acc:
+                accs = self.real_accounts()
+                acc = next((a["id"] for a in accs if a.get("type") == "ACCOUNT_TYPE_TINKOFF"), accs[0]["id"] if accs else None)
+            svc, meth = "OperationsService", "GetOperations"
+        if not acc:
+            return 0.0
+        fmt = lambda d: d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        js = self.call(svc, meth, {"accountId": acc, "from": fmt(since), "to": fmt(datetime.now(timezone.utc)),
+                                   "state": "OPERATION_STATE_EXECUTED"})
+        return round(sum(abs(self.q(o.get("payment"))) for o in js.get("operations", [])
+                         if "MARGIN_FEE" in str(o.get("operationType", ""))), 2)
+
     @classmethod
     def order_fee(cls, js):
         """Комиссия по заявке из ответа брокера, ₽ (None — брокер не сообщил)."""
@@ -1171,6 +1191,23 @@ TARIFF_FEES = {                   # комиссия за сделку с акц
 }
 SANDBOX_FEE = (0.0005, "песочница")
 FEE_FALLBACK = (0.003, "тариф не определён — по самой высокой ставке «Инвестор»")
+
+
+# Плата за перенос непокрытых позиций (шорт; лонг на заёмные деньги) — по тарифам Т-Инвестиций: за каждый
+# календарный день (выходные тоже), по сумме непокрытых позиций всего счёта на конец предыдущего дня.
+# Позиции, закрытые в тот же день, — бесплатно. Лонг на свои деньги — бесплатно.
+CARRY_TABLE = [(3_000, 0.0), (50_000, 25.0), (100_000, 45.0), (200_000, 85.0), (300_000, 115.0), (500_000, 185.0),
+               (1_000_000, 365.0), (2_000_000, 700.0), (5_000_000, 1700.0)]
+CARRY_OVER = 0.00033              # свыше 5 млн ₽ — 0,033% от суммы в день
+
+
+def carry_fee_day(uncovered):
+    """Плата за перенос за один календарный день, ₽, по сумме непокрытых позиций счёта."""
+    u = abs(float(uncovered or 0))
+    for lim, fee in CARRY_TABLE:
+        if u <= lim:
+            return fee
+    return round(u * CARRY_OVER, 2)
 
 
 def fee_info():

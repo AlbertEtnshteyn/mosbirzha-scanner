@@ -914,7 +914,7 @@ def bt_run(data, m, imoex=None):
                 trades.append({"date": t.strftime("%Y-%m-%d"), "time": t.strftime("%H:%M"), "ticker": tk, "tf": tf, "side": sd,
                                "liq": round(liq), "cap": round(liq * m["liq"]) if m.get("liq") and liq else None,
                                "entry": round(px, 6), "stop": round(stop, 6), "take": round(take, 6), "exit": round(xp, 6),
-                               "exit_time": rows[xr][0].strftime("%d.%m %H:%M"), "reason": why,
+                               "exit_time": rows[xr][0].strftime("%d.%m %H:%M"), "exit_date": rows[xr][0].strftime("%Y-%m-%d"), "reason": why,
                                "gross": round(res * 100, 3), "fee_pct": round(fee * (2 + res) * 100, 4),
                                "pct": round((res - fee * (2 + res) - BT_SLIP) * 100, 3)})
                 if not m["multi"] or not (why in ("стоп", "тейк") or why.startswith("тейк ")) or xr >= z:
@@ -924,11 +924,40 @@ def bt_run(data, m, imoex=None):
     return trades
 
 
-def bt_summary(trades, share, capital=1_000_000, fee_month=0.0):
+def bt_carry(trades):
+    """Плата за перенос шортов по таблице тарифа: за каждый календарный день, по сумме всех шортов счёта на конец дня;
+    делится между шортами пропорционально сумме. Пишет в сделку carry_rub и carry_pct (доля от ставки)."""
+    from datetime import date as _d, timedelta as _td
+    by_night = {}
+    for t in trades:
+        t["carry_rub"], t["carry_pct"] = 0.0, 0.0
+        if t["side"] > 0 or not t.get("stake") or not t.get("exit_date") or t["exit_date"] <= t["date"]:
+            continue
+        d, end = _d.fromisoformat(t["date"]), _d.fromisoformat(t["exit_date"])
+        while d < end:                                   # ночь d → d+1: позиция на конец дня d
+            by_night.setdefault(d, []).append(t)
+            d += _td(days=1)
+    for d, ts in by_night.items():
+        tot = sum(t["stake"] for t in ts)
+        fee = sc.carry_fee_day(tot)
+        for t in ts:
+            t["carry_rub"] += fee * t["stake"] / tot
+    for t in trades:
+        if t["carry_rub"]:
+            t["carry_rub"] = round(t["carry_rub"], 2)
+            t["carry_pct"] = t["carry_rub"] / t["stake"] * 100
+
+
+def bt_summary(trades, share, capital=1_000_000, fee_month=0.0, _pass=0):
     """Итоги проверки. Каждая сделка — доля share от счёта на начало дня входа (как у робота), счёт растёт со сделками."""
     if not trades:
         return {"n": 0, "capital": capital, "final": capital, "profit_rub": 0, "profit_pct": 0}
-    pcts = [t["pct"] for t in trades]
+    if _pass == 0 and any(t["side"] < 0 and t.get("exit_date", "") > t["date"] for t in trades):
+        for t in trades:
+            t.pop("carry_pct", None)
+        bt_summary(trades, share, capital, fee_month, _pass=1)      # 1-й проход — суммы сделок для таблицы переноса
+        bt_carry(trades)
+    pcts = [t["pct"] - t.get("carry_pct", 0) for t in trades]
     win = [x for x in pcts if x > 0]
     los = [x for x in pcts if x <= 0]
     by_day = {}
@@ -945,8 +974,8 @@ def bt_summary(trades, share, capital=1_000_000, fee_month=0.0):
             if t.get("cap"):
                 stake = min(stake, t["cap"])                       # не больше доли дневного оборота бумаги
             t["stake"] = round(stake)
-            t["rub"] = round(stake * t["pct"] / 100, 2)
-            fees_rub += stake * t.get("fee_pct", 0) / 100
+            t["rub"] = round(stake * (t["pct"] - t.get("carry_pct", 0)) / 100, 2)
+            fees_rub += stake * (t.get("fee_pct", 0) + t.get("carry_pct", 0)) / 100
             if fee_month and d[:7] not in paid and eq < 1_500_000:      # абонплата тарифа — в месяц со сделками
                 paid.add(d[:7])
                 eq -= fee_month
@@ -954,7 +983,7 @@ def bt_summary(trades, share, capital=1_000_000, fee_month=0.0):
                 fees_rub += fee_month
             eq += t["rub"]
             mo["n"] += 1
-            mo["sum"] += t["pct"]
+            mo["sum"] += t["pct"] - t.get("carry_pct", 0)
             mo["rub"] += t["rub"]
         peak = max(peak, eq)
         dd = min(dd, eq / peak - 1)
@@ -969,6 +998,7 @@ def bt_summary(trades, share, capital=1_000_000, fee_month=0.0):
             "pf": round(sum(win) / -sum(los), 2) if los and sum(los) < 0 else None,
             "avg_win": round(sum(win) / len(win), 3) if win else None, "avg_loss": round(sum(los) / len(los), 3) if los else None,
             "reasons": reasons, "curve": curve, "fees_rub": round(fees_rub, 2), "fee_month": fee_month,
+            "carry_rub": round(sum(t.get("carry_rub", 0) for t in trades), 2),
             "months": [{"m": v["m"], "n": v["n"], "sum": round(v["sum"], 2), "rub": round(v["rub"], 2),
                         "eq": round(v["rub"] / v["start"] * 100, 2)} for _, v in sorted(months.items())]}
 
@@ -1107,6 +1137,9 @@ class Backtest:
                 del rows
             trades.sort(key=lambda x: (x["date"], x["time"]))
             sm = bt_summary(trades, m["share"], capital, fee_month)
+            for t in trades:                                        # в списке сделок — % уже за вычетом платы за перенос
+                if t.get("carry_pct"):
+                    t["pct"], t["carry_pct"] = round(t["pct"] - t["carry_pct"], 3), 0
             tfn = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}
             self.state["result"] = {
                 "summary": sm, "trades": trades[-400:], "tickers": done_n, "fails": fails,
@@ -1126,6 +1159,7 @@ class Backtest:
                              f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}; "
                              f"комиссия брокера {m['fee'] * 100:.3g}% за каждую покупку и продажу — {fee_name}"
                              + (f", абонплата {fee_month:g} ₽ в месяц со сделками" if fee_month else "")
+                             + ", перенос шортов — по таблице тарифа за каждый календарный день"
                              + f", проскальзывание {BT_SLIP * 100:.2g}% на сделку"),
                 "done": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
             self.state.update(progress="готово", pct=100)

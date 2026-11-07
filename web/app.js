@@ -691,7 +691,7 @@ async function loadTrades() {
       $("#trList").innerHTML = d.rows.filter((r) => !TRF || r.strat === TRF).map((r) => {
         const v = +r.result_pct;
         return `<div class="item tap" data-chart="${esc(r.ticker)}" data-tf="15"><div class="hd"><span><b>${esc(r.ticker)}</b> <span class="muted small">${esc(r.strat)} · ${esc(r.side)}</span></span>
-          <b class="${cls(v)}">${pct(v)}</b></div><div class="meta">${esc(r.date)} · ${esc(r.lots)} лот. · ${esc(r.entry)} → ${esc(r.exit)} · ${esc(r.reason)}${r.fee_rub ? ` · комиссия ${rub(+r.fee_rub)}${r.fee_src === "брокер" ? "" : " (по тарифу)"}` : ""}</div></div>`;
+          <b class="${cls(v)}">${pct(v)}</b></div><div class="meta">${esc(r.date)} · ${esc(r.lots)} лот. · ${esc(r.entry)} → ${esc(r.exit)} · ${esc(r.reason)}${r.fee_rub ? ` · комиссия ${rub(+r.fee_rub)}${r.fee_src === "брокер" ? "" : " (по тарифу)"}${+r.carry_rub ? `, за перенос ${rub(+r.carry_rub)}` : ""}` : ""}</div></div>`;
       }).join("");
     } else {
       const d = await api("/api/journal");
@@ -900,7 +900,7 @@ async function loadBT() {
   $("#btSum").innerHTML = !S.n ? `<div class="muted">Сделок за период нет.</div>` :
     `<div class="item"><div class="hd"><b>${rub(S.capital)} → ${rub(S.final)}</b><b class="${cls(S.profit_rub)}">${rub(S.profit_rub, true)} (${pct(S.profit_pct)})</b></div>
      <div class="meta">макс. просадка ${rub(S.dd_rub)} (${pct(S.dd, 1)}) · сделок ${S.n} · в плюсе ${S.win}% · средняя ${pct(S.avg)}${S.pf ? " · профит-фактор " + S.pf : ""}<br>
-     прибыльная ${pct(S.avg_win)} · убыточная ${pct(S.avg_loss)} · выходы: ${Object.entries(S.reasons || {}).map(([k, v]) => esc(k) + " " + v).join(", ")}${S.fees_rub != null ? `<br>всё после комиссии брокера: уплачено бы ${rub(S.fees_rub)}` : ""}</div></div>`;
+     прибыльная ${pct(S.avg_win)} · убыточная ${pct(S.avg_loss)} · выходы: ${Object.entries(S.reasons || {}).map(([k, v]) => esc(k) + " " + v).join(", ")}${S.fees_rub != null ? `<br>всё после комиссии брокера: уплачено бы ${rub(S.fees_rub)}${S.carry_rub ? `, из них за перенос шортов ${rub(S.carry_rub)}` : ""}` : ""}</div></div>`;
   $("#btMon").innerHTML = (S.months || []).map((m) => `<div class="item"><div class="hd"><span>${esc(m.m)} · сделок ${m.n}</span><span class="${cls(m.rub)}">${rub(m.rub, true)} · ${pct(m.eq)}</span></div></div>`).join("");
   const tfn = { 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" };
   $("#btTr").innerHTML = (r.trades || []).slice().reverse().slice(0, 300).map((x) =>

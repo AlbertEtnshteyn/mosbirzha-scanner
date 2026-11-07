@@ -451,7 +451,7 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, ca
 
 IDX_FLIP_BAND = 0.001          # разворот индекса считается, когда он ушёл от открытия больше чем на 0,1% в другую сторону
 LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct", "time", "pnl_rub", "entry_time",
-            "fee_rub", "gross_pct", "fee_src"]      # result_pct и pnl_rub — после комиссии брокера; gross_pct — до неё
+            "fee_rub", "gross_pct", "fee_src", "carry_rub"]   # result_pct и pnl_rub — после комиссии брокера (сделки и переноса); gross_pct — до неё
 BAL_COLS = ["time", "value", "deposit"]
 
 
@@ -1089,6 +1089,10 @@ class AutoTrader:
                 return        # не удалось закрыть — попробуем снова на следующем шаге
         if keep:
             self.log(f"Перенесённые позиции: {', '.join(p['ticker'] for p in keep)} — веду дальше.")
+            try:
+                self._carry_fees(keep, self.st.get("date"), now)
+            except Exception as e:
+                self.log(f"Плата за перенос не посчитана ({e})")
         self.st = self._fresh(now.date().isoformat())
         self.st["positions"] = keep
         self.opens, self.open_tries, self.scan_rows, self.market, self.prices = {}, {}, [], None, {}
@@ -1536,6 +1540,53 @@ class AutoTrader:
         kind, per_lot, _ = self._terms(tk)
         return [dict(r, val=r["v"] * per_lot * (r["h"] + r["l"] + r["c"]) / 3)
                 for r in self.hist[tk] if r["t"] + timedelta(minutes=5) <= naive]      # только закрытые свечи
+
+    def _carry_fees(self, keep, prev_date, now):
+        """Плата брокера за перенос: шорт и лонг на заёмные деньги — за каждый календарный день по таблице тарифа
+        (по сумме непокрытых позиций всего счёта), делится между перенесёнными позициями пропорционально их доле."""
+        if not prev_date:
+            return
+        days = (now.date() - datetime.fromisoformat(prev_date).date()).days
+        if days <= 0:
+            return
+        vals = {}
+        for p in keep:
+            try:
+                per_lot = p.get("per_lot") or self._terms(p["ticker"])[1]
+            except Exception:
+                per_lot = 1.0
+            px = self.prices.get(p["ticker"]) or p["entry"]
+            vals[id(p)] = abs(px * p["lots"] * per_lot)
+        shorts = sum(vals[id(p)] for p in keep if p["side"] < 0)
+        longs = sum(vals[id(p)] for p in keep if p["side"] > 0)
+        eq = self.capital
+        try:
+            eq = (self.b.portfolio_value() if hasattr(self.b, "portfolio_value") else 0) or self.capital
+        except Exception:
+            pass
+        long_debt = max(0.0, longs - eq)                       # лонг сверх своих денег — на заёмные
+        unc = {id(p): (vals[id(p)] if p["side"] < 0 else (vals[id(p)] / longs * long_debt if longs else 0)) for p in keep}
+        total_unc = sum(unc.values())
+        fee = sc.carry_fee_day(total_unc) * days
+        if fee <= 0:
+            if shorts or long_debt:
+                self.log(f"Перенос: непокрытых позиций {total_unc:,.0f} ₽ — до 3 000 ₽ брокер не берёт плату.".replace(",", " "))
+            return
+        for p in keep:
+            part = round(fee * unc[id(p)] / total_unc, 2)
+            if part:
+                p["carry_fee"] = round(float(p.get("carry_fee") or 0) + part, 2)
+                p["fee_in"] = round(float(p.get("fee_in") or 0) + part, 2)
+        self.log(f"Плата за перенос: непокрытые позиции {total_unc:,.0f} ₽ × {days} дн. = {fee:,.2f} ₽ по тарифу "
+                 f"(вычтена из результата: {', '.join(p['ticker'] for p in keep if unc[id(p)])}).".replace(",", " "))
+        if hasattr(self.b, "ti") and hasattr(self.b.ti, "margin_fees"):
+            try:
+                since = datetime.fromisoformat(prev_date).replace(tzinfo=sc.MSK)
+                real = self.b.ti.margin_fees(since, getattr(self.b, "acc", None))
+                self.log(f"  по данным брокера за перенос с {since:%d.%m} списано {real:,.2f} ₽".replace(",", " ")
+                         + ("" if real else " (брокер ещё не списал или в песочнице не списывает)"))
+            except Exception:
+                pass
 
     def _fee_rate(self):
         return float(getattr(self.b, "fee_rate", None) or sc.fee_rate())
@@ -2245,10 +2296,12 @@ class AutoTrader:
         if "fee_in" not in p:                                            # позиция открыта старой версией — комиссия входа по тарифу
             p["fee_in"] = self._fee(p["ticker"], all_lots, p["entry"])[0]     # заявка выхода уже учтена — здесь только ставка
             p["fee_src"] = "тариф"
-        fee_in = float(p.get("fee_in") or 0) * lots / all_lots          # доля комиссии входа на закрываемые лоты
+        fee_in = float(p.get("fee_in") or 0) * lots / all_lots          # доля комиссии входа (и переноса) на закрываемые лоты
+        carry = float(p.get("carry_fee") or 0) * lots / all_lots
         if lots < all_lots:
             p["lots"] -= lots
             p["fee_in"] = round(float(p.get("fee_in") or 0) - fee_in, 2)
+            p["carry_fee"] = round(float(p.get("carry_fee") or 0) - carry, 2)
         else:
             self.positions.remove(p)
         fee = fee_in + fee_out
@@ -2263,7 +2316,8 @@ class AutoTrader:
         self.st["results"].append([p.get("strat", "15"), res])
         self._save()
         self.log(f"  {p['ticker']}: закрыто {lots} лот. ({why}) по ~{exit_px:.4g}, результат {res * 100:+.2f}% после комиссии"
-                 + (f" ({pnl_rub:+,.2f} ₽; комиссия {fee:,.2f} ₽{'' if src_out == 'брокер' else ' по тарифу'})".replace(",", " ") if pnl_rub is not None else "")
+                 + ((f" ({pnl_rub:+,.2f} ₽; комиссия {fee:,.2f} ₽{'' if src_out == 'брокер' else ' по тарифу'}"
+                     + (f"; из них за перенос {carry:,.2f} ₽" if carry else "") + ")").replace(",", " ") if pnl_rub is not None else "")
                  + (" [всплеск]" if p.get("strat") == "spike" else " [вручную]" if p.get("strat") == "manual" else ""))
         sc.append_rows(sc.SPIKE_LOG if p.get("strat") == "spike" else sc.MANUAL_LOG if p.get("strat") == "manual" else sc.SANDBOX_LOG, LOG_COLS,
                        [{"date": self.st.get("date") or self.clock().date().isoformat(), "ticker": p["ticker"],
@@ -2272,7 +2326,8 @@ class AutoTrader:
                          "time": self.clock().strftime("%Y-%m-%d %H:%M"), "pnl_rub": round(pnl_rub, 2) if pnl_rub is not None else "",
                          "entry_time": f"{p.get('date', '')} {str(p.get('time', ''))[:5]}".strip(),
                          "fee_rub": round(fee, 2), "gross_pct": round(gross * 100, 4),
-                         "fee_src": "брокер" if src_out == "брокер" and p.get("fee_src", "брокер") == "брокер" else "тариф"}])
+                         "fee_src": "брокер" if src_out == "брокер" and p.get("fee_src", "брокер") == "брокер" else "тариф",
+                         "carry_rub": round(carry, 2) if carry else ""}])
         self.on_event("close", {"ticker": p["ticker"], "why": why, "result": res, "lots": lots})
         self._push()
         return True
