@@ -1578,8 +1578,10 @@ class App(tk.Tk):
     def show_robot(self, snap):
         if self.robot_running():
             bal = snap.get("balance")
+            acc = snap.get("account") or ""
             self.robot_lbl.configure(text=f"Робот: {snap['status']}"
-                                     + (f" · баланс {bal:,.0f} ₽".replace(",", " ") if bal else ""))
+                                     + (f"   ·   баланс {bal:,.0f} ₽".replace(",", " ") + (f" ({acc})" if acc else "") if bal else
+                                        "   ·   баланс: подключаюсь к счёту…"))
             self._robot_buttons()
         mk = snap.get("market")
         ls = snap.get("last_scan")

@@ -488,7 +488,7 @@ class Robot:
                 "last_scan": snap.get("last_scan"),
                 "positions": snap.get("positions", []) if r else [],
                 "spikes": list(reversed(snap.get("spikes", []))), "scan": snap.get("scan", [])[:60],
-                "threshold": sc.THRESHOLD, "ev_seq": self.ev_seq, "balance": snap.get("balance"),
+                "threshold": sc.THRESHOLD, "ev_seq": self.ev_seq, "balance": snap.get("balance"), "account": snap.get("account", ""),
                 "entry": self.s.get("entry", "15:00"), "day_on": bool(self.s.get("day_on", True)), "day_mode": self.s.get("day_mode", "fixed"),
                 "pos_summary": rc.positions_summary(snap.get("positions", []) if r else []),
                 "index": (LIVE.index_now() if LIVE else None) or self.index,

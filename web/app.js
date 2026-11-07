@@ -214,6 +214,7 @@ function renderState(st) {
   else if (st.trade) { b.textContent = "● ТОРГОВЛЯ ВКЛ"; b.className = "badge on"; }
   else { b.textContent = "наблюдение"; b.className = "badge off"; }
   $("#status").textContent = st.status || "";
+  if (st.balance) { $("#balance").textContent = rub(st.balance); $("#balance").title = st.account || ""; }   // баланс счёта — и в выходные
   $("#market").innerHTML = ix ? `<span class="${cls(ix.pct)}">${pct(ix.pct)}</span>` : "—";     // реальное изменение к вчерашнему закрытию
   const mo = st.idx_ref === "imoex" ? null : (st.market_open != null ? st.market_open : st.market);
   $("#marketOpen").textContent = (typeof SET !== "undefined" && SET && (SET.mid_modes || []).some((k) => k.startsWith("idx_"))) ? "часть входов — по направлению индекса IMOEX" : "";

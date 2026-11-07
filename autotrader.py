@@ -465,6 +465,7 @@ def hm(m):
 
 class SandboxBroker:
     """Демо-счёт песочницы Т-Инвестиций."""
+    name = "Т-Инвестиции (демо-счёт)"
     def __init__(self, token, capital, log=print):
         self.ti = sc.TInvest(token, "sandbox")
         self.capital = capital
@@ -942,7 +943,7 @@ class AutoTrader:
                         "idx_ref": self.sp.get("idx_ref", "imoex"), "scan": self._scan_view(),
                         "spikes": list(self.spikes[-50:]),
                         "positions": [self._pos_view(p) for p in self.positions],
-                        "last_scan": self.last_scan, "balance": self.balance})
+                        "last_scan": self.last_scan, "balance": self.balance, "account": getattr(self.b, "name", "")})
 
     def _scan_view(self):
         """Кандидаты для экрана: рост от 07:00 и что с бумагой делает «Движение дня»."""
@@ -979,6 +980,26 @@ class AutoTrader:
                - rate * last * p["lots"] * per_lot) if last and per_lot else None
         return dict(p, last=last, pnl_rub=round(pnl, 2) if pnl is not None else None, fee_in=fee_in, fee_rate=rate,
                     mult=p["lots"] * per_lot if per_lot else None)
+
+    def _idle_balance(self, now):
+        """Баланс счёта и когда биржа закрыта (выходные, ночь): подключиться к счёту, если ещё не подключён, и узнать стоимость."""
+        if getattr(self.b, "acc", None) is None:
+            if time.time() - getattr(self, "_idle_prep_t", 0) < 600:
+                return
+            self._idle_prep_t = time.time()
+            try:
+                self.b.prepare()
+            except sc.CertError:
+                raise
+            except Exception as e:
+                self.log(f"Счёт пока не подключён ({e}) — баланс покажу позже")
+                return
+        try:
+            self._balance(now)
+        except sc.CertError:
+            raise
+        except Exception:
+            pass
 
     def _balance(self, now):
         """Стоимость счёта по текущим ценам (с открытыми позициями) раз в минуту; в файл — при изменении (не чаще 10 мин) или раз в 30 минут."""
@@ -1026,11 +1047,13 @@ class AutoTrader:
                     nxt = self.cal.next_trading(now.date(), wk)
                     why = sc.DAY_KINDS[kind] + (" (торговля в выходные выключена)" if kind == "weekend_session" else "")
                     self.in_session = False
+                    self._idle_balance(now)
                     self._set_status(f"{why} — жду " + (f"{nxt:%d.%m}" if nxt else "следующего торгового дня"))
                     self._sleep(300)
                     continue
                 if t < DAY_START or t >= DAY_END:
                     self.in_session = False
+                    self._idle_balance(now)
                     self._set_status(f"биржа закрыта — жду {hm(DAY_START)}")
                     self._sleep(60)
                     continue
