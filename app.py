@@ -1579,9 +1579,14 @@ class App(tk.Tk):
         if self.robot_running():
             bal = snap.get("balance")
             acc = snap.get("account") or ""
+            real = snap.get("real") or {}
+            rtxt = ""
+            if real and snap.get("broker") != "tinvest_real":     # токен реального счёта введён, но торгует демо — показать и его
+                rtxt = (f"   ·   реальный счёт {real['value']:,.0f} ₽ (робот на нём не торгует — брокер в настройках: демо)".replace(",", " ")
+                        if real.get("ok") else f"   ·   реальный счёт: токен не подошёл ({real.get('error', '')[:80]})")
             self.robot_lbl.configure(text=f"Робот: {snap['status']}"
                                      + (f"   ·   баланс {bal:,.0f} ₽".replace(",", " ") + (f" ({acc})" if acc else "") if bal else
-                                        "   ·   баланс: подключаюсь к счёту…"))
+                                        "   ·   баланс: подключаюсь к счёту…") + rtxt)
             self._robot_buttons()
         mk = snap.get("market")
         ls = snap.get("last_scan")

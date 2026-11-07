@@ -170,7 +170,8 @@ class RemoteRobot:
                 self.on_update({"status": status, "market": st.get("market"), "market_open": st.get("market_open"),
                                 "idx_ref": st.get("idx_ref"), "scan": st.get("scan") or [],
                                 "spikes": list(reversed(st.get("spikes") or [])), "positions": self.positions,
-                                "last_scan": ls, "threshold": st.get("threshold"), "balance": st.get("balance"), "account": st.get("account", ""), "remote": True})
+                                "last_scan": ls, "threshold": st.get("threshold"), "balance": st.get("balance"), "account": st.get("account", ""),
+                                "real": st.get("real"), "broker": st.get("broker"), "remote": True})
             except Exception as e:
                 if self.ok is not False:
                     self.log(f"Нет связи с сервером {self.where}: {e}. Повторяю каждые 10 секунд "

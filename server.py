@@ -175,7 +175,62 @@ class Robot:
         rc.save_settings(self.s, keep_token=True)
         self._apply()
         log("Настройки сохранены с телефона.")
+        if new.get("real_token") or new.get("real_account") is not None:
+            self.real_info(force=True)                   # проверить токен реального счёта сразу — результат в журнал и на экран
         self.restart()
+
+    # --- реальный счёт Т-Инвестиций: проверка токена и баланс (видно, даже если робот торгует на демо-счёте)
+    def real_info(self, force=False, wait=False):
+        """Последняя проверка токена реального счёта: {"ok", "acc", "name", "value", "tariff", "time"} или {"ok": False, "error"}.
+        Обновляется в фоне раз в 5 минут (запрос к брокеру не тормозит ответы телефону)."""
+        tok = self.s.get("real_token")
+        if not tok:
+            self._real = None
+            return None
+        cur = getattr(self, "_real", None)
+        fresh = cur and cur.get("_tok") == tok[-6:] and time.time() - cur.get("_t", 0) < 300
+        if (force or not fresh) and not getattr(self, "_real_busy", False):
+            self._real_busy = True
+
+            def job():
+                try:
+                    ti = sc.TInvest(tok, "prod")
+                    accs = ti.real_accounts()
+                    if not accs:
+                        raise RuntimeError("у токена нет открытых брокерских счетов")
+                    want = str(self.s.get("real_account") or "").strip()
+                    a = next((x for x in accs if x["id"] == want), None) or \
+                        next((x for x in accs if x.get("type") == "ACCOUNT_TYPE_TINKOFF"), accs[0])
+                    v = ti.real_live_value(a["id"])
+                    try:
+                        tariff = ti.tariff()[1]
+                    except Exception:
+                        tariff = ""
+                    full = a.get("accessLevel") in (None, "ACCOUNT_ACCESS_LEVEL_FULL_ACCESS")
+                    info = {"ok": True, "acc": a["id"], "name": a.get("name", ""), "value": round(v, 2), "tariff": tariff,
+                            "full": full, "accounts": len(accs)}
+                except Exception as e:
+                    info = {"ok": False, "error": str(e)}
+                info.update(_tok=tok[-6:], _t=time.time(), time=now_msk().strftime("%H:%M"))
+                old = getattr(self, "_real", None)
+                self._real = info
+                if not old or old.get("_tok") != info["_tok"] or old.get("ok") != info["ok"]:
+                    if info["ok"]:
+                        log(f"Токен реального счёта Т-Инвестиций работает: счёт {info['acc']} ({info['name']}), "
+                            + f"{info['value']:,.0f}".replace(",", " ") + f" ₽{', ' + tariff if tariff else ''}"
+                            + ("" if info["full"] else " — ВНИМАНИЕ: у токена нет права торговать (нужен «полный доступ»)")
+                            + ("." if self.s.get("broker") == "tinvest_real" else
+                               ". Робот сейчас торгует на демо-счёте — чтобы торговать на реальном, выберите в настройках "
+                               "брокера «Т-Инвестиции — реальный счёт»."))
+                    else:
+                        log(f"Токен реального счёта Т-Инвестиций не подошёл: {info['error']}")
+                self._real_busy = False
+            th = threading.Thread(target=job, daemon=True)
+            th.start()
+            if wait:
+                th.join(25)
+        r = getattr(self, "_real", None)
+        return {k: v for k, v in r.items() if not k.startswith("_")} if r else None
 
     def public_settings(self):
         d = dict(self.s)
@@ -493,7 +548,7 @@ class Robot:
                 "pos_summary": rc.positions_summary(snap.get("positions", []) if r else []),
                 "index": (LIVE.index_now() if LIVE else None) or self.index,
                 "pair": PAIR.info() if PAIR else None, "resetting": self.resetting,
-                "broker": self.s.get("broker", "tinvest")}
+                "broker": self.s.get("broker", "tinvest"), "real": self.real_info()}
 
 
 ROBOT = None

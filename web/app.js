@@ -215,6 +215,11 @@ function renderState(st) {
   else { b.textContent = "наблюдение"; b.className = "badge off"; }
   $("#status").textContent = st.status || "";
   if (st.balance) { $("#balance").textContent = rub(st.balance); $("#balance").title = st.account || ""; }   // баланс счёта — и в выходные
+  const rl = st.real;                       // токен реального счёта введён: показать его баланс, даже если робот торгует на демо
+  $("#balReal").textContent = !rl ? (st.account ? st.account : "") :
+    !rl.ok ? "реальный счёт: токен не подошёл — " + (rl.error || "").slice(0, 80) :
+    st.broker === "tinvest_real" ? `реальный счёт ${rl.acc}${rl.tariff ? " · " + rl.tariff : ""}` :
+    `реальный счёт: ${rub(rl.value)} — робот на нём не торгует (в настройках брокер: демо-счёт)`;
   $("#market").innerHTML = ix ? `<span class="${cls(ix.pct)}">${pct(ix.pct)}</span>` : "—";     // реальное изменение к вчерашнему закрытию
   const mo = st.idx_ref === "imoex" ? null : (st.market_open != null ? st.market_open : st.market);
   $("#marketOpen").textContent = (typeof SET !== "undefined" && SET && (SET.mid_modes || []).some((k) => k.startsWith("idx_"))) ? "часть входов — по направлению индекса IMOEX" : "";
