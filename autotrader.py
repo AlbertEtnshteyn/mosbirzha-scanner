@@ -450,7 +450,8 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, ca
 
 
 IDX_FLIP_BAND = 0.001          # разворот индекса считается, когда он ушёл от открытия больше чем на 0,1% в другую сторону
-LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct", "time", "pnl_rub", "entry_time"]
+LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct", "time", "pnl_rub", "entry_time",
+            "fee_rub", "gross_pct", "fee_src"]      # result_pct и pnl_rub — после комиссии брокера; gross_pct — до неё
 BAL_COLS = ["time", "value", "deposit"]
 
 
@@ -478,6 +479,45 @@ class SandboxBroker:
             self.ti.sandbox_pay_in(self.acc, self.capital)
             sc.append_rows(bal_log(), BAL_COLS, [{"time": datetime.now(sc.MSK).strftime("%Y-%m-%d %H:%M"),
                                                   "value": round(value + self.capital, 2), "deposit": self.capital}])
+        self.detect_fee()
+
+    # --- комиссия брокера
+    fee_rate, fee_name, _last_fee = sc.SANDBOX_FEE[0], "песочница Т-Инвестиций", None
+
+    def detect_fee(self):
+        """Узнать у брокера тариф счёта; если по прошлым сделкам этого брокера уже известна фактическая ставка — взять её."""
+        try:
+            r, name, code = self.ti.tariff()
+        except Exception as e:
+            r, name, code = sc.FEE_FALLBACK[0], f"тариф не получен ({e}) — {sc.FEE_FALLBACK[1]}", ""
+        d = sc.fee_info()
+        key = f"{type(self).__name__}:{code}"
+        if d.get("key") == key and d.get("observed"):
+            r, name = float(d["rate"]), d.get("name") or name
+        else:
+            d = sc.save_fee_info(key=key, rate=r, name=name, observed=0, src="тариф брокера")
+        self.fee_rate, self.fee_name = r, name
+        self.log(f"Комиссия брокера: {r * 100:.3g}% за каждую сделку (покупку и продажу) — {name}"
+                 + (" (по фактическим сделкам)" if d.get("observed") else "") + ". Учитывается в результатах сделок и в проверке на истории.")
+
+    def take_fee(self, tk, lots, px):
+        """Комиссия по последней заявке, ₽, и откуда она: «брокер» (сумма из ответа брокера) или «тариф» (по ставке)."""
+        fee, self._last_fee = self._last_fee, None
+        try:
+            kind, per_lot, _ = self.terms(tk)
+        except Exception:
+            kind, per_lot = "share", 1.0
+        val = abs(px * lots * per_lot) if px else 0.0
+        if fee is not None and fee > 0:
+            if kind == "share" and val > 0 and 0 < fee / val < 0.01:      # фактическая ставка по сделке — запомнить
+                r = fee / val
+                d = sc.fee_info()
+                n = int(d.get("observed") or 0)
+                avg = (float(d.get("rate", r)) * n + r) / (n + 1) if n else r
+                self.fee_rate = avg
+                sc.save_fee_info(rate=round(avg, 7), observed=min(n + 1, 200), src="по сделкам брокера", name=self.fee_name)
+            return round(fee, 2), "брокер"
+        return round(val * self.fee_rate, 2), "тариф"
 
     def tickers(self):
         return sc.imoex_tickers()
@@ -546,8 +586,9 @@ class SandboxBroker:
         return sh.get("kind", "share"), float(sh["lot"]), None
 
     def order(self, tk, lots, side):
-        """Рыночная заявка. Возвращает цену исполнения (или None, если брокер её не сообщил)."""
+        """Рыночная заявка. Возвращает цену исполнения (или None, если брокер её не сообщил); комиссия — take_fee()."""
         js = self.ti.sandbox_order(self.acc, tk, lots, side)
+        self._last_fee = sc.TInvest.order_fee(js)
         px = sc.TInvest.q(js.get("executedOrderPrice")) if isinstance(js, dict) else 0
         return px or None
 
@@ -567,6 +608,16 @@ class FinamBroker(SandboxBroker):
         v = self.fn.equity()
         self.acc = acc
         self.log(f"Финам: счёт {acc}, стоимость {v:,.0f} ₽. Данные рынка — из Т-Инвестиций.".replace(",", " "))
+        self.detect_fee()
+
+    def detect_fee(self):
+        d = sc.fee_info()
+        if d.get("key") == "FinamBroker" and d.get("rate"):
+            self.fee_rate, self.fee_name = float(d["rate"]), d.get("name")
+        else:
+            self.fee_rate, self.fee_name = 0.0005, "Финам: тариф через Trade API не сообщается — ставка 0,05% (оценка)"
+            sc.save_fee_info(key="FinamBroker", rate=self.fee_rate, name=self.fee_name, observed=0, src="оценка")
+        self.log(f"Комиссия брокера: {self.fee_rate * 100:.3g}% за сделку — {self.fee_name}.")
 
     def portfolio_value(self):
         return self.fn.equity()
@@ -612,6 +663,7 @@ class TInvestRealBroker(SandboxBroker):
         self.acc = acc["id"]
         v = self.ti.real_portfolio_value(self.acc)
         self.log(f"РЕАЛЬНЫЙ счёт Т-Инвестиций {self.acc} ({acc.get('name', '')}): {v:,.0f} ₽. Сделки — на реальные деньги.".replace(",", " "))
+        self.detect_fee()
 
     def portfolio_value(self):
         return self.ti.real_portfolio_value(self.acc)
@@ -621,6 +673,7 @@ class TInvestRealBroker(SandboxBroker):
 
     def order(self, tk, lots, side):
         js = self.ti.real_order(self.acc, tk, lots, side)
+        self._last_fee = sc.TInvest.order_fee(js)
         st = js.get("executionReportStatus", "") if isinstance(js, dict) else ""
         if st in ("EXECUTION_REPORT_STATUS_REJECTED", "EXECUTION_REPORT_STATUS_CANCELLED"):
             raise RuntimeError(f"брокер отклонил заявку: {js.get('message') or st}")
@@ -640,6 +693,62 @@ def make_broker(s, log=print):
     if s.get("broker") == "finam":
         return FinamBroker(s.get("token"), float(s["capital"]), s.get("finam_secret"), s.get("finam_account", ""), log=log)
     return SandboxBroker(s.get("token"), float(s["capital"]), log=log)
+
+
+def net_pct(p, last):
+    """Результат открытой позиции, доля, после комиссии: входа (фактической) и выхода (по ставке тарифа)."""
+    g = p["side"] * (last / p["entry"] - 1)
+    rate = float(p.get("fee_rate") or 0)
+    m = p.get("mult")
+    fin = float(p.get("fee_in") or 0) / (p["entry"] * m) if m else rate
+    return g - fin - rate * last / p["entry"]
+
+
+def migrate_fee_rows(rate, paths=None):
+    """Старые записи журналов сделок (до учёта комиссии) пересчитать после комиссии по ставке тарифа — один раз:
+    у пересчитанной записи появляется fee_src «оценка», повторно она не трогается. Возвращает число пересчитанных."""
+    import csv
+    done = 0
+    for path in paths or (sc.SANDBOX_LOG, sc.SPIKE_LOG, sc.MANUAL_LOG):
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        n = 0
+        for r in rows:
+            if (r.get("fee_rub") or "") != "" or r.get("fee_src"):
+                continue
+            try:
+                res = float(r.get("result_pct") or 0) / 100
+                e, x = float(r.get("entry") or 0), float(r.get("exit") or 0)
+                sd = -1 if r.get("side") == "шорт" else 1
+            except ValueError:
+                continue
+            r["gross_pct"] = r.get("result_pct", "")
+            fee_pct = rate * (2 + res)
+            pnl = r.get("pnl_rub") or ""
+            if pnl != "" and e > 0 and x != e:
+                try:
+                    q = float(pnl) / (sd * (x - e))                     # штук × множитель лота
+                    fee = rate * (e + x) * abs(q)
+                    r["pnl_rub"] = round(float(pnl) - fee, 2)
+                    r["fee_rub"] = round(fee, 2)
+                    fee_pct = fee / (e * abs(q))
+                except (ValueError, ZeroDivisionError):
+                    pass
+            r["result_pct"] = round((res - fee_pct) * 100, 4)
+            r["fee_src"] = "оценка"
+            n += 1
+        if n:
+            tmp = path + ".tmp"
+            with open(tmp, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=LOG_COLS)
+                w.writeheader()
+                for r in rows:
+                    w.writerow({k: r.get(k, "") for k in LOG_COLS})
+            os.replace(tmp, path)
+            done += n
+    return done
 
 
 class AutoTrader:
@@ -860,11 +969,14 @@ class AutoTrader:
         return out
 
     def _pos_view(self, p):
-        """Позиция для экрана: текущая цена и результат в ₽ (без комиссий)."""
+        """Позиция для экрана: текущая цена и результат в ₽ после комиссии (входа — фактической, выхода — по ставке тарифа)."""
         last = self.prices.get(p["ticker"])
         per_lot = p.get("per_lot") or (self._terms_cache.get(p["ticker"]) or (None, None))[1]
-        pnl = p["side"] * (last - p["entry"]) * p["lots"] * per_lot if last and per_lot else None
-        return dict(p, last=last, pnl_rub=round(pnl, 2) if pnl is not None else None,
+        rate = float(p.get("fee_rate") or self._fee_rate())
+        fee_in = p["fee_in"] if p.get("fee_in") is not None else round(rate * p["entry"] * p["lots"] * (per_lot or 0), 2)
+        pnl = (p["side"] * (last - p["entry"]) * p["lots"] * per_lot - float(fee_in)
+               - rate * last * p["lots"] * per_lot) if last and per_lot else None
+        return dict(p, last=last, pnl_rub=round(pnl, 2) if pnl is not None else None, fee_in=fee_in, fee_rate=rate,
                     mult=p["lots"] * per_lot if per_lot else None)
 
     def _balance(self, now):
@@ -925,6 +1037,13 @@ class AutoTrader:
                     self._new_day(now)
                 if prepared_for != now.date():
                     self.b.prepare()
+                    try:
+                        n = migrate_fee_rows(self._fee_rate())
+                        if n:
+                            self.log(f"Журналы сделок: в {n} старых сделках, записанных без комиссии, она вычтена по ставке "
+                                     f"{self._fee_rate() * 100:.3g}% за сделку — теперь все результаты после комиссии.")
+                    except Exception as e:
+                        self.log(f"Журналы сделок: комиссия в старых сделках не пересчитана ({e})")
                     self.tickers = self.b.tickers()
                     self.universe = list(self.tickers)
                     if hasattr(self.b, "universe"):
@@ -1418,6 +1537,22 @@ class AutoTrader:
         return [dict(r, val=r["v"] * per_lot * (r["h"] + r["l"] + r["c"]) / 3)
                 for r in self.hist[tk] if r["t"] + timedelta(minutes=5) <= naive]      # только закрытые свечи
 
+    def _fee_rate(self):
+        return float(getattr(self.b, "fee_rate", None) or sc.fee_rate())
+
+    def _fee(self, tk, lots, px):
+        """Комиссия брокера по только что исполненной заявке: (₽, «брокер» | «тариф»)."""
+        if hasattr(self.b, "take_fee"):
+            try:
+                return self.b.take_fee(tk, lots, px)
+            except Exception:
+                pass
+        try:
+            per_lot = self._terms(tk)[1]
+        except Exception:
+            per_lot = 1.0
+        return round(abs(px * lots * per_lot) * self._fee_rate(), 2), "тариф"
+
     def _terms(self, tk):
         if tk not in self._terms_cache:
             if hasattr(self.b, "terms"):
@@ -1838,6 +1973,7 @@ class AutoTrader:
             self.log(f"  {tk}: заявка отклонена: {e}")
             return
         entry = fill or px
+        fee_in, fee_src = self._fee(tk, lots, entry)
         stop = stop_level if stop_level is not None else entry * (1 - side * sc.STOP)
         if strat in ("manual", "mid"):
             take1, take2 = t1, None                                                # ручная позиция: один тейк — закрыть всё
@@ -1855,7 +1991,8 @@ class AutoTrader:
         pos = {"ticker": tk, "side": side, "lots": lots, "entry": entry, "stop": stop, "take": take1, "take2": take2,
                "strat": strat, "R": abs(entry - stop), "took": False, "per_lot": per_lot, "stage": 0, "peak": entry,
                "exit_min": exit_min or (self._day_exit() if strat == "15" else sc.EXIT_MIN), "time": self.clock().strftime("%H:%M:%S"), "carry": carry, "carry_max": carry_max,
-               "date": self.clock().date().isoformat(), "tf": tf or (5 if strat in ("15", "manual") else 15)}
+               "date": self.clock().date().isoformat(), "tf": tf or (5 if strat in ("15", "manual") else 15),
+               "fee_in": fee_in, "fee_rate": self._fee_rate(), "fee_src": fee_src}
         pos.update(day_ex)
         if day_ex.get("dtp"):                         # уровень тейка «движения дня» — для таблиц и графика
             pos["take"] = entry * (1 + side * day_ex["dtp"])
@@ -2102,25 +2239,40 @@ class AutoTrader:
             for k in ("_close_tries", "_close_why", "_close_lots"):
                 p.pop(k, None)
         exit_px = fill or px
-        res = p["side"] * (exit_px / p["entry"] - 1)
-        if lots < p["lots"]:
+        gross = p["side"] * (exit_px / p["entry"] - 1)
+        fee_out, src_out = self._fee(p["ticker"], lots, exit_px)
+        all_lots = p["lots"]
+        if "fee_in" not in p:                                            # позиция открыта старой версией — комиссия входа по тарифу
+            p["fee_in"] = self._fee(p["ticker"], all_lots, p["entry"])[0]     # заявка выхода уже учтена — здесь только ставка
+            p["fee_src"] = "тариф"
+        fee_in = float(p.get("fee_in") or 0) * lots / all_lots          # доля комиссии входа на закрываемые лоты
+        if lots < all_lots:
             p["lots"] -= lots
+            p["fee_in"] = round(float(p.get("fee_in") or 0) - fee_in, 2)
         else:
             self.positions.remove(p)
+        fee = fee_in + fee_out
+        try:
+            per_lot = self._terms(p["ticker"])[1]
+            gross_rub = p["side"] * (exit_px - p["entry"]) * lots * per_lot
+            pnl_rub = gross_rub - fee                                    # ₽ чистыми — после комиссии брокера
+            res = pnl_rub / (p["entry"] * lots * per_lot)
+        except Exception:
+            gross_rub = pnl_rub = None
+            res = gross - self._fee_rate() * (2 + gross)
         self.st["results"].append([p.get("strat", "15"), res])
         self._save()
-        try:
-            pnl_rub = p["side"] * (exit_px - p["entry"]) * lots * self._terms(p["ticker"])[1]     # ₽ без комиссий
-        except Exception:
-            pnl_rub = None
-        self.log(f"  {p['ticker']}: закрыто {lots} лот. ({why}) по ~{exit_px:.4g}, результат {res * 100:+.2f}%"
+        self.log(f"  {p['ticker']}: закрыто {lots} лот. ({why}) по ~{exit_px:.4g}, результат {res * 100:+.2f}% после комиссии"
+                 + (f" ({pnl_rub:+,.2f} ₽; комиссия {fee:,.2f} ₽{'' if src_out == 'брокер' else ' по тарифу'})".replace(",", " ") if pnl_rub is not None else "")
                  + (" [всплеск]" if p.get("strat") == "spike" else " [вручную]" if p.get("strat") == "manual" else ""))
         sc.append_rows(sc.SPIKE_LOG if p.get("strat") == "spike" else sc.MANUAL_LOG if p.get("strat") == "manual" else sc.SANDBOX_LOG, LOG_COLS,
                        [{"date": self.st.get("date") or self.clock().date().isoformat(), "ticker": p["ticker"],
                          "side": "лонг" if p["side"] > 0 else "шорт", "lots": lots, "entry": round(p["entry"], 6),
                          "exit": round(exit_px, 6), "reason": why, "result_pct": round(res * 100, 4),
                          "time": self.clock().strftime("%Y-%m-%d %H:%M"), "pnl_rub": round(pnl_rub, 2) if pnl_rub is not None else "",
-                         "entry_time": f"{p.get('date', '')} {str(p.get('time', ''))[:5]}".strip()}])
+                         "entry_time": f"{p.get('date', '')} {str(p.get('time', ''))[:5]}".strip(),
+                         "fee_rub": round(fee, 2), "gross_pct": round(gross * 100, 4),
+                         "fee_src": "брокер" if src_out == "брокер" and p.get("fee_src", "брокер") == "брокер" else "тариф"}])
         self.on_event("close", {"ticker": p["ticker"], "why": why, "result": res, "lots": lots})
         self._push()
         return True
@@ -2129,7 +2281,7 @@ class AutoTrader:
         res = [r for s, r in self.st["results"] if s == "15"]
         if res:
             self.log(f"Итог дня по «{hm(sc.ENTRY_MIN)}»: сделок {len(res)}, в среднем {sum(res) / len(res) * 100:+.2f}% на сделку "
-                     f"(до комиссий), в плюсе {sum(1 for r in res if r > 0)}.")
+                     f"(после комиссии брокера), в плюсе {sum(1 for r in res if r > 0)}.")
 
     def _leverage(self, tk, side):
         """Плечо: 1 — без маржи; число — фиксированное; "auto" — максимум брокера по ставке риска бумаги (1/dlong, 1/dshort)."""

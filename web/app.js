@@ -41,6 +41,9 @@ async function api(path, body) {
 
 // ---------------------------------------------------------------- форматирование
 const fmt = (v) => v == null || v === "" || isNaN(v) ? "—" : (v >= 1000 ? (+v).toFixed(1) : v >= 10 ? (+v).toFixed(2) : v >= 1 ? (+v).toFixed(3) : (+v).toFixed(5));
+// результат позиции в % после комиссии брокера: входа (фактической) и выхода (по ставке тарифа)
+const netPct = (p, last) => { const r = +p.fee_rate || 0, fin = p.mult ? (+p.fee_in || 0) / (p.entry * p.mult) : r;
+  return (p.side * (last / p.entry - 1) - fin - r * last / p.entry) * 100; };
 const pct = (v, d = 2) => v == null || isNaN(v) ? "—" : (v > 0 ? "+" : "") + (+v).toFixed(d) + "%";
 const cls = (v) => v > 0 ? "up" : v < 0 ? "down" : "";
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -135,8 +138,8 @@ function liveApply() {
   const G = {}, T = { pnl_rub: 0, known: 0 };
   for (const p of P) {
     const px = LV.p[p.ticker];
-    if (px) { p.last = px; if (p.mult) p.pnl_rub = p.side * (px - p.entry) * p.mult; }
-    const res = p.last ? p.side * (p.last / p.entry - 1) * 100 : null;
+    if (px) { p.last = px; if (p.mult) p.pnl_rub = p.side * (px - p.entry) * p.mult - (+p.fee_in || 0) - (+p.fee_rate || 0) * px * p.mult; }   // после комиссии
+    const res = p.last ? netPct(p, p.last) : null;
     const g = G[grpKey(p)] || (G[grpKey(p)] = { pct: [], pnl_rub: 0, known: 0 });
     if (res != null) g.pct.push(res);
     if (p.pnl_rub != null) { g.pnl_rub += p.pnl_rub; g.known++; T.pnl_rub += p.pnl_rub; T.known++; }
@@ -232,7 +235,7 @@ function renderState(st) {
   $("#closeAllBtn").hidden = P.length < 2;
   $("#closeProfitBtn").hidden = P.length < 1;
   const posCard = (p) => {
-    const res = p.last ? p.side * (p.last / p.entry - 1) * 100 : null;
+    const res = p.last ? netPct(p, p.last) : null;
     const take = p.take ? ((p.stage || 0) === 0 ? fmt(p.take) : (p.stage === 1 && p.take2 ? "т2 " + fmt(p.take2) : "трейл")) : "—";
     const tfl = { 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" }[p.tf] || "";
     const strat = p.strat === "spike" ? "всплеск " + (tfl || "15м") + (p.took ? " (б/у)" : "") : p.strat === "manual" ? "вручную" + (tfl ? " " + tfl : "") : p.strat === "mid" ? "день EMA " + (tfl || "1ч") : "15:00";
@@ -654,7 +657,9 @@ async function loadResults() {
       <td>${p.trades}${p.trades ? " · " + Math.round(p.wins / p.trades * 100) + "%" : ""}</td>
       <td class="${cls(p.pnl_rub)}">${rub(p.pnl_rub, true)}</td></tr>` +
       [["всплеск", "Всплеск + EMA20"], ["15:00", "Движение дня"], ["вручную", "Вручную"]].map(([k, n]) => { const x = (p.by_strat || {})[k] || { n: 0 };
-        return `<tr class="sub"><td>↳ ${n}</td><td></td><td class="${cls(x.avg_pct)}">${x.n ? pct(x.avg_pct) + " ср." : ""}</td><td>${x.n}${x.n ? " · " + Math.round(x.wins / x.n * 100) + "%" : ""}</td><td class="${cls(x.pnl_rub)}">${rub(x.pnl_rub, true)}</td></tr>`; }).join("")).join("");
+        return `<tr class="sub"><td>↳ ${n}</td><td></td><td class="${cls(x.avg_pct)}">${x.n ? pct(x.avg_pct) + " ср." : ""}</td><td>${x.n}${x.n ? " · " + Math.round(x.wins / x.n * 100) + "%" : ""}</td><td class="${cls(x.pnl_rub)}">${rub(x.pnl_rub, true)}</td></tr>`; }).join("")
+      + (p.fees_rub ? `<tr class="sub"><td colspan="5" class="muted">↳ из них комиссия брокера: ${rub(p.fees_rub)}</td></tr>` : "")).join("")
+    + `<tr><td colspan="5" class="muted small">Все результаты — после комиссии брокера: ${esc(RES.fee || "")}.</td></tr>`;
   const el = $("#resChart");
   if (!RCH) {
     RCH = LightweightCharts.createChart(el, { width: el.clientWidth, height: 220, layout: { background: { color: CSSV("--ch-bg") }, textColor: CSSV("--ch-fg"), fontSize: 11 },
@@ -686,7 +691,7 @@ async function loadTrades() {
       $("#trList").innerHTML = d.rows.filter((r) => !TRF || r.strat === TRF).map((r) => {
         const v = +r.result_pct;
         return `<div class="item tap" data-chart="${esc(r.ticker)}" data-tf="15"><div class="hd"><span><b>${esc(r.ticker)}</b> <span class="muted small">${esc(r.strat)} · ${esc(r.side)}</span></span>
-          <b class="${cls(v)}">${pct(v)}</b></div><div class="meta">${esc(r.date)} · ${esc(r.lots)} лот. · ${esc(r.entry)} → ${esc(r.exit)} · ${esc(r.reason)}</div></div>`;
+          <b class="${cls(v)}">${pct(v)}</b></div><div class="meta">${esc(r.date)} · ${esc(r.lots)} лот. · ${esc(r.entry)} → ${esc(r.exit)} · ${esc(r.reason)}${r.fee_rub ? ` · комиссия ${rub(+r.fee_rub)}${r.fee_src === "брокер" ? "" : " (по тарифу)"}` : ""}</div></div>`;
       }).join("");
     } else {
       const d = await api("/api/journal");
@@ -895,7 +900,7 @@ async function loadBT() {
   $("#btSum").innerHTML = !S.n ? `<div class="muted">Сделок за период нет.</div>` :
     `<div class="item"><div class="hd"><b>${rub(S.capital)} → ${rub(S.final)}</b><b class="${cls(S.profit_rub)}">${rub(S.profit_rub, true)} (${pct(S.profit_pct)})</b></div>
      <div class="meta">макс. просадка ${rub(S.dd_rub)} (${pct(S.dd, 1)}) · сделок ${S.n} · в плюсе ${S.win}% · средняя ${pct(S.avg)}${S.pf ? " · профит-фактор " + S.pf : ""}<br>
-     прибыльная ${pct(S.avg_win)} · убыточная ${pct(S.avg_loss)} · выходы: ${Object.entries(S.reasons || {}).map(([k, v]) => esc(k) + " " + v).join(", ")}</div></div>`;
+     прибыльная ${pct(S.avg_win)} · убыточная ${pct(S.avg_loss)} · выходы: ${Object.entries(S.reasons || {}).map(([k, v]) => esc(k) + " " + v).join(", ")}${S.fees_rub != null ? `<br>всё после комиссии брокера: уплачено бы ${rub(S.fees_rub)}` : ""}</div></div>`;
   $("#btMon").innerHTML = (S.months || []).map((m) => `<div class="item"><div class="hd"><span>${esc(m.m)} · сделок ${m.n}</span><span class="${cls(m.rub)}">${rub(m.rub, true)} · ${pct(m.eq)}</span></div></div>`).join("");
   const tfn = { 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" };
   $("#btTr").innerHTML = (r.trades || []).slice().reverse().slice(0, 300).map((x) =>

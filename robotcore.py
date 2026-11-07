@@ -244,7 +244,7 @@ def positions_summary(positions):
         tot["n"] += 1
         last = p.get("last")
         if last and p.get("entry"):
-            d["pct"].append(p["side"] * (last / p["entry"] - 1) * 100)
+            d["pct"].append(at.net_pct(p, last) * 100)
         if p.get("pnl_rub") is not None:
             d["pnl_rub"] += p["pnl_rub"]; d["known"] += 1
             tot["pnl_rub"] += p["pnl_rub"]; tot["known"] += 1
@@ -311,6 +311,8 @@ def results(balance_now=None):
         res = [x for x in res if x is not None]
         pnl = [_num(t.get("pnl_rub")) for t in tr]
         pnl = [x for x in pnl if x is not None]
+        fees = [x for x in (_num(t.get("fee_rub")) for t in tr) if x is not None]
+        row.update(fees_rub=round(sum(fees), 2) if fees else None)
         row.update(trades=len(res), wins=sum(1 for x in res if x > 0), avg_pct=round(sum(res) / len(res), 3) if res else None,
                    pnl_rub=round(sum(pnl), 2) if pnl else None, pnl_known=len(pnl),
                    by_strat={s: strat_summary([t for t in tr if t["strat"] == s]) for s in ("всплеск", "15:00", "вручную")})
@@ -321,7 +323,7 @@ def results(balance_now=None):
         daily[t.date().isoformat()] = v
     if cur:
         daily[now.date().isoformat()] = cur
-    return {"balance": cur, "time": now.strftime("%d.%m.%Y %H:%M"), "periods": out,
+    return {"balance": cur, "time": now.strftime("%d.%m.%Y %H:%M"), "periods": out, "fee": sc.fee_text(),
             "series": [{"date": d, "value": round(v, 2)} for d, v in sorted(daily.items())]}
 
 
@@ -602,7 +604,26 @@ import time
 from datetime import date as _date
 
 BT_DIR = os.path.join(sc.HERE, "history_bt")          # кэш 5-мин свечей для проверки на истории
-BT_COST = 0.0016                                       # комиссия и проскальзывание на сделку (туда-обратно)
+BT_COST = 0.0016                                       # (старое) комиссия и проскальзывание туда-обратно — теперь по тарифу брокера
+BT_SLIP = sc.SLIPPAGE                                   # проскальзывание рыночных заявок туда-обратно
+
+
+def bt_fee(ti=None):
+    """Комиссия для проверки на истории: фактическая ставка по сделкам робота / тариф счёта у брокера.
+    Возвращает (ставка за сделку, текст, абонплата ₽/мес)."""
+    d = sc.fee_info()
+    if d.get("rate"):
+        r, name, code = float(d["rate"]), d.get("name") or "тариф брокера", str(d.get("key", "")).split(":")[-1]
+        if d.get("observed"):
+            name += " (по фактическим сделкам)"
+    elif ti is not None:
+        try:
+            r, name, code = ti.tariff()
+        except Exception as e:
+            r, name, code = sc.FEE_FALLBACK[0], f"тариф не получен ({e}) — {sc.FEE_FALLBACK[1]}", ""
+    else:
+        r, name, code = sc.SANDBOX_FEE[0], "песочница Т-Инвестиций", "sandbox"
+    return r, name, (390.0 if code == "trader" else 0.0)
 
 
 def _bt_read(path):
@@ -750,6 +771,7 @@ def bt_run(data, m, imoex=None):
     Шорт (зеркально): бумага упала на порог → шорт на середине, стоп за хаем дня, тейк на лое."""
     trades = []
     ex = m["exit"]
+    fee = float(m.get("fee", sc.SANDBOX_FEE[0]))           # комиссия брокера за сделку (вход и выход — каждая)
     can_l, can_s = mid_sides(m.get("modes", ["long"]))
     idx_need = any(x in m.get("modes", []) for x in ("idx_long", "idx_short"))
     for tk, rows in data.items():
@@ -892,7 +914,9 @@ def bt_run(data, m, imoex=None):
                 trades.append({"date": t.strftime("%Y-%m-%d"), "time": t.strftime("%H:%M"), "ticker": tk, "tf": tf, "side": sd,
                                "liq": round(liq), "cap": round(liq * m["liq"]) if m.get("liq") and liq else None,
                                "entry": round(px, 6), "stop": round(stop, 6), "take": round(take, 6), "exit": round(xp, 6),
-                               "exit_time": rows[xr][0].strftime("%d.%m %H:%M"), "reason": why, "pct": round((res - BT_COST) * 100, 3)})
+                               "exit_time": rows[xr][0].strftime("%d.%m %H:%M"), "reason": why,
+                               "gross": round(res * 100, 3), "fee_pct": round(fee * (2 + res) * 100, 4),
+                               "pct": round((res - fee * (2 + res) - BT_SLIP) * 100, 3)})
                 if not m["multi"] or not (why in ("стоп", "тейк") or why.startswith("тейк ")) or xr >= z:
                     break
                 r = xr + 1
@@ -900,7 +924,7 @@ def bt_run(data, m, imoex=None):
     return trades
 
 
-def bt_summary(trades, share, capital=1_000_000):
+def bt_summary(trades, share, capital=1_000_000, fee_month=0.0):
     """Итоги проверки. Каждая сделка — доля share от счёта на начало дня входа (как у робота), счёт растёт со сделками."""
     if not trades:
         return {"n": 0, "capital": capital, "final": capital, "profit_rub": 0, "profit_pct": 0}
@@ -911,6 +935,7 @@ def bt_summary(trades, share, capital=1_000_000):
     for t in trades:
         by_day.setdefault(t["date"], []).append(t)
     eq, peak, dd, dd_rub, curve = float(capital), float(capital), 0.0, 0.0, []
+    fees_rub, paid = 0.0, set()
     months = {}
     for d in sorted(by_day):
         start = eq
@@ -921,6 +946,12 @@ def bt_summary(trades, share, capital=1_000_000):
                 stake = min(stake, t["cap"])                       # не больше доли дневного оборота бумаги
             t["stake"] = round(stake)
             t["rub"] = round(stake * t["pct"] / 100, 2)
+            fees_rub += stake * t.get("fee_pct", 0) / 100
+            if fee_month and d[:7] not in paid and eq < 1_500_000:      # абонплата тарифа — в месяц со сделками
+                paid.add(d[:7])
+                eq -= fee_month
+                mo["rub"] -= fee_month
+                fees_rub += fee_month
             eq += t["rub"]
             mo["n"] += 1
             mo["sum"] += t["pct"]
@@ -937,7 +968,7 @@ def bt_summary(trades, share, capital=1_000_000):
             "capital": capital, "final": round(eq, 2), "profit_rub": round(eq - capital, 2), "profit_pct": round((eq / capital - 1) * 100, 2),
             "pf": round(sum(win) / -sum(los), 2) if los and sum(los) < 0 else None,
             "avg_win": round(sum(win) / len(win), 3) if win else None, "avg_loss": round(sum(los) / len(los), 3) if los else None,
-            "reasons": reasons, "curve": curve,
+            "reasons": reasons, "curve": curve, "fees_rub": round(fees_rub, 2), "fee_month": fee_month,
             "months": [{"m": v["m"], "n": v["n"], "sum": round(v["sum"], 2), "rub": round(v["rub"], 2),
                         "eq": round(v["rub"] / v["start"] * 100, 2)} for _, v in sorted(months.items())]}
 
@@ -1038,6 +1069,7 @@ class Backtest:
                 raise ValueError("нужен токен Т-Инвестиций (Настройки)")
             ti = sc.TInvest(token, "sandbox" if sandbox else "prod")
             m = mid_cfg(s)
+            m["fee"], fee_name, fee_month = bt_fee(ti)
             dm = list(s.get("day_markets") or ["imoex"])
             if not tickers:
                 self.state["progress"] = "список бумаг…"
@@ -1074,7 +1106,7 @@ class Backtest:
                     trades += bt_run({tk: rows}, m, imx)
                 del rows
             trades.sort(key=lambda x: (x["date"], x["time"]))
-            sm = bt_summary(trades, m["share"], capital)
+            sm = bt_summary(trades, m["share"], capital, fee_month)
             tfn = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}
             self.state["result"] = {
                 "summary": sm, "trades": trades[-400:], "tickers": done_n, "fails": fails,
@@ -1091,7 +1123,10 @@ class Backtest:
                              + (f", объём сегодня не меньше {m['min_vol'] / 1e6:g} млн ₽" if m.get("min_vol") else "")
                              + (f", на хае дня закрыть {m['take_part'] * 100:g}% → безубыток → трейлинг {m['trail'] * 100:g}%" if m["take_part"] < 1 else "")
                              + (", 2-й и следующие входы — стоп за лоем предыдущего движения" if m["multi"] and m["prev_stop"] else "") + "; "
-                             f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}"),
+                             f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}; "
+                             f"комиссия брокера {m['fee'] * 100:.3g}% за каждую покупку и продажу — {fee_name}"
+                             + (f", абонплата {fee_month:g} ₽ в месяц со сделками" if fee_month else "")
+                             + f", проскальзывание {BT_SLIP * 100:.2g}% на сделку"),
                 "done": datetime.now(sc.MSK).strftime("%d.%m %H:%M")}
             self.state.update(progress="готово", pct=100)
         except Exception as e:

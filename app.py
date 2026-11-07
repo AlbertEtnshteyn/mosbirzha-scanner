@@ -394,7 +394,7 @@ class App(tk.Tk):
         ttk.Label(t7, foreground=TH["muted"], wraplength=1000, justify="left", text=(
             "Изменение баланса — по стоимости портфеля демо-счёта (пополнения вычитаются), с учётом открытых позиций; "
             "баланс записывается каждые несколько минут, пока работает робот. Сделки и «итог сделок, ₽» — по закрытым сделкам "
-            "обеих стратегий (₽ считаются со сделок, закрытых этой версией, без комиссий).")).pack(anchor="w", pady=4)
+            "обеих стратегий (₽ считаются со сделок, закрытых этой версией, после комиссии брокера).")).pack(anchor="w", pady=4)
         self._res = None
         nb.bind("<<NotebookTabChanged>>", lambda _: self.refresh_results() if nb.select() == str(t7) else None, add="+")
         self.after(5000, self._results_tick)
@@ -1213,8 +1213,9 @@ class App(tk.Tk):
                     continue
                 p["last"] = px
                 if p.get("mult"):
-                    p["pnl_rub"] = round(p["side"] * (px - p["entry"]) * p["mult"], 2)
-                res = p["side"] * (px / p["entry"] - 1)
+                    p["pnl_rub"] = round(p["side"] * (px - p["entry"]) * p["mult"] - float(p.get("fee_in") or 0)
+                                         - float(p.get("fee_rate") or 0) * px * p["mult"], 2)       # после комиссии
+                res = at.net_pct(p, px)
                 try:
                     self.pos_tree.set(iid, "last", f"{px:.4g}")
                     self.pos_tree.set(iid, "res", f"{res * 100:+.2f}%")
@@ -1482,7 +1483,8 @@ class App(tk.Tk):
                 f"Стартовая сумма {rub(sm['capital'])} → {rub(sm['final'])} · прибыль {rub(sm['profit_rub'], True)} ({sm['profit_pct']:+.2f}%) · "
                 f"макс. просадка {rub(sm['dd_rub'])} ({sm['dd']:.1f}%)\n"
                 f"Сделок {sm['n']} · в плюсе {sm['win']:g}% · средняя {sm['avg']:+.2f}%" + (f" · профит-фактор {sm['pf']:g}" if sm.get("pf") else "")
-                + f"\nсредняя прибыльная {sm.get('avg_win') or 0:+.2f}%, убыточная {sm.get('avg_loss') or 0:+.2f}% · выходы: {rs}"))
+                + f"\nсредняя прибыльная {sm.get('avg_win') or 0:+.2f}%, убыточная {sm.get('avg_loss') or 0:+.2f}% · выходы: {rs}"
+                + (f"\nвсё после комиссии брокера: уплачено бы {rub(sm['fees_rub'])}" if sm.get("fees_rub") is not None else "")))
         self.bt_mon.delete(*self.bt_mon.get_children())
         for m in sm.get("months", []):
             self.bt_mon.insert("", "end", tags=("pos" if m["rub"] > 0 else "neg",),
@@ -1620,7 +1622,7 @@ class App(tk.Tk):
                 f"{d['avg_pct']:+.2f}%" if d.get("avg_pct") is not None else "", money(d.get("pnl_rub")) if d.get("known") else "—"))
             for p in G:
                 last = p.get("last")
-                res = p["side"] * (last / p["entry"] - 1) if last else None
+                res = at.net_pct(p, last) if last else None
                 tfl = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}.get(int(p.get("tf") or 0), "")
                 strat = ("всплеск " + (tfl or "15м") + (" (б/у)" if p.get("took") else "")) if p.get("strat") == "spike" else \
                     ("вручную" + (" " + tfl if tfl else "")) if p.get("strat") == "manual" else \
@@ -2009,7 +2011,8 @@ class App(tk.Tk):
         self._res = data
         fmt = lambda v, sign=False: "—" if v is None else ((("+" if sign and v > 0 else "") + f"{v:,.0f}").replace(",", " "))
         bal = data.get("balance")
-        self.res_bal.configure(text=f"Баланс: {fmt(bal)} ₽ (на {data.get('time', '')} МСК)" if bal else "Баланс: появится после запуска робота")
+        self.res_bal.configure(text=(f"Баланс: {fmt(bal)} ₽ (на {data.get('time', '')} МСК)" if bal else "Баланс: появится после запуска робота")
+                               + (f"   ·   результаты после комиссии: {data['fee']}" if data.get("fee") else ""))
         self.res_tree.delete(*self.res_tree.get_children())
         for p in data.get("periods", []):
             ch = p.get("change")
@@ -2025,6 +2028,9 @@ class App(tk.Tk):
                     f"   ↳ {n}", "", "", "", "", x.get("n", 0),
                     f"{x['wins'] / x['n'] * 100:.0f}%" if x.get("n") else "—", fmt(x.get("pnl_rub"), True),
                     f"{x['avg_pct']:+.2f}%" if x.get("avg_pct") is not None else "—"))
+            if p.get("fees_rub"):
+                self.res_tree.insert("", "end", tags=("sub",), values=(
+                    "   ↳ из них комиссия брокера", "", "", "", "", "", "", fmt(-p["fees_rub"], True), ""))
         self._draw_balance()
 
     def _draw_balance(self):

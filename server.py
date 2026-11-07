@@ -469,7 +469,8 @@ class Robot:
             px = lp.get(p["ticker"])
             if px:
                 m = p.get("mult")
-                p = dict(p, last=px, pnl_rub=round(p["side"] * (px - p["entry"]) * m, 2) if m else p.get("pnl_rub"))
+                p = dict(p, last=px, pnl_rub=round(p["side"] * (px - p["entry"]) * m - float(p.get("fee_in") or 0)
+                                                   - float(p.get("fee_rate") or 0) * px * m, 2) if m else p.get("pnl_rub"))
             out.append(p)
         return out
 

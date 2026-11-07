@@ -623,6 +623,7 @@ SVC = "tinkoff.public.invest.api.contract.v1."
 class TInvest:
     def __init__(self, token, env="sandbox"):
         self.base = TINV_HOSTS[env]
+        self.mode = env
         self.h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
         self._shares = {}
 
@@ -863,6 +864,28 @@ class TInvest:
         js = self.call(svc, meth, {"accountId": acc, "from": fmt(since), "to": fmt(datetime.now(timezone.utc)),
                                    "state": "OPERATION_STATE_EXECUTED"})
         return sum(1 for o in js.get("operations", []) if o.get("operationType") in ("OPERATION_TYPE_BUY", "OPERATION_TYPE_SELL"))
+
+    def tariff(self):
+        """Тариф счёта у брокера: (ставка за сделку, название, код тарифа)."""
+        if self.mode == "sandbox":
+            return SANDBOX_FEE[0], "песочница Т-Инвестиций", "sandbox"
+        js = self.call("UsersService", "GetInfo", {})
+        code = str(js.get("tariff") or "").lower()
+        if code in TARIFF_FEES:
+            r, name = TARIFF_FEES[code]
+            return r, f"тариф «{name}»", code
+        return FEE_FALLBACK[0], f"тариф «{code or '?'}» — {FEE_FALLBACK[1]}", code
+
+    @classmethod
+    def order_fee(cls, js):
+        """Комиссия по заявке из ответа брокера, ₽ (None — брокер не сообщил)."""
+        if not isinstance(js, dict):
+            return None
+        for k in ("executedCommission", "initialCommission"):
+            v = cls.q(js.get(k))
+            if v > 0:
+                return v
+        return None
 
     # --- реальный брокерский счёт (токен с полным доступом из личного кабинета Т-Инвестиций)
     def real_accounts(self):
@@ -1134,6 +1157,63 @@ class Finam:
             pass
         return None
 
+
+
+# ============================================================================ комиссия брокера
+# Комиссия берётся у брокера: в ответе на заявку Т-Инвестиции сообщают комиссию по сделке (executedCommission /
+# initialCommission) — она и учитывается. Если брокер сумму не сообщил — по ставке тарифа счёта (тариф робот узнаёт
+# у брокера сам: UsersService/GetInfo). Фактические ставки по сделкам запоминаются в fee_info.json — по ним же
+# считается и проверка на истории.
+FEE_FILE = os.path.join(HERE, "fee_info.json")
+SLIPPAGE = 0.0006                 # проскальзывание рыночной заявки туда-обратно (для проверки на истории и журнала)
+TARIFF_FEES = {                   # комиссия за сделку с акциями (каждая покупка и каждая продажа), доля от суммы
+    "investor": (0.003, "Инвестор"), "trader": (0.0005, "Трейдер"), "premium": (0.0004, "Премиум"),
+}
+SANDBOX_FEE = (0.0005, "песочница")
+FEE_FALLBACK = (0.003, "тариф не определён — по самой высокой ставке «Инвестор»")
+
+
+def fee_info():
+    try:
+        with open(FEE_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def fee_rate(default=None):
+    """Комиссия за одну сделку (доля от суммы) по последним данным брокера."""
+    r = fee_info().get("rate")
+    return float(r) if r is not None else (default if default is not None else SANDBOX_FEE[0])
+
+
+def save_fee_info(**kw):
+    d = fee_info()
+    d.update(kw)
+    d["updated"] = datetime.now(MSK).strftime("%Y-%m-%d %H:%M")
+    try:
+        tmp = FEE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+        os.replace(tmp, FEE_FILE)
+    except Exception:
+        pass
+    global COST
+    COST = 2 * float(d.get("rate", SANDBOX_FEE[0])) + SLIPPAGE
+    return d
+
+
+def fee_text(d=None):
+    d = d or fee_info()
+    if not d.get("rate"):
+        return f"комиссия {SANDBOX_FEE[0] * 100:.3g}% за сделку (тариф ещё не получен от брокера)"
+    return f"комиссия {float(d['rate']) * 100:.3g}% за сделку — {d.get('name') or 'тариф брокера'}"
+
+
+try:
+    COST = 2 * fee_rate() + SLIPPAGE
+except Exception:
+    pass
 
 # ============================================================================ журнал
 JOURNAL_COLS = ["date", "ticker", "side", "move_pct", "market_pct", "entry", "stop_price", "exit", "reason",
