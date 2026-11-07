@@ -845,6 +845,25 @@ class TInvest:
             total += qty * px
         return total or self.q(js.get("totalAmountPortfolio"))
 
+    def trades_since(self, since, real=False, acc=None):
+        """Сколько исполненных сделок (покупок/продаж) было на счёте с момента since — для проверки пары серверов."""
+        if real:
+            if not acc:
+                accs = self.real_accounts()
+                acc = next((a["id"] for a in accs if a.get("type") == "ACCOUNT_TYPE_TINKOFF"), accs[0]["id"] if accs else None)
+            svc, meth = "OperationsService", "GetOperations"
+        else:
+            js = self.call("SandboxService", "GetSandboxAccounts", {})
+            accs = js.get("accounts", [])
+            acc = accs[0]["id"] if accs else None
+            svc, meth = "SandboxService", "GetSandboxOperations"
+        if not acc:
+            return 0
+        fmt = lambda d: d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        js = self.call(svc, meth, {"accountId": acc, "from": fmt(since), "to": fmt(datetime.now(timezone.utc)),
+                                   "state": "OPERATION_STATE_EXECUTED"})
+        return sum(1 for o in js.get("operations", []) if o.get("operationType") in ("OPERATION_TYPE_BUY", "OPERATION_TYPE_SELL"))
+
     # --- реальный брокерский счёт (токен с полным доступом из личного кабинета Т-Инвестиций)
     def real_accounts(self):
         js = self.call("UsersService", "GetAccounts", {})

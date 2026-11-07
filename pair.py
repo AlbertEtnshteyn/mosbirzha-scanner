@@ -48,10 +48,14 @@ def do_relay(req):
 
 
 class Pair:
-    def __init__(self, log, on_activate, on_deactivate):
+    def __init__(self, log, on_activate, on_deactivate, can_take=None, handover=None):
         self.log = log
         self.on_activate = on_activate          # fn(trade: bool)
         self.on_deactivate = on_deactivate
+        self.can_take = can_take                # fn(since_ts) -> (можно_брать, почему_нет): нет ли на счёте свежих сделок второго
+        self.handover = handover                # fn(client, since_ts): отдать второму серверу свои позиции и сделки
+        self.active_since = 0
+        self._deny_logged = 0
         self.cfg = {}
         try:
             self.cfg = json.load(open(PAIR_FILE, encoding="utf-8"))
@@ -129,21 +133,48 @@ class Pair:
         if self.active:
             if peer_active and self.role == "standby":     # оба активны (связь между ними пропадала) — резервный уступает
                 self.active = False
-                self.log("Пара серверов: основной сервер снова торгует — перехожу в резерв.")
+                self.log("Пара серверов: основной сервер снова торгует — перехожу в резерв и передаю ему свои позиции и сделки.")
                 self.on_deactivate()
+                self._handover_from = self.active_since
+                self._try_handover()
             return
+        if getattr(self, "_handover_from", None) is not None and self.peer_ok:
+            self._try_handover()                            # прошлый раз не получилось — повторить
         if peer_active:
             if time.time() - self.last_sync > 15:          # каждые ~20 с: резерв знает свежие позиции
                 self._sync()
             return
         silent = time.time() - self.last_ok
         if not self.peer_ok and silent >= TAKEOVER_SEC:
+            if self.can_take:
+                try:
+                    ok, why = self.can_take(self.last_ok)
+                except Exception:
+                    ok, why = True, ""
+                if not ok:                                  # второй сервер торгует, пропала только связь между нами
+                    if time.time() - self._deny_logged >= 600:
+                        self._deny_logged = time.time()
+                        self.log(f"Пара серверов: второй сервер не отвечает мне {silent / 60:.0f} мин, но {why} — значит, он работает; "
+                                 "торговлю не беру, чтобы не было двойных сделок.")
+                    return
             self._activate(f"второй сервер ({self.client.host}) не отвечает {silent / 60:.0f} мин")
         elif self.peer_ok and not peer_active and self.role == "primary":
             self._activate("второй сервер на связи, но не торгует")
 
+    def _try_handover(self):
+        if not self.handover:
+            self._handover_from = None
+            return
+        time.sleep(3)                                       # робот успевает остановиться и сохранить позиции
+        try:
+            self.handover(self.client, self._handover_from)
+            self._handover_from = None
+        except Exception as e:
+            self.log(f"Пара серверов: позиции основному не переданы ({e}) — повторю через 20 с.")
+
     def _activate(self, why):
         self.active = True
+        self.active_since = time.time()
         self.log(f"Пара серверов: беру работу на себя — {why}.")
         self.on_activate(self.peer_trade)
 

@@ -254,6 +254,75 @@ class Robot:
         except Exception:
             pass
 
+    def pair_can_take(self, since_ts):
+        """Перед тем как взять торговлю: нет ли на счёте сделок после того, как второй сервер замолчал (тогда он жив)."""
+        s = rc.load_settings()
+        since = datetime.fromtimestamp(since_ts + 30, tz=sc.MSK)
+        try:
+            if s.get("broker") == "tinvest_real" and s.get("real_token"):
+                n = sc.TInvest(s["real_token"], "prod").trades_since(since, real=True, acc=s.get("real_account") or None)
+            elif s.get("broker", "tinvest") == "tinvest" and s.get("token"):
+                n = sc.TInvest(s["token"], "sandbox").trades_since(since)
+            else:
+                return True, ""                           # Финам — проверить нельзя, берём как раньше
+        except Exception:
+            return True, ""                               # брокер не ответил — не мешаем резерву
+        return (n == 0), f"на счёте {n} сделок после {since:%H:%M}"
+
+    def pair_handover(self, client, since_ts):
+        """Резервный уступает основному: передать позиции и сделки, сделанные, пока основной был недоступен."""
+        if getattr(self, "_handover", None) is None:
+            r = self.robot
+            positions = [dict(p) for p in (r.positions if r else [])]
+            since = datetime.fromtimestamp(since_ts or 0, tz=sc.MSK).strftime("%Y-%m-%d")
+            trades = {}
+            for path in (sc.SANDBOX_LOG, sc.SPIKE_LOG, sc.MANUAL_LOG):
+                rows = [x for x in read_csv(path) if x.get("date", "") >= since]
+                if rows:
+                    trades[os.path.basename(path)] = rows
+            self._handover = {"positions": positions, "trades": trades}
+        js = client.post("/api/pair_merge", self._handover)
+        log(f"Пара серверов: основному переданы позиции ({len(self._handover['positions'])}) и сделки; "
+            f"он принял новых позиций: {js.get('added', 0)}.")
+        self._handover = None
+
+    def pair_merge(self, b):
+        """Основной сервер: принять от резервного позиции и сделки, которых у себя нет."""
+        added, r = [], self.robot if self.running() else None
+        key = lambda p: (p.get("ticker"), p.get("date"), p.get("time"), p.get("side"))
+        if r is not None:
+            with r.pos_lock:
+                have = {key(p) for p in r.positions}
+                for p in b.get("positions") or []:
+                    if key(p) not in have:
+                        p["from_peer"] = True
+                        r.positions.append(p)
+                        added.append(p)
+            if added:
+                r._save()
+        else:
+            path = os.path.join(sc.HERE, "auto_state.json")
+            st = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+            have = {key(p) for p in st.get("positions", [])}
+            for p in b.get("positions") or []:
+                if key(p) not in have:
+                    st.setdefault("positions", []).append(p); added.append(p)
+            if added:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(st, f, ensure_ascii=False, indent=1)
+        n_tr = 0
+        for name, rows in (b.get("trades") or {}).items():
+            path = os.path.join(sc.HERE, os.path.basename(name))
+            if path not in (sc.SANDBOX_LOG, sc.SPIKE_LOG, sc.MANUAL_LOG):
+                continue
+            have = {tuple(sorted(x.items())) for x in read_csv(path)}
+            new = [x for x in rows if tuple(sorted(x.items())) not in have]
+            if new:
+                sc.append_rows(path, list(new[0].keys()), new); n_tr += len(new)
+        if added or n_tr:
+            log(f"Пара серверов: от резервного получено позиций {len(added)} ({', '.join(p['ticker'] for p in added) or '—'}) и сделок {n_tr} — веду их дальше.")
+        return {"ok": True, "added": len(added)}
+
     def pair_deactivate(self):
         if self.running():
             self.robot.request_stop(False)               # позиции не закрываем — их ведёт второй сервер
@@ -711,7 +780,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("слишком большой запрос")
         return json.loads(self.rfile.read(n) or b"{}")
 
-    LOCAL_API = {"/api/ping", "/api/pair_sync", "/api/relay", "/api/pair_set", "/api/pair_info", "/api/update", "/api/live"}
+    LOCAL_API = {"/api/ping", "/api/pair_sync", "/api/pair_merge", "/api/relay", "/api/pair_set", "/api/pair_info", "/api/update", "/api/live"}
 
     def _proxy(self, method, raw=None):
         """Резервный сервер пересылает запросы телефона/программы активному серверу."""
@@ -839,6 +908,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "на сервере нет модуля пары — обновите сервер ещё раз"})
             if u.path == "/api/relay":
                 return self._send(200, pairmod.do_relay(b))
+            if u.path == "/api/pair_merge":
+                return self._send(200, ROBOT.pair_merge(b))
             if u.path == "/api/pair_set":
                 pairmod.save_pair(b.get("peer", ""), b.get("role", "primary"))
                 log(f"Пара серверов настроена: этот сервер — {'основной' if b.get('role') == 'primary' else 'резервный'}. Перезапускаюсь.")
@@ -982,7 +1053,7 @@ def main():
     Handler.key = cfg["key"]
     global PAIR
     ROBOT = Robot()
-    PAIR = pairmod.Pair(log, ROBOT.pair_activate, ROBOT.pair_deactivate) if pairmod else None
+    PAIR = pairmod.Pair(log, ROBOT.pair_activate, ROBOT.pair_deactivate, ROBOT.pair_can_take, ROBOT.pair_handover) if pairmod else None
     if PAIR and PAIR.enabled:
         sc.RELAY = PAIR.relay
         log(f"Пара серверов: этот сервер — {'основной' if PAIR.role == 'primary' else 'резервный'}, второй — {PAIR.client.host}.")
