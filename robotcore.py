@@ -20,7 +20,7 @@ DEFAULTS = {"threshold": 2.0, "entry": "15:00", "capital": 1_000_000, "sandbox_t
             "day_exit": "18:45", "entry_from": "", "day_ref": "main", "trade_weekends": False, "idx_ref": "imoex", "broker": "tinvest", "fee_tariff": "auto", "finam_secret": "", "finam_account": "", "real_token": "", "real_account": "",
             # «Движение дня» (новый формат, 06.11): покупка на середине EMA10/EMA20, стоп за лоем дня, тейк на хае дня
             "mid_thr": 2.5, "mid_from": "10:00", "mid_to": "18:00", "mid_exit": "23:45", "mid_tf": 60, "mid_tfs": [60], "mid_idx": False, "mid_share": 10, "mid_ref": "7", "mid_multi": True, "mid_carry": "none", "mid_carry_days": 0, "mid_dir": "long", "mid_modes": ["long"], "mid_liq": 1.0, "mid_min_turn": 20, "mid_liq_on": True, "mid_minv_on": False, "mid_vol_on": False, "mid_vol": 5,
-            "mid_prev_stop": True, "mid_take_mode": "all", "mid_take_part": 50, "mid_trail": 1.0}
+            "mid_prev_stop": True, "mid_trend200": True, "mid_take_mode": "all", "mid_take_part": 50, "mid_trail": 1.0}
 
 CHART_DEPTH = {1: 2, 5: 10, 15: 30, 60: 90, 1440: 400}       # сколько дней истории грузить на график
 
@@ -114,7 +114,8 @@ def mid_cfg(s):
             "liq": float(s.get("mid_liq", 1.0) or 0) / 100 if s.get("mid_liq_on", True) else 0.0,       # доля дневного оборота
             "min_turn": float(s.get("mid_min_turn", 0) or 0) * 1e6 if s.get("mid_minv_on", False) else 0.0,  # мин. оборот, ₽ в день
             "min_vol": float(s.get("mid_vol", 0) or 0) * 1e6 if s.get("mid_vol_on", False) else 0.0,     # мин. объём сегодня, ₽
-            "prev_stop": bool(s.get("mid_prev_stop", True)),               # 2-й и следующие входы — стоп за лоем предыдущего движения
+            "prev_stop": bool(s.get("mid_prev_stop", True)),
+            "trend200": bool(s.get("mid_trend200", True)),                 # вход только по тренду: цена выше (шорт — ниже) EMA200 и SMA200               # 2-й и следующие входы — стоп за лоем предыдущего движения
             "take_part": (min(95.0, max(5.0, float(s.get("mid_take_part", 50) or 50))) / 100) if s.get("mid_take_mode") == "part" else 1.0,
             "trail": max(0.0, float(s.get("mid_trail", 1.0) or 0)) / 100}
 
@@ -839,7 +840,8 @@ def bt_run(data, m, imoex=None, daily=None):
         if len(rows) < 100:
             continue
         mids = {tf: _bt_mids(rows, tf) for tf in m["tfs"]}
-        trend = {tf: _bt_trend(rows, tf, (daily or {}).get(tk)) for tf in m["tfs"]}   # фильтр EMA200 + SMA200 (всегда)
+        use200 = m.get("trend200", True)
+        trend = {tf: _bt_trend(rows, tf, (daily or {}).get(tk)) if use200 else None for tf in m["tfs"]}   # фильтр EMA200 + SMA200 (всегда)
         days, start = [], 0
         didx = [0] * len(rows)
         for i in range(1, len(rows) + 1):
@@ -888,8 +890,8 @@ def bt_run(data, m, imoex=None, daily=None):
                         continue
                     if arm[tf] and hit is None and ((l <= md) if sd > 0 else (h >= md)):
                         pe = (o if o <= md else md) if sd > 0 else (o if o >= md else md)     # цена входа
-                        tv = trend[tf][r]
-                        if tv and (pe > tv[0] and pe > tv[1] if sd > 0 else pe < tv[0] and pe < tv[1]):
+                        tv = trend[tf][r] if use200 else (0, 0)
+                        if not use200 or tv and (pe > tv[0] and pe > tv[1] if sd > 0 else pe < tv[0] and pe < tv[1]):
                             hit = (tf, md)
                 if r <= busy:
                     r += 1
@@ -1206,7 +1208,7 @@ class Backtest:
                 if rows:
                     done_n += 1
                     dly = None
-                    if 1440 in m["tfs"]:                     # EMA200/SMA200 по дням — нужна история длиннее периода проверки
+                    if 1440 in m["tfs"] and m.get("trend200", True):     # EMA200/SMA200 по дням — нужна история длиннее периода проверки
                         try:
                             dd = ti.candles_range(tk, datetime.combine(since, datetime.min.time()).replace(tzinfo=sc.MSK) - timedelta(days=420),
                                                   datetime.now(sc.MSK), 1440)
@@ -1236,7 +1238,7 @@ class Backtest:
                              + (f", объём сегодня не меньше {m['min_vol'] / 1e6:g} млн ₽" if m.get("min_vol") else "")
                              + (f", на хае дня закрыть {m['take_part'] * 100:g}% → безубыток → трейлинг {m['trail'] * 100:g}%" if m["take_part"] < 1 else "")
                              + (", 2-й и следующие входы — стоп за лоем предыдущего движения" if m["multi"] and m["prev_stop"] else "")
-                             + ", вход только по тренду: лонг — цена выше EMA200 и SMA200, шорт — ниже (на графике входа); "
+                             + (", вход только по тренду: лонг — цена выше EMA200 и SMA200, шорт — ниже (на графике входа)" if m.get("trend200", True) else ", без фильтра EMA200/SMA200") + "; "
                              f"рынок: {', '.join(dict(at.MARKETS).get(x, x) for x in dm)}; "
                              f"комиссия брокера {m['fee'] * 100:.3g}% за каждую покупку и продажу — {fee_name}"
                              + (f", абонплата {fee_month:g} ₽ в месяц со сделками" if fee_month else "")

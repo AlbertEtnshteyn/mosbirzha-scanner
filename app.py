@@ -687,6 +687,7 @@ class App(tk.Tk):
         self.v_mvol = tk.StringVar(value=f"{float(self.s.get('mid_vol', 5)):g}")
         self.v_mvol_on = tk.BooleanVar(value=bool(self.s.get("mid_vol_on", False)))
         self.v_mprev = tk.BooleanVar(value=bool(self.s.get("mid_prev_stop", True)))
+        self.v_m200 = tk.BooleanVar(value=bool(self.s.get("mid_trend200", True)))
         self.MTAKE = {"all": "закрыть всю позицию", "part": "закрыть часть → стоп в безубыток → трейлинг-стоп"}
         self.v_mtake = tk.StringVar(value=self.MTAKE.get(self.s.get("mid_take_mode", "all"), self.MTAKE["all"]))
         self.v_mtpart = tk.StringVar(value=f"{float(self.s.get('mid_take_part', 50)):g}")
@@ -707,6 +708,7 @@ class App(tk.Tk):
         row(b2, "Рост считать:", cb(self.v_mref, list(self.MREF.values()), 46),
             ck("несколько входов по бумаге за день", self.v_mmulti),
             ck("2-й и следующие входы — стоп за лоем предыдущего движения", self.v_mprev))
+        row(b2, "", ck("вход только по тренду: лонг — цена выше EMA200 и SMA200, шорт — ниже обеих (на графике входа)", self.v_m200))
         row(b2, "Режим торговли (можно несколько):", *[ck(n, self.v_mmodes[k]) for k, n in rc.MID_MODES[:2]])
         row(b2, "", *[ck(n, self.v_mmodes[k]) for k, n in rc.MID_MODES[2:]])
         row(b2, ("hint", "шорт — зеркально: бумага упала на порог → шорт на середине EMA, стоп за хаем дня, тейк на лое дня."))
@@ -925,7 +927,7 @@ class App(tk.Tk):
                       mid_liq=self._num(self.v_mliq.get(), 1.0), mid_min_turn=self._num(self.v_mminv.get(), 20),
                       mid_liq_on=self.v_mliq_on.get(), mid_minv_on=self.v_mminv_on.get(),
                       mid_vol_on=self.v_mvol_on.get(), mid_vol=self._num(self.v_mvol.get(), 5),
-                      mid_prev_stop=self.v_mprev.get(), mid_take_mode={v: k for k, v in self.MTAKE.items()}.get(self.v_mtake.get(), "all"),
+                      mid_prev_stop=self.v_mprev.get(), mid_trend200=self.v_m200.get(), mid_take_mode={v: k for k, v in self.MTAKE.items()}.get(self.v_mtake.get(), "all"),
                       mid_take_part=min(95.0, max(5.0, self._num(self.v_mtpart.get(), 50))), mid_trail=self._num(self.v_mtrail.get(), 1.0),
                       mid_tfs=[k for k, v in self.v_mtfs.items() if v.get()] or [60],
                       mid_ref={v: k for k, v in self.MREF.items()}.get(self.v_mref.get(), "7"), mid_multi=self.v_mmulti.get(), mid_modes=[k for k, _ in rc.MID_MODES if self.v_mmodes[k].get()] or ["long"],
@@ -1580,7 +1582,7 @@ class App(tk.Tk):
         tfs = ", ".join({5: "5 мин", 15: "15 мин", 60: "1 час", 1440: "1 день"}[x] for x in m["tfs"])
         self.robot_help.configure(text=(
             f"Стратегия «Движение дня» ({rc.mid_modes_text(m['modes'])}): бумага выросла от {at.hm(m['ref'])} на {m['thr'] * 100:g}% → робот следит → цена опустилась до середины "
-            f"между EMA10 и EMA20 ({tfs}) → покупка {m['share'] * 100:g}% счёта, если цена выше EMA200 и SMA200 на том же графике (шорт — ниже обеих); стоп чуть ниже лоя дня, тейк на хае дня. "
+            f"между EMA10 и EMA20 ({tfs}) → покупка {m['share'] * 100:g}% счёта{', если цена выше EMA200 и SMA200 на том же графике (шорт — ниже обеих)' if m.get('trend200', True) else ''}; стоп чуть ниже лоя дня, тейк на хае дня. "
             f"Покупки {at.hm(m['from'])}–{at.hm(m['to'])}, выход {at.hm(m['exit'])}"
             + {"none": "", "all": " (позиции переносятся до стопа или тейка)", "profit": " (позиции в плюсе переносятся)"}[m["carry"]]
             
@@ -1783,7 +1785,7 @@ class App(tk.Tk):
                    "direction", "leverage", "spike_half", "spike_trail", "spike_max", "spike_share", "two_takes", "tg_chat", "tg_form",
                    "tg_trades", "tg_imp", "tg_trend", "trend_on", "trend_trade", "tier_profile", "entry_window", "exit_late",
                    "carry_all", "day_carry", "day_exit", "day_mode", "day_tp", "day_tp_half", "day_trail", "day_act", "idx_form", "ema10_touch", "first_form", "trade_5m", "ema200", "ema200_tfs", "idx_day", "idx_flip", "idx_ref", "entry_from", "day_ref", "trade_weekends", "broker", "fee_tariff", "finam_account", "real_account", "auto_journal",
-                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi", "mid_carry", "mid_carry_days", "mid_dir", "mid_modes", "mid_liq", "mid_min_turn", "mid_liq_on", "mid_minv_on", "mid_vol_on", "mid_vol", "mid_prev_stop", "mid_take_mode", "mid_take_part", "mid_trail"]
+                   "mid_thr", "mid_from", "mid_to", "mid_exit", "mid_tf", "mid_tfs", "mid_idx", "mid_share", "mid_ref", "mid_multi", "mid_carry", "mid_carry_days", "mid_dir", "mid_modes", "mid_liq", "mid_min_turn", "mid_liq_on", "mid_minv_on", "mid_vol_on", "mid_vol", "mid_prev_stop", "mid_trend200", "mid_take_mode", "mid_take_part", "mid_trail"]
 
     def _settings_from_server(self, srv):
         """В режиме пульта вкладка «Настройки» показывает настройки робота на сервере (они и действуют)."""
@@ -1813,6 +1815,7 @@ class App(tk.Tk):
         self.v_mliq_on.set(bool(s.get("mid_liq_on", True))); self.v_mminv_on.set(bool(s.get("mid_minv_on", False)))
         self.v_mvol_on.set(bool(s.get("mid_vol_on", False))); self.v_mvol.set(f"{float(s.get('mid_vol', 5)):g}")
         self.v_mprev.set(bool(s.get("mid_prev_stop", True)))
+        self.v_m200.set(bool(s.get("mid_trend200", True)))
         self.v_mtake.set(self.MTAKE.get(s.get("mid_take_mode", "all"), self.MTAKE["all"]))
         self.v_mtpart.set(f"{float(s.get('mid_take_part', 50)):g}"); self.v_mtrail.set(f"{float(s.get('mid_trail', 1.0)):g}")
         for k, v in self.v_mtfs.items():

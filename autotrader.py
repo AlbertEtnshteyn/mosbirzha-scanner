@@ -1055,8 +1055,9 @@ class AutoTrader:
         m = self._mid()
         self.log(f"Робот запущен ({'ТОРГОВЛЯ' if self.trade else 'НАБЛЮДЕНИЕ'}). Стратегия одна — «Движение дня»: "
                  f"бумага выросла на {m['thr'] * 100:g}% от открытия → покупка, как только цена дошла до середины между EMA10 и EMA20 "
-                 f"({', '.join(self._tf_name(x) for x in m['tfs'])}), если цена выше EMA200 и SMA200 на том же графике (шорт — ниже обеих); "
-                 f"стоп за лоем дня, тейк на хае дня. Покупки {hm(m['from'])}–{hm(m['to'])}, выход {hm(m['exit'])}"
+                 f"({', '.join(self._tf_name(x) for x in m['tfs'])})"
+                 + ("; вход только если цена выше EMA200 и SMA200 на том же графике (шорт — ниже обеих); " if m.get("trend200", True) else "; без фильтра EMA200/SMA200; ")
+                 + f"стоп за лоем дня, тейк на хае дня. Покупки {hm(m['from'])}–{hm(m['to'])}, выход {hm(m['exit'])}"
                   + f", на сделку {m['share'] * 100:g}% счёта. "
                  + "Режим: " + rc_modes_text(m["modes"]) + ".")
         if self.positions:
@@ -1357,7 +1358,7 @@ class AutoTrader:
                         self._save()
                 elif arm.get(key):
                     hits.append((tf, lv))
-                if not fast:
+                if not fast and m.get("trend200", True):
                     try:
                         self._trend200(tk, tf, now)      # EMA200/SMA200 наготове — вход из потока цен не ждёт брокера
                     except sc.CertError:
@@ -1369,8 +1370,8 @@ class AutoTrader:
             if not mid_allowed(m["modes"], side, self.market):
                 continue                                  # режим торговли не разрешает эту сторону при нынешнем индексе
             # фильтр тренда (всегда): лонг — цена выше EMA200 и SMA200, шорт — ниже обеих, на графике входа
-            hit, why200 = None, ""
-            for tf_, lv_ in hits:
+            hit, why200 = (hits[0] if not m.get("trend200", True) else None), ""
+            for tf_, lv_ in (hits if m.get("trend200", True) else []):
                 ok, why200 = self._trend_ok(tk, tf_, side, px, now, fast)
                 if ok:
                     hit = (tf_, lv_)

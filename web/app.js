@@ -230,7 +230,7 @@ function renderState(st) {
   const pairTxt = pr && pr.enabled ? ` Пара серверов: торгует ${pr.active ? "этот" : "второй"} сервер (${pr.active ? "" : pr.peer_host + ", "}этот — ${pr.role === "primary" ? "основной" : "резервный"}); второй ${pr.peer_ok ? "на связи" : "не отвечает с " + pr.peer_last_ok}.` : "";
   const MS = SET || {};
   const tfs = (MS.mid_tfs || [MS.mid_tf || 60]).map((x) => ({ 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" })[x] || x).join(", ");
-  $("#robotHint").textContent = (st.trade ? `«Движение дня» (${(MS.mid_modes || ["long"]).map((k) => ({ idx_long: "индекс вверх — лонг", idx_short: "индекс вниз — шорт", both: "обе стороны", long: "только лонг", short: "только шорт" })[k]).join(", ")}): бумага выросла на ${MS.mid_thr || 2.5}% от ${String(MS.mid_ref || "7") === "10" ? "10:00" : "07:00"} → покупка на середине EMA10/EMA20 (${tfs}), если цена выше EMA200 и SMA200 (шорт — ниже обеих), стоп за лоем дня, тейк на хае дня; покупки ${MS.mid_from || "10:00"}–${MS.mid_to || "18:00"}, выход ${MS.mid_exit || "23:45"}. «Стоп» — выключить новые сделки.`
+  $("#robotHint").textContent = (st.trade ? `«Движение дня» (${(MS.mid_modes || ["long"]).map((k) => ({ idx_long: "индекс вверх — лонг", idx_short: "индекс вниз — шорт", both: "обе стороны", long: "только лонг", short: "только шорт" })[k]).join(", ")}): бумага выросла на ${MS.mid_thr || 2.5}% от ${String(MS.mid_ref || "7") === "10" ? "10:00" : "07:00"} → покупка на середине EMA10/EMA20 (${tfs})${MS.mid_trend200 === false ? "" : ", если цена выше EMA200 и SMA200 (шорт — ниже обеих)"}, стоп за лоем дня, тейк на хае дня; покупки ${MS.mid_from || "10:00"}–${MS.mid_to || "18:00"}, выход ${MS.mid_exit || "23:45"}. «Стоп» — выключить новые сделки.`
     : st.token_set ? "Робот следит за рынком, но не покупает. «Старт» — включить торговлю."
       : "Введите токен песочницы Т-Инвестиций во вкладке «Настройки».") + pairTxt +
     (st.broker === "finam" ? " Брокер: Финам." : st.broker === "tinvest_real" ? " Брокер: РЕАЛЬНЫЙ счёт Т-Инвестиций." : " Брокер: песочница Т-Инвестиций.");
@@ -778,6 +778,7 @@ function renderSettings(s) {
     ${inp("mid_exit", "Выход в (ЧЧ:ММ)", "text", 'inputmode="numeric" placeholder="23:45"')}
     ${sel("mid_ref", "Рост считать", [["7", "от открытия рынка 07:00"], ["10", "от открытия основной сессии 10:00 (лучше на истории)"]])}
     ${chk("mid_multi", "Несколько покупок по бумаге за день", "После закрытия позиции — снова, когда цена отойдёт выше середины и вернётся к ней. На истории хуже одной покупки.")}
+    ${chk("mid_trend200", "Вход только по тренду: EMA 200 и SMA 200", "Лонг — только если цена выше и EMA200, и SMA200, шорт — только ниже обеих; считаются на том же графике, где цена коснулась середины EMA10/EMA20. На истории (1 час): без фильтра +20%, с фильтром +5%, но просадка вдвое меньше.")}
     ${chk("mid_prev_stop", "2-й и следующие входы — стоп за лоем предыдущего движения", "Работает, если включено несколько входов. Стоп — за дном отката после прошлого входа (для шорта — за вершиной); если оно ближе 0,3% к цене — за лоем дня.")}
     ${sel("mid_take_mode", "Тейк на хае дня (для шорта — на лое)", [["all", "закрыть всю позицию"], ["part", "закрыть часть → стоп в безубыток → трейлинг-стоп"]])}
     ${inp("mid_take_part", "…часть, %", "number", 'step="5" inputmode="decimal"')}
@@ -842,7 +843,7 @@ $("#setForm").addEventListener("submit", async (e) => {
     mid_from: (v("mid_from") || "10:00").trim(), mid_to: (v("mid_to") || "18:00").trim(), mid_exit: (v("mid_exit") || "23:45").trim(),
     mid_share: parseFloat(String(v("mid_share")).replace(",", ".")) || 10,
     mid_liq: parseFloat(v("mid_liq")) || 1, mid_min_turn: parseFloat(v("mid_min_turn")) || 20, mid_liq_on: c("mid_liq_on"), mid_minv_on: c("mid_minv_on"), mid_vol_on: c("mid_vol_on"), mid_vol: parseFloat(v("mid_vol")) || 5,
-    mid_prev_stop: c("mid_prev_stop"), mid_take_mode: v("mid_take_mode") || "all",
+    mid_prev_stop: c("mid_prev_stop"), mid_trend200: c("mid_trend200"), mid_take_mode: v("mid_take_mode") || "all",
     mid_take_part: Math.min(95, Math.max(5, parseFloat(String(v("mid_take_part")).replace(",", ".")) || 50)), mid_trail: Math.max(0, parseFloat(String(v("mid_trail")).replace(",", ".")) || 0), mid_ref: v("mid_ref") || "7", mid_multi: c("mid_multi"), mid_carry: v("mid_carry") || "none", mid_modes: ["idx_long", "idx_short", "both", "long", "short"].filter((k) => c("mm_" + k)), mid_carry_days: parseInt(v("mid_carry_days")) || 0,
     tg_chat: (v("tg_chat") || "").trim(), tg_form: c("tg_form"), tg_trend: c("tg_trend"), tg_trades: c("tg_trades"), tg_imp: c("tg_imp"),
   };
