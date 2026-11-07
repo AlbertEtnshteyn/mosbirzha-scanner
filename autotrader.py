@@ -948,8 +948,8 @@ class AutoTrader:
             except sc.CertError:
                 raise
             except Exception as e:
-                self.log(f"Ошибка: {e}. Повтор через минуту.")
-                self._sleep(60)
+                self.log(f"Ошибка: {e}. Повтор через 10 секунд.")
+                self._sleep(10)
                 continue
             self._sleep(STOP_POLL)
         if self.close_on_stop and self.positions:
@@ -976,6 +976,7 @@ class AutoTrader:
         self.idx_dir, self.idx_ref = 0, None
         self.pre_opens = {}
         self.spikes, self.seen_spikes, self.hist, self.hist_loaded, self.waits = [], set(), {}, {}, {}
+        self._mid_watch, self._mid_cache, self.mid_view, self._mid_fast_t = set(), {}, {}, {}   # уровни и подписки — заново
         self._save()
 
     def _step(self, now):
@@ -990,6 +991,13 @@ class AutoTrader:
                      f"({len(self._scan_list())} бумаг), вход {self.perf.get('mid', 0):.1f} с"
                      + (f"; открытия {op[0]} бумаг за {op[1]:.1f} с" if op else "")
                      + f"; ждут входа по потоку цен: {len(self._mid_watch)}")
+
+    def _err(self, where, e):
+        """Ошибка части шага: в журнал не чаще раза в 2 минуты на одно и то же место."""
+        k = f"_err_{where}"
+        if time.time() - getattr(self, k, 0) >= 120:
+            setattr(self, k, time.time())
+            self.log(f"Ошибка ({where}): {e} — продолжаю, повтор на следующем шаге")
 
     def _step_body(self, now):
         t = now.hour * 60 + now.minute
@@ -1016,10 +1024,20 @@ class AutoTrader:
                     self._close_all(hm(p.get("exit_min", sc.EXIT_MIN)), only=[p])
             if self.positions:
                 self._check_stops()
-        # 2) рынок раз в минуту, 3) покупки на середине EMA10/EMA20
+        # 2) рынок раз в 20 с, 3) входы на середине EMA10/EMA20 — ошибка в одном не останавливает другое
         if self.last_scan is None or (now - self.last_scan).total_seconds() >= SCAN_EVERY - 1:
-            self._scan(now)
-        self._mid_step(now)
+            try:
+                self._scan(now)
+            except sc.CertError:
+                raise
+            except Exception as e:
+                self._err("рынок", e)
+        try:
+            self._mid_step(now)
+        except sc.CertError:
+            raise
+        except Exception as e:
+            self._err("входы", e)
         # 4) статус
         m = self._mid()
         mk = f"рынок {self.market * 100:+.2f}% · " if self.market is not None else ""
@@ -1146,7 +1164,7 @@ class AutoTrader:
                 except sc.CertError:
                     raise
                 except Exception as e:
-                    self.log(f"  {tk}: свечи для EMA ({self._tf_name(tf)}) не получены ({e})")
+                    self._err(f"свечи {tk}", e)
                     continue
                 if not lv:
                     continue

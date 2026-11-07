@@ -133,7 +133,7 @@ class Pair:
                 self.on_deactivate()
             return
         if peer_active:
-            if time.time() - self.last_sync > 60:
+            if time.time() - self.last_sync > 15:          # каждые ~20 с: резерв знает свежие позиции
                 self._sync()
             return
         silent = time.time() - self.last_ok
