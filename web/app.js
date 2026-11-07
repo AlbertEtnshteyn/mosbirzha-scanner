@@ -664,7 +664,11 @@ async function loadResults() {
       <td class="${cls(p.pnl_rub)}">${rub(p.pnl_rub, true)}</td></tr>` +
       [["всплеск", "Всплеск + EMA20"], ["15:00", "Движение дня"], ["вручную", "Вручную"]].map(([k, n]) => { const x = (p.by_strat || {})[k] || { n: 0 };
         return `<tr class="sub"><td>↳ ${n}</td><td></td><td class="${cls(x.avg_pct)}">${x.n ? pct(x.avg_pct) + " ср." : ""}</td><td>${x.n}${x.n ? " · " + Math.round(x.wins / x.n * 100) + "%" : ""}</td><td class="${cls(x.pnl_rub)}">${rub(x.pnl_rub, true)}</td></tr>`; }).join("")
-      + (p.fees_rub ? `<tr class="sub"><td colspan="5" class="muted">↳ из них комиссия брокера: ${rub(p.fees_rub)}</td></tr>` : "")).join("");
+      + (p.turnover ? `<tr class="sub"><td colspan="5" class="muted">↳ оборот: ${rub(p.turnover)}</td></tr>` : "")
+      + (p.fees_rub ? `<tr class="sub"><td colspan="5" class="muted">↳ из них комиссия брокера: ${rub(p.fees_rub)}</td></tr>` : "")).join("")
+    + ((RES.months || []).length ? `<tr><th>По месяцам</th><th>Оборот</th><th>средняя</th><th>Сделок · в +</th><th>итог сделок</th></tr>` +
+      RES.months.map((m) => `<tr><td>${esc(m.m)}</td><td>${rub(m.turnover)}</td><td class="${cls(m.avg_pct)}">${pct(m.avg_pct)}</td>
+        <td>${m.n}${m.n ? " · " + Math.round(m.wins / m.n * 100) + "%" : ""}</td><td class="${cls(m.pnl_rub)}">${rub(m.pnl_rub, true)}</td></tr>`).join("") : "");
   $("#resFee").textContent = RES.fee ? "Все результаты — после комиссии брокера: " + RES.fee.replace(/^комиссия /, "") + "." : "";
   const el = $("#resChart");
   if (!RCH) {
@@ -908,8 +912,8 @@ async function loadBT() {
   $("#btSum").innerHTML = !S.n ? `<div class="muted">Сделок за период нет.</div>` :
     `<div class="item"><div class="hd"><b>${rub(S.capital)} → ${rub(S.final)}</b><b class="${cls(S.profit_rub)}">${rub(S.profit_rub, true)} (${pct(S.profit_pct)})</b></div>
      <div class="meta">макс. просадка ${rub(S.dd_rub)} (${pct(S.dd, 1)}) · сделок ${S.n} · в плюсе ${S.win}% · средняя ${pct(S.avg)}${S.pf ? " · профит-фактор " + S.pf : ""}<br>
-     прибыльная ${pct(S.avg_win)} · убыточная ${pct(S.avg_loss)} · выходы: ${Object.entries(S.reasons || {}).map(([k, v]) => esc(k) + " " + v).join(", ")}${S.fees_rub != null ? `<br>всё после комиссии брокера: уплачено бы ${rub(S.fees_rub)}${S.carry_rub ? `, из них за перенос шортов ${rub(S.carry_rub)}` : ""}` : ""}</div></div>`;
-  $("#btMon").innerHTML = (S.months || []).map((m) => `<div class="item"><div class="hd"><span>${esc(m.m)} · сделок ${m.n}</span><span class="${cls(m.rub)}">${rub(m.rub, true)} · ${pct(m.eq)}</span></div></div>`).join("");
+     прибыльная ${pct(S.avg_win)} · убыточная ${pct(S.avg_loss)} · выходы: ${Object.entries(S.reasons || {}).map(([k, v]) => esc(k) + " " + v).join(", ")}${S.turnover ? `<br>оборот за период ${rub(S.turnover)}` : ""}${S.fees_rub != null ? `<br>всё после комиссии брокера: уплачено бы ${rub(S.fees_rub)}${S.carry_rub ? `, из них за перенос шортов ${rub(S.carry_rub)}` : ""}` : ""}</div></div>`;
+  $("#btMon").innerHTML = (S.months || []).map((m) => `<div class="item"><div class="hd"><span>${esc(m.m)} · сделок ${m.n}</span><span class="${cls(m.rub)}">${rub(m.rub, true)} · ${pct(m.eq)}</span></div>${m.turn ? `<div class="meta">оборот ${rub(m.turn)}</div>` : ""}</div>`).join("");
   const tfn = { 5: "5м", 15: "15м", 60: "1ч", 1440: "1д" };
   $("#btTr").innerHTML = (r.trades || []).slice().reverse().slice(0, 300).map((x) =>
     `<div class="item tap" data-chart="${esc(x.ticker)}" data-tf="${x.tf}"><div class="hd"><span><b>${esc(x.ticker)}</b> <span class="muted small">${esc(x.date)} ${esc(x.time)} · EMA ${tfn[x.tf] || x.tf}${x.side === -1 ? " · <b class='down'>шорт</b>" : ""}</span></span><span class="${cls(x.pct)}">${pct(x.pct)}${x.rub != null ? " · " + rub(x.rub, true) : ""}</span></div>

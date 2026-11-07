@@ -226,11 +226,26 @@ def real_trades(ticker):
     return out[-200:]
 
 
+def trade_turnover(t):
+    """Оборот по закрытой сделке, ₽ (покупка + продажа). Новые записи — из колонки turn_rub; старые — оценка по ₽ результата."""
+    v = _num(t.get("turn_rub"))
+    if v:
+        return v
+    e, x, pnl, fee = _num(t.get("entry")), _num(t.get("exit")), _num(t.get("pnl_rub")), _num(t.get("fee_rub")) or 0.0
+    if e and x and pnl is not None and x != e:
+        sd = -1 if t.get("side") == "шорт" else 1
+        q = abs((pnl + fee) / (sd * (x - e)))              # штук (с учётом лота)
+        return q * (e + x)
+    return None
+
+
 def strat_summary(rows):
     """Сводка по закрытым сделкам: число, в плюсе, итог ₽ (где известен), средний %."""
     res = [x for x in (_num(t.get("result_pct")) for t in rows) if x is not None]
     pnl = [x for x in (_num(t.get("pnl_rub")) for t in rows) if x is not None]
+    tv = [x for x in (trade_turnover(t) for t in rows) if x]
     return {"n": len(res), "wins": sum(1 for x in res if x > 0), "pnl_rub": round(sum(pnl), 2) if pnl else None,
+            "turnover": round(sum(tv)) if tv else None,
             "avg_pct": round(sum(res) / len(res), 3) if res else None, "sum_pct": round(sum(res), 3) if res else None}
 
 
@@ -312,6 +327,8 @@ def results(balance_now=None):
         pnl = [_num(t.get("pnl_rub")) for t in tr]
         pnl = [x for x in pnl if x is not None]
         fees = [x for x in (_num(t.get("fee_rub")) for t in tr) if x is not None]
+        tv = [x for x in (trade_turnover(t) for t in tr) if x]
+        row.update(turnover=round(sum(tv)) if tv else None)
         row.update(fees_rub=round(sum(fees), 2) if fees else None)
         row.update(trades=len(res), wins=sum(1 for x in res if x > 0), avg_pct=round(sum(res) / len(res), 3) if res else None,
                    pnl_rub=round(sum(pnl), 2) if pnl else None, pnl_known=len(pnl),
@@ -323,7 +340,17 @@ def results(balance_now=None):
         daily[t.date().isoformat()] = v
     if cur:
         daily[now.date().isoformat()] = cur
-    return {"balance": cur, "time": now.strftime("%d.%m.%Y %H:%M"), "periods": out, "fee": sc.fee_text(),
+    bym = {}
+    for t in trades:                                       # помесячно: по дате закрытия сделки
+        mk = (t.get("time") or t.get("date") or "")[:7]
+        if mk:
+            bym.setdefault(mk, []).append(t)
+    months = []
+    for mk in sorted(bym, reverse=True):
+        x = strat_summary(bym[mk])
+        fees = [v for v in (_num(t.get("fee_rub")) for t in bym[mk]) if v is not None]
+        months.append(dict(x, m=mk, fees_rub=round(sum(fees), 2) if fees else None))
+    return {"balance": cur, "time": now.strftime("%d.%m.%Y %H:%M"), "periods": out, "fee": sc.fee_text(), "months": months,
             "series": [{"date": d, "value": round(v, 2)} for d, v in sorted(daily.items())]}
 
 
@@ -964,16 +991,19 @@ def bt_summary(trades, share, capital=1_000_000, fee_month=0.0, _pass=0):
     for t in trades:
         by_day.setdefault(t["date"], []).append(t)
     eq, peak, dd, dd_rub, curve = float(capital), float(capital), 0.0, 0.0, []
-    fees_rub, paid = 0.0, set()
+    fees_rub, paid, turn = 0.0, set(), 0.0
     months = {}
     for d in sorted(by_day):
         start = eq
-        mo = months.setdefault(d[:7], {"m": d[:7], "n": 0, "sum": 0.0, "start": start, "rub": 0.0})
+        mo = months.setdefault(d[:7], {"m": d[:7], "n": 0, "sum": 0.0, "start": start, "rub": 0.0, "turn": 0.0})
         for t in by_day[d]:
             stake = start * share
             if t.get("cap"):
                 stake = min(stake, t["cap"])                       # не больше доли дневного оборота бумаги
             t["stake"] = round(stake)
+            t["turn"] = round(stake * (1 + t["exit"] / t["entry"])) if t.get("entry") else round(2 * stake)   # оборот: покупка + продажа
+            turn += t["turn"]
+            mo["turn"] += t["turn"]
             t["rub"] = round(stake * (t["pct"] - t.get("carry_pct", 0)) / 100, 2)
             fees_rub += stake * (t.get("fee_pct", 0) + t.get("carry_pct", 0)) / 100
             if fee_month and d[:7] not in paid and eq < 1_500_000:      # абонплата тарифа — в месяц со сделками
@@ -998,8 +1028,8 @@ def bt_summary(trades, share, capital=1_000_000, fee_month=0.0, _pass=0):
             "pf": round(sum(win) / -sum(los), 2) if los and sum(los) < 0 else None,
             "avg_win": round(sum(win) / len(win), 3) if win else None, "avg_loss": round(sum(los) / len(los), 3) if los else None,
             "reasons": reasons, "curve": curve, "fees_rub": round(fees_rub, 2), "fee_month": fee_month,
-            "carry_rub": round(sum(t.get("carry_rub", 0) for t in trades), 2),
-            "months": [{"m": v["m"], "n": v["n"], "sum": round(v["sum"], 2), "rub": round(v["rub"], 2),
+            "carry_rub": round(sum(t.get("carry_rub", 0) for t in trades), 2), "turnover": round(turn),
+            "months": [{"m": v["m"], "n": v["n"], "sum": round(v["sum"], 2), "rub": round(v["rub"], 2), "turn": round(v["turn"]),
                         "eq": round(v["rub"] / v["start"] * 100, 2)} for _, v in sorted(months.items())]}
 
 

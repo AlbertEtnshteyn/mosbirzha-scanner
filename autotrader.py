@@ -451,7 +451,7 @@ def history_trades(bars, sp, tf=None, tier="index", window="9-19", late=True, ca
 
 IDX_FLIP_BAND = 0.001          # разворот индекса считается, когда он ушёл от открытия больше чем на 0,1% в другую сторону
 LOG_COLS = ["date", "ticker", "side", "lots", "entry", "exit", "reason", "result_pct", "time", "pnl_rub", "entry_time",
-            "fee_rub", "gross_pct", "fee_src", "carry_rub"]   # result_pct и pnl_rub — после комиссии брокера (сделки и переноса); gross_pct — до неё
+            "fee_rub", "gross_pct", "fee_src", "carry_rub", "turn_rub"]   # result_pct и pnl_rub — после комиссии брокера (сделки и переноса); gross_pct — до неё
 BAL_COLS = ["time", "value", "deposit"]
 
 
@@ -2402,7 +2402,8 @@ class AutoTrader:
                          "entry_time": f"{p.get('date', '')} {str(p.get('time', ''))[:5]}".strip(),
                          "fee_rub": round(fee, 2), "gross_pct": round(gross * 100, 4),
                          "fee_src": "брокер" if src_out == "брокер" and p.get("fee_src", "брокер") == "брокер" else "тариф",
-                         "carry_rub": round(carry, 2) if carry else ""}])
+                         "carry_rub": round(carry, 2) if carry else "",
+                         "turn_rub": round((p["entry"] + exit_px) * lots * per_lot, 2) if pnl_rub is not None else ""}])
         self.on_event("close", {"ticker": p["ticker"], "why": why, "result": res, "lots": lots})
         self._push()
         return True

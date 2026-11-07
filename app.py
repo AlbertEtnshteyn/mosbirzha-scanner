@@ -383,8 +383,9 @@ class App(tk.Tk):
         ttk.Button(top7, text="Сбросить баланс и начать сначала", command=self.reset_trading).pack(side="right", padx=8)
         self.res_tree = self._tree(t7, [("period", "Период", 180), ("from", "С", 90), ("start", "Баланс на начало", 130),
                                         ("chg", "Изменение, ₽", 120), ("pct", "Изменение, %", 100), ("n", "Сделок", 70),
-                                        ("win", "В плюсе", 70), ("pnl", "Итог сделок, ₽", 120), ("avg", "Средняя сделка", 110)])
+                                        ("win", "В плюсе", 70), ("turn", "Оборот, ₽", 120), ("pnl", "Итог сделок, ₽", 120), ("avg", "Средняя сделка", 110)])
         self.res_tree.tag_configure("sub", foreground=TH["muted"])
+        self.res_tree.tag_configure("hdr", background=TH["hdr"], font=("Segoe UI", 9, "bold"))
         self.res_tree.master.pack_configure(fill="x", expand=False)
         self.res_tree.configure(height=12)
         ttk.Label(t7, text="Изменение баланса", style="Big.TLabel").pack(anchor="w", pady=(10, 2))
@@ -1398,7 +1399,7 @@ class App(tk.Tk):
         self.bt_cv = tk.Canvas(left, height=180, bg=TH["panel"], highlightthickness=1, highlightbackground=TH["line"])
         self.bt_cv.pack(fill="x", pady=(0, 6))
         self.bt_cv.bind("<Configure>", lambda e: self._bt_curve())
-        self.bt_mon = self._tree(left, [("m", "Месяц", 75), ("n", "Сделок", 55), ("rub", "Прибыль, ₽", 100), ("eq", "Счёт %", 70)])
+        self.bt_mon = self._tree(left, [("m", "Месяц", 70), ("n", "Сделок", 50), ("turn", "Оборот, ₽", 100), ("rub", "Прибыль, ₽", 90), ("eq", "Счёт %", 60)])
         right = ttk.LabelFrame(pw, text="Сделки (двойной щелчок — график)", padding=4); pw.add(right, weight=2)
         self.bt_tr = self._tree(right, [("date", "Дата", 85), ("time", "Вход", 50), ("ticker", "Бумага", 65), ("tf", "EMA", 45), ("entry", "Цена входа", 80),
                                         ("stop", "Стоп", 75), ("take", "Тейк", 75), ("exit", "Выход", 75), ("xt", "Время выхода", 95),
@@ -1496,12 +1497,13 @@ class App(tk.Tk):
                 f"макс. просадка {rub(sm['dd_rub'])} ({sm['dd']:.1f}%)\n"
                 f"Сделок {sm['n']} · в плюсе {sm['win']:g}% · средняя {sm['avg']:+.2f}%" + (f" · профит-фактор {sm['pf']:g}" if sm.get("pf") else "")
                 + f"\nсредняя прибыльная {sm.get('avg_win') or 0:+.2f}%, убыточная {sm.get('avg_loss') or 0:+.2f}% · выходы: {rs}"
-                + (f"\nвсё после комиссии брокера: уплачено бы {rub(sm['fees_rub'])}" if sm.get("fees_rub") is not None else "")
+                + (f"\nоборот за период {rub(sm['turnover'])}" if sm.get("turnover") else "")
+                + (f" · всё после комиссии брокера: уплачено бы {rub(sm['fees_rub'])}" if sm.get("fees_rub") is not None else "")
                 + (f", из них за перенос шортов {rub(sm['carry_rub'])}" if sm.get("carry_rub") else "")))
         self.bt_mon.delete(*self.bt_mon.get_children())
         for m in sm.get("months", []):
             self.bt_mon.insert("", "end", tags=("pos" if m["rub"] > 0 else "neg",),
-                               values=(m["m"], m["n"], (f"{m['rub']:+,.0f}").replace(",", " "), f"{m['eq']:+.2f}"))
+                               values=(m["m"], m["n"], f"{m.get('turn', 0):,.0f}".replace(",", " "), (f"{m['rub']:+,.0f}").replace(",", " "), f"{m['eq']:+.2f}"))
         self.bt_tr.delete(*self.bt_tr.get_children())
         tfn = {5: "5м", 15: "15м", 60: "1ч", 1440: "1д"}
         for x in reversed(res.get("trades", [])):
@@ -2041,17 +2043,23 @@ class App(tk.Tk):
             self.res_tree.insert("", "end", tags=(("pos" if ch > 0 else "neg"),) if ch else (), values=(
                 p["name"], ".".join(reversed((p.get("from") or "").split("-"))), fmt(p.get("start_balance")),
                 fmt(ch, True), f"{p['change_pct']:+.2f}%" if p.get("change_pct") is not None else "—",
-                p.get("trades", 0), f"{p['wins'] / p['trades'] * 100:.0f}%" if p.get("trades") else "—",
+                p.get("trades", 0), f"{p['wins'] / p['trades'] * 100:.0f}%" if p.get("trades") else "—", fmt(p.get("turnover")),
                 fmt(p.get("pnl_rub"), True), f"{p['avg_pct']:+.2f}%" if p.get("avg_pct") is not None else "—"))
             for k, n in (("всплеск", "Всплеск + EMA20"), ("15:00", "Движение дня"), ("вручную", "Вручную")):
                 x = bs.get(k) or {"n": 0}
                 self.res_tree.insert("", "end", tags=("sub",), values=(
                     f"   ↳ {n}", "", "", "", "", x.get("n", 0),
-                    f"{x['wins'] / x['n'] * 100:.0f}%" if x.get("n") else "—", fmt(x.get("pnl_rub"), True),
+                    f"{x['wins'] / x['n'] * 100:.0f}%" if x.get("n") else "—", fmt(x.get("turnover")), fmt(x.get("pnl_rub"), True),
                     f"{x['avg_pct']:+.2f}%" if x.get("avg_pct") is not None else "—"))
             if p.get("fees_rub"):
                 self.res_tree.insert("", "end", tags=("sub",), values=(
-                    "   ↳ из них комиссия брокера", "", "", "", "", "", "", fmt(-p["fees_rub"], True), ""))
+                    "   ↳ из них комиссия брокера", "", "", "", "", "", "", "", fmt(-p["fees_rub"], True), ""))
+        if data.get("months"):
+            self.res_tree.insert("", "end", tags=("hdr",), values=("По месяцам", "", "", "", "", "", "", "", "", ""))
+            for m in data["months"]:
+                self.res_tree.insert("", "end", tags=(("pos" if (m.get("pnl_rub") or 0) > 0 else "neg"),), values=(
+                    "   " + m["m"], "", "", "", "", m["n"], f"{m['wins'] / m['n'] * 100:.0f}%" if m["n"] else "—",
+                    fmt(m.get("turnover")), fmt(m.get("pnl_rub"), True), f"{m['avg_pct']:+.2f}%" if m.get("avg_pct") is not None else "—"))
         self._draw_balance()
 
     def _draw_balance(self):
