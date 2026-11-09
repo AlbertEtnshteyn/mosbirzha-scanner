@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1420">
+<title>Робот Мосбиржи</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="login" class="screen" hidden>
+  <div class="card login">
+    <h1>Робот Мосбиржи</h1>
+    <p>Вставьте код подключения — его показывает программа на компьютере после установки сервера
+      (строка вида <code>moexrobot://…</code>).</p>
+    <textarea id="codeIn" rows="3" placeholder="moexrobot://адрес:8443/ключ/отпечаток"></textarea>
+    <button class="btn primary wide" id="codeBtn">Подключиться</button>
+    <p class="muted" id="loginErr"></p>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header class="top">
+    <div class="top-row">
+      <span id="tradeBadge" class="badge">—</span>
+      <span id="idx" class="idx" title=""></span>
+      <span id="clock" class="muted small"></span>
+    </div>
+    <div id="status" class="status"></div>
+  </header>
+
+  <main>
+    <!-- Робот -->
+    <section id="tab-robot" class="tab">
+      <div class="card">
+        <div class="row between">
+          <div>
+            <div class="label">Индекс IMOEX за день</div>
+            <div id="market" class="big">—</div>
+            <div id="marketOpen" class="small muted"></div>
+            <div class="label" style="margin-top:8px">Баланс счёта</div>
+            <div id="balance" class="mono" style="font-weight:700">—</div>
+            <div id="balDay" class="small"></div>
+            <div id="balReal" class="small muted"></div>
+          </div>
+          <button class="btn start" id="startBtn">Старт</button>
+        </div>
+        <p class="muted small" id="robotHint"></p>
+      </div>
+
+      <div class="row between" style="margin:18px 4px 8px"><h2 style="margin:0">Открытые позиции <span id="posCount" class="muted"></span></h2>
+        <button class="btn small primary" id="openBtn">+ Открыть</button></div>
+      <form id="openForm" class="card" hidden autocomplete="off">
+        <div class="row"><input name="ticker" placeholder="Тикер, например SBER" autocapitalize="characters" spellcheck="false"
+          style="flex:1;min-width:120px;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--fg);font:inherit;font-weight:700;text-transform:uppercase">
+          <div class="seg" id="openSide"><button type="button" data-v="long" class="on">Лонг</button><button type="button" data-v="short">Шорт</button></div></div>
+        <div class="grid4" style="grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px">
+          <label class="col small"><span class="muted">% портфеля</span><input name="share" type="number" inputmode="decimal" step="any"></label>
+          <label class="col small" style="grid-column:1/-1"><span class="muted">Стоп и тейк</span><select name="by_form">
+            <option value="1">по дню: стоп за лоем дня, тейк на хае дня (для шорта наоборот)</option><option value="0">в % (поля ниже)</option></select></label>
+          <label class="col small"><span class="muted">Стоп, % от входа</span><input name="stop" type="number" inputmode="decimal" step="any" value="3"></label>
+          <label class="col small"><span class="muted">Тейк, % (0 — нет)</span><input name="take" type="number" inputmode="decimal" step="any" value="0"></label>
+          <label class="col small"><span class="muted">Трейлинг, % (0 — нет)</span><input name="trail" type="number" inputmode="decimal" step="any" value="0"></label>
+          <label class="col small"><span class="muted">Время выхода</span><select name="exit_at"></select></label>
+          <label class="col small"><span class="muted">Во время выхода</span><select name="carry"><option value="1">перенести</option><option value="0">закрыть</option></select></label>
+        </div>
+        <div class="row" style="margin-top:10px"><button class="btn primary" type="submit">Открыть по рынку</button><button class="btn ghost" type="button" id="openCancel">Отмена</button></div>
+        <p class="muted small">Позицию ведёт робот: стоп, тейк, трейлинг и время выхода. Выбор «перенести/закрыть» можно поменять потом у самой позиции.</p>
+      </form>
+      <div id="positions" class="list"></div>
+      <button class="btn danger wide" id="closeAllBtn" hidden>Закрыть все позиции</button>
+      <button class="btn ghost wide" id="closeProfitBtn" hidden>Закрыть все позиции в плюсе</button>
+
+      <details class="card" open>
+        <summary>Кандидаты «Движения дня» <span id="scanInfo" class="muted small"></span></summary>
+        <div id="scan" class="list compact"></div>
+      </details>
+
+      <details class="card" id="calBox">
+        <summary>Календарь торгов <span id="calInfo" class="muted small"></span></summary>
+        <div id="cal" class="list compact"></div>
+      </details>
+
+      <details class="card" id="logBox">
+        <summary>Журнал действий</summary>
+        <pre id="log" class="log"></pre>
+      </details>
+    </section>
+
+    <!-- Формации -->
+    <section id="tab-spikes" class="tab" hidden>
+      <h2>Всплески объёма и формации</h2>
+      <p class="muted small">Нажмите на строку — откроется график.</p>
+      <div id="spikes" class="list"></div>
+    </section>
+
+    <!-- Проверка на истории -->
+    <section id="tab-history" class="tab" hidden>
+      <h2>Проверка на истории</h2>
+      <p class="muted small">«Движение дня» с текущими настройками по 5-минутным свечам: те же правила, что у робота; комиссия брокера — по тарифу вашего счёта (на покупку и продажу), плюс проскальзывание 0,06% и плата за перенос шортов. Первый раз сервер скачивает историю (несколько минут), потом берёт из кэша. Чтобы сравнить варианты — поменяйте настройки, сохраните и прогоните снова.</p>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="btPer"><option value="1">1 месяц</option><option value="3">3 месяца</option><option value="6">6 месяцев</option><option value="12" selected>12 месяцев</option><option value="24">24 месяца</option></select>
+        <span class="muted small">Стартовая сумма, ₽</span>
+        <input id="btCap" type="number" inputmode="numeric" placeholder="стартовая сумма, ₽" style="width:150px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit">
+        <button type="button" class="btn primary" id="btGo">▶ Прогнать</button>
+        <button type="button" class="btn small ghost" id="btStop">Стоп</button>
+        <button type="button" class="btn small ghost" id="btReset">Сбросить</button>
+      </div>
+      <div id="btProg" class="muted small" style="margin:8px 0"></div>
+      <div id="btSet" class="muted small"></div>
+      <div id="btSum" style="margin:8px 0"></div>
+      <canvas id="btCurve" style="width:100%;height:150px"></canvas>
+      <div id="btMon" class="list"></div>
+      <h3 style="margin-top:12px">Сделки</h3>
+      <div id="btTr" class="list"></div>
+    </section>
+
+    <!-- График -->
+    <section id="tab-chart" class="tab chart-tab" hidden>
+      <div class="chart-bar">
+        <input id="chTicker" value="SBER" autocapitalize="characters" autocomplete="off" spellcheck="false">
+        <div class="seg" id="tfSeg">
+          <button data-tf="1">1м</button><button data-tf="5">5м</button><button data-tf="15" class="on">15м</button><button data-tf="60">1ч</button><button data-tf="1440">Д</button>
+        </div>
+      </div>
+      <div class="chart-bar2">
+        <label class="chk" hidden><input type="checkbox" id="chHist"> сделки на истории</label>
+        <button class="btn small" id="chPrev" hidden>◀ к формации</button>
+        <button class="btn small" id="chFit">⤢ по цене</button>
+        <a class="btn small ghost" id="chTbank" target="_blank" rel="noopener">Т-Инвест</a>
+      </div>
+      <div id="chartInfo" class="muted small"></div>
+      <div id="chart"></div>
+      <div id="chartHover" class="small mono"></div>
+      <div id="chTrades" class="list compact"></div>
+    </section>
+
+    <!-- Рынки -->
+    <section id="tab-market" class="tab" hidden>
+      <div class="seg wide" id="mkType">
+        <button data-v="share" class="on">Акции</button><button data-v="index">Индексы</button><button data-v="currency">Валюта</button><button data-v="future">Фьючерсы</button>
+      </div>
+      <div id="mkSum" class="small muted" style="margin:8px 2px"></div>
+      <div class="row" id="mkTier" style="margin:6px 0">
+        <div class="seg" style="flex-wrap:wrap">
+          <button data-v="" class="on">Все</button><button data-v="index">Индекс МосБиржи</button><button data-v="blue">Голубые фишки</button><button data-v="2">2-й эшелон</button><button data-v="3">3-й эшелон</button>
+        </div>
+      </div>
+      <div class="row" style="margin:6px 0 10px">
+        <input id="mkSearch" placeholder="Поиск: тикер или название" autocomplete="off" spellcheck="false"
+          style="flex:1;min-width:140px;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit">
+        <select id="mkSort" style="padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:inherit">
+          <option value="pct_desc">Рост ↓</option><option value="pct_asc">Падение ↓</option><option value="abs">Сильнее всего ±</option>
+          <option value="value">Оборот ↓</option><option value="avg">Оборот в день ↓</option><option value="name">По названию</option>
+        </select>
+      </div>
+      <div id="mkCharts" hidden>
+        <div class="row between" style="margin:4px 2px"><b id="mkChTk"></b><span class="row" style="gap:6px"><button class="btn small" id="mkChOpen">Открыть график</button><button class="btn small ghost" id="mkChClose">✕</button></span></div>
+        <div class="grid4" style="grid-template-columns:1fr 1fr;gap:4px">
+          <div><div class="muted small">5 мин</div><div class="mkc" data-tf="5"></div></div>
+          <div><div class="muted small">15 мин</div><div class="mkc" data-tf="15"></div></div>
+          <div><div class="muted small">1 час</div><div class="mkc" data-tf="60"></div></div>
+          <div><div class="muted small">1 день</div><div class="mkc" data-tf="1440"></div></div>
+        </div>
+      </div>
+      <div id="mkList" class="list compact"></div>
+    </section>
+
+    <!-- Сделки -->
+    <section id="tab-trades" class="tab" hidden>
+      <div class="seg wide" id="trSeg">
+        <button data-v="results" class="on">Результаты</button><button data-v="robot">Сделки</button>
+      </div>
+      <div id="resBox">
+        <div class="card"><div class="label">Баланс счёта</div><div id="resBal" class="big">—</div><div id="resTime" class="muted small"></div></div>
+        <div id="resChart" style="height:220px;border-radius:12px;overflow:hidden;border:1px solid var(--line)"></div>
+        <div style="overflow-x:auto"><table class="tbl" id="resTbl"></table></div>
+        <p class="muted small" id="resFee"></p>
+        <p class="muted small">Изменение баланса — по стоимости портфеля песочницы (пополнения счёта вычитаются), с учётом открытых позиций.
+          Сделки и «итог сделок, ₽» — по закрытым сделкам (₽ и % — после комиссии брокера по тарифу счёта).</p>
+        <button class="btn danger wide" id="resetBtn">Сбросить баланс и начать сначала</button>
+        <p class="muted small">Закрывает демо-счёт со всеми позициями, открывает новый на сумму капитала из настроек
+          и очищает историю сделок и баланса.</p>
+      </div>
+      <div id="trSum" class="card small"></div>
+      <div id="trJournalFill" class="row" hidden>
+        <input id="fillFrom" type="date">
+        <button class="btn small" id="fillBtn">Дозаполнить журнал</button>
+      </div>
+      <div id="trList" class="list compact"></div>
+    </section>
+
+    <!-- Настройки -->
+    <section id="tab-settings" class="tab" hidden>
+      <form id="setForm" autocomplete="off"></form>
+    </section>
+  </main>
+
+  <nav class="bottom">
+    <button data-tab="robot" class="on"><span class="ic">◉</span>Робот</button>
+    <button data-tab="history"><span class="ic">⏱</span>История</button>
+    <button data-tab="market"><span class="ic">%</span>Рынки</button>
+    <button data-tab="chart"><span class="ic">▥</span>График</button>
+    <button data-tab="trades"><span class="ic">≡</span>Сделки</button>
+    <button data-tab="settings"><span class="ic">⚙</span>Настройки</button>
+  </nav>
+</div>
+
+<div id="modal" class="modal" hidden>
+  <div class="card modal-box">
+    <p id="modalText"></p>
+    <div id="modalBtns" class="col"></div>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

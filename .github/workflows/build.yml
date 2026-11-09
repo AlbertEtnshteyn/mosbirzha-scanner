@@ -1,0 +1,142 @@
+name: Сборка MoexScanner.exe
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:              # новая сборка отменяет предыдущую — они не мешают друг другу при выкладке в релиз
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write          # чистка старых запусков и кэша после сборки
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller==6.11.1
+
+      - name: Проверка кода
+        run: python -c "import scanner, app; print('ok')"
+
+      # Сертификатов Минцифры в программе для Windows нет: они только на сервере робота
+      - name: Проверка — в сборке нет сертификатов
+        shell: pwsh
+        run: |
+          if (Test-Path certs) { Remove-Item -Recurse -Force certs }
+
+      - name: Номер версии
+        shell: pwsh
+        run: |
+          $when = (Get-Date).ToUniversalTime().AddHours(3).ToString("dd.MM.yyyy HH:mm")
+          Set-Content -Path version.txt -Value ("${{ github.sha }}".Substring(0, 7) + " от " + $when + " МСК") -Encoding utf8
+
+      - name: Программа для сервера (ставится на VPS из exe)
+        run: python -c "import serverinstall as si, zipfile, io; b = si.bundle_bytes(); n = zipfile.ZipFile(io.BytesIO(b)).namelist(); assert 'install.sh' in n and 'server.py' in n, n; open('server_bundle.zip','wb').write(b); print(len(b), n)"
+
+      - name: Сборка .exe
+        run: pyinstaller --noconfirm --onefile --windowed --name MoexScanner --add-data "version.txt;." --add-data "server_bundle.zip;." app.py
+
+      - name: Архив с инструкцией
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item dist/MoexScanner.exe release/
+          Copy-Item README.md release/
+          Compress-Archive -Path release/* -DestinationPath MoexScanner-windows.zip -Force
+
+      - name: Релиз «latest» (постоянная ссылка на последнюю сборку)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag --yes 2>$null
+          $global:LASTEXITCODE = 0
+          $sha = "${{ github.sha }}".Substring(0, 7)
+          $when = (Get-Date).ToUniversalTime().AddHours(3).ToString("dd.MM.yyyy HH:mm")
+          gh release create latest MoexScanner-windows.zip --target "${{ github.sha }}" `
+            --title "Последняя сборка ($when МСК)" `
+            --notes "Сборка из коммита $sha. Скачайте MoexScanner-windows.zip, распакуйте в отдельную папку и запустите MoexScanner.exe." `
+            --latest
+
+      - name: Релиз (для тегов v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: MoexScanner-windows.zip
+
+  android:
+    # APK для телефона собирается после exe и добавляется в тот же релиз «latest»
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+          cache-disabled: true      # кэш Gradle не копится на GitHub
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Программа сервера внутрь приложения (кнопка «Обновить сервер» на телефоне)
+        run: |
+          pip install -q requests certifi
+          echo "$(echo ${{ github.sha }} | cut -c1-7) от $(TZ=Europe/Moscow date +'%d.%m.%Y %H:%M') МСК" > version.txt
+          mkdir -p android/app/src/main/assets
+          python -c "import serverinstall as si; b = si.bundle_bytes(); open('android/app/src/main/assets/server_bundle.zip', 'wb').write(b); print(len(b))"
+
+      - name: Сборка APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          KEYSTORE_FILE: ${{ github.workspace }}/android/release.jks
+          KEYSTORE_PASSWORD: "t72fRU_gaU53Pm7wKfphPo9i"
+          KEY_ALIAS: moexrobot
+          KEY_PASSWORD: "t72fRU_gaU53Pm7wKfphPo9i"
+        run: |
+          export VERSION_NAME="$(echo ${{ github.sha }} | cut -c1-7) от $(TZ=Europe/Moscow date +'%d.%m.%Y %H:%M')"
+          gradle assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk ../MoexRobot-android.apk
+
+      - name: APK в релиз «latest»
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload latest MoexRobot-android.apk --clobber
+
+      - name: Чистка GitHub — кэш и старые запуски сборки (остаются 3 последних)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R: ${{ github.repository }}
+        run: |
+          gh cache delete --all -R "$R" || true
+          for id in $(gh api "repos/$R/actions/runs?per_page=100" --jq '.workflow_runs[3:][].id'); do
+            gh api -X DELETE "repos/$R/actions/runs/$id" >/dev/null 2>&1 || true
+          done
+          for a in $(gh api "repos/$R/actions/artifacts?per_page=100" --jq '.artifacts[].id'); do
+            gh api -X DELETE "repos/$R/actions/artifacts/$a" >/dev/null 2>&1 || true
+          done

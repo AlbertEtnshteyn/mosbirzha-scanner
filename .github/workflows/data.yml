@@ -1,0 +1,24 @@
+name: Данные IMOEX для проверки
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  imoex:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - run: python tools/fetch_imoex.py 2025-09-01 $(date +%F) imoex10m.csv
+      - name: В релиз data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view data >/dev/null 2>&1 || gh release create data --prerelease --title "Данные для проверки" --notes "Свечи IMOEX"
+          gh release upload data imoex10m.csv --clobber
